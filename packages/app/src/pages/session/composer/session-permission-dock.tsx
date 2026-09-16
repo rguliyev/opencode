@@ -19,6 +19,12 @@ export function SessionPermissionDock(props: {
     return value
   }
 
+  const taskDescription = () => {
+    if (props.request.permission !== "task") return ""
+    const value = props.request.metadata?.description
+    return typeof value === "string" ? value.trim() : ""
+  }
+
   return (
     <DockPrompt
       kind="permission"
@@ -52,6 +58,13 @@ export function SessionPermissionDock(props: {
         </>
       }
     >
+      <Show when={taskDescription()}>
+        <div data-slot="permission-row">
+          <span data-slot="permission-spacer" aria-hidden="true" />
+          <div data-slot="permission-hint">{taskDescription()}</div>
+        </div>
+      </Show>
+
       <Show when={toolDescription()}>
         <div data-slot="permission-row">
           <span data-slot="permission-spacer" aria-hidden="true" />
