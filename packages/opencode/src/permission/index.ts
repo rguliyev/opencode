@@ -2,7 +2,7 @@ import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { ConfigPermissionV1 } from "@opencode-ai/core/v1/config/permission"
 import { InstanceState } from "@/effect/instance-state"
 import { Wildcard } from "@opencode-ai/core/util/wildcard"
-import { Cause, Context, Deferred, Effect, Layer } from "effect"
+import { Cause, Context, Deferred, Effect, Layer, Schedule } from "effect"
 import os from "os"
 import { PermissionV1 } from "@opencode-ai/core/v1/permission"
 import { EventV2Bridge } from "@/event-v2-bridge"
@@ -22,6 +22,13 @@ export type PermissionReviewer = (
 
 /** deny beats ask beats allow; anything else is not a decision at all. */
 const strictness = (status: string) => (status === "deny" ? 2 : status === "ask" ? 1 : status === "allow" ? 0 : -1)
+
+/**
+ * How often an unanswered request is re-announced. The event stream replays
+ * nothing on connect, so a single publish is lost to any client that is not
+ * attached at that instant — a reconnect gap is enough to strand a tool call.
+ */
+const reannounceInterval = "10 seconds"
 
 export interface Interface {
   readonly ask: (input: PermissionV1.AskInput) => Effect.Effect<void, PermissionV1.Error>
@@ -175,10 +182,23 @@ const layer = Layer.effect(
       const deferred = yield* Deferred.make<void, PermissionV1.RejectedError | PermissionV1.CorrectedError>()
       pending.set(id, { info, deferred })
       yield* events.publish(Event.Asked, info)
-      return yield* Effect.ensuring(
-        Deferred.await(deferred),
-        Effect.sync(() => {
-          pending.delete(id)
+      return yield* Effect.scoped(
+        Effect.gen(function* () {
+          // Consumers key on request id and reconcile in place, so repeats update
+          // the existing prompt instead of stacking duplicates. The fiber dies with
+          // the scope as soon as the request is answered, rejected, or interrupted.
+          yield* Effect.forkScoped(
+            Effect.gen(function* () {
+              yield* Effect.sleep(reannounceInterval)
+              yield* events.publish(Event.Asked, info).pipe(Effect.repeat(Schedule.spaced(reannounceInterval)))
+            }),
+          )
+          return yield* Effect.ensuring(
+            Deferred.await(deferred),
+            Effect.sync(() => {
+              pending.delete(id)
+            }),
+          )
         }),
       )
     })

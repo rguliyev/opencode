@@ -694,6 +694,44 @@ it.instance(
   { git: true },
 )
 
+it.instance(
+  "ask - re-announces an unanswered request",
+  () =>
+    Effect.gen(function* () {
+      const events = yield* EventV2Bridge.Service
+      const announced: string[] = []
+      const unsub = yield* events.listen((event) => {
+        if (event.type === Permission.Event.Asked.type) announced.push((event.data as PermissionV1.Request).id)
+        return Effect.void
+      })
+      yield* Effect.addFinalizer(() => unsub)
+
+      const fiber = yield* ask({
+        sessionID: SessionID.make("session_test"),
+        permission: "bash",
+        patterns: ["ls"],
+        metadata: {},
+        always: [],
+        ruleset: [],
+      }).pipe(Effect.forkScoped)
+
+      const pending = yield* waitForPending(1)
+      expect(announced).toHaveLength(1)
+
+      // A single publish is lost to any client that is not attached at that
+      // instant — one reconnect gap strands the tool call with nothing on screen.
+      // The repeat carries the same id so consumers reconcile rather than stack.
+      yield* Effect.sleep("11 seconds")
+      expect(announced.length).toBeGreaterThan(1)
+      expect(new Set(announced)).toEqual(new Set([pending[0].id]))
+
+      yield* rejectAll()
+      yield* Fiber.await(fiber)
+    }),
+  { git: true },
+  25000,
+)
+
 // reply tests
 
 it.instance(
