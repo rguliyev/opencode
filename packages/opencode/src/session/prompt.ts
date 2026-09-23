@@ -81,6 +81,12 @@ IMPORTANT:
 
 const STRUCTURED_OUTPUT_SYSTEM_PROMPT = `IMPORTANT: The user has requested structured output. You MUST use the StructuredOutput tool to provide your final response. Do NOT respond with plain text - you MUST call the StructuredOutput tool with your answer formatted according to the schema.`
 
+export function structuredOutputToolChoice(modelID: string) {
+  // These Claude models reject forced tool choice; the system prompt requests StructuredOutput instead.
+  if (/claude-(?:opus-5[-.]5|(?:fable|mythos)-5[-.]1)(?:$|[-.@:])/i.test(modelID)) return undefined
+  return "required" as const
+}
+
 function mcpResourceBase64Size(value: string) {
   const trimmed = value.replace(/\s/g, "")
   const padding = trimmed.endsWith("==") ? 2 : trimmed.endsWith("=") ? 1 : 0
@@ -1282,7 +1288,7 @@ const layer = Layer.effect(
               ],
               tools: isLastStep ? {} : tools,
               model,
-              toolChoice: isLastStep ? "none" : format.type === "json_schema" ? "required" : undefined,
+              toolChoice: isLastStep ? "none" : format.type === "json_schema" ? structuredOutputToolChoice(model.api.id) : undefined,
             })
 
             if (structured !== undefined) {
