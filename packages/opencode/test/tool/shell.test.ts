@@ -243,6 +243,20 @@ describe("tool.shell permissions", () => {
     }),
   )
 
+  each("omits purpose metadata when no reason was supplied", () =>
+    Effect.gen(function* () {
+      const tmp = yield* tmpdirScoped()
+      yield* runIn(
+        tmp,
+        Effect.gen(function* () {
+          const requests: Array<Omit<PermissionV1.Request, "id" | "sessionID" | "tool">> = []
+          yield* run({ command: "echo hello" }, capture(requests))
+          expect(requests[0].metadata).not.toHaveProperty("purpose")
+        }),
+      )
+    }),
+  )
+
   each("asks for bash permission with multiple commands", () =>
     Effect.gen(function* () {
       const tmp = yield* tmpdirScoped()
@@ -339,6 +353,7 @@ describe("tool.shell permissions", () => {
         const extDirReq = requests.find((r) => r.permission === "external_directory")
         expect(extDirReq).toBeDefined()
         expect(extDirReq!.patterns).toContain(want)
+        expect(extDirReq!.metadata).not.toHaveProperty("purpose")
       }),
     ),
   )
