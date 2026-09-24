@@ -17,7 +17,11 @@ export type PermissionReviewer = (
   // `status` is whatever the hook left behind, so it is typed as an unvalidated
   // string rather than the union: plugins are external, untyped JavaScript, and
   // an unrecognised value must not be able to read as a decision.
-  output: { status: string; message?: string },
+  output: {
+    status: string
+    message?: string
+    reviewItems?: { index: number; digest: string; command: string | null; reason: string }[]
+  },
 ) => Effect.Effect<void>
 
 /** deny beats ask beats allow; anything else is not a decision at all. */
@@ -112,13 +116,14 @@ const layer = Layer.effect(
       }
 
       const id = request.id ?? PermissionV1.ID.ascending()
-
       // The reviewer may replace the effective decision. It sees the id the real
-      // request will carry, and copies of the mutable fields: a hook must not be
-      // able to rewrite the request the user is about to be shown, nor the
-      // patterns an "always" answer persists.
+      // request will carry and copies of mutable fields, not the original request.
+      const review: {
+        status: string
+        message?: string
+        reviewItems?: { index: number; digest: string; command: string | null; reason: string }[]
+      } = { status: needsAsk ? "ask" : "allow" }
       if (reviewer) {
-        const review: { status: string; message?: string } = { status: needsAsk ? "ask" : "allow" }
         const before = review.status
         yield* reviewer(
           {
@@ -163,24 +168,31 @@ const layer = Layer.effect(
             reason: review.message ?? "A plugin denied this permission request.",
           })
         }
-        // Any other value is a misbehaving hook, not a decision: keep what the
-        // rules decided rather than failing open to allow.
+        // An unknown status is not a decision; retain the configured result.
         if (review.status === "ask" || review.status === "allow") needsAsk = review.status === "ask"
-        else
+        else {
+          review.message = undefined
           yield* Effect.logWarning("permission.ask hook returned an unknown status; keeping the rule decision", {
             status: review.status,
             permission: request.permission,
           })
+        }
       }
 
       if (!needsAsk) return
 
+      const metadata = { ...request.metadata }
+      delete metadata.reviewReason
+      delete metadata.reviewItems
+      if (typeof review.message === "string") metadata.reviewReason = review.message.slice(0, 2_000)
+      if (review.status === "ask" && review.reviewItems) metadata.reviewItems = review.reviewItems
       const info: PermissionV1.Request = {
         id,
         sessionID: request.sessionID,
         permission: request.permission,
         patterns: request.patterns,
-        metadata: request.metadata,
+        // Review details come from the permission hook, not tool-supplied metadata.
+        metadata,
         always: request.always,
         tool: request.tool,
       }
@@ -215,14 +227,45 @@ const layer = Layer.effect(
       const existing = pending.get(input.requestID)
       if (!existing) return yield* new PermissionV1.NotFoundError({ requestID: input.requestID })
 
+      const expected = Array.isArray(existing.info.metadata.reviewItems)
+        ? existing.info.metadata.reviewItems.filter(
+            (item: unknown): item is { index: number; digest: string } =>
+              !!item &&
+              typeof item === "object" &&
+              "index" in item &&
+              "digest" in item &&
+              typeof item.index === "number" &&
+              Number.isInteger(item.index) &&
+              typeof item.digest === "string" &&
+              /^[a-f0-9]{64}$/.test(item.digest),
+          )
+        : []
+      const submitted = input.commandFeedback
+      const feedback = submitted?.filter(
+        (item, index) =>
+          Number.isInteger(item.index) &&
+          /^[a-f0-9]{64}$/.test(item.digest) &&
+          submitted.findIndex((other) => other.index === item.index) === index &&
+          expected.some((candidate) => candidate.index === item.index && candidate.digest === item.digest),
+      )
+      const valid = !submitted || feedback?.length === submitted.length
+      const complete = !submitted || (valid && expected.length === feedback?.length)
+      const reply =
+        submitted && (feedback?.some((item) => item.decision === "reject") || (!complete && input.reply !== "reject"))
+          ? "reject"
+          : input.reply
+
       pending.delete(input.requestID)
       yield* events.publish(Event.Replied, {
         sessionID: existing.info.sessionID,
         requestID: existing.info.id,
-        reply: input.reply,
+        reply,
+        origin: input.origin ?? "unknown",
+        direct: true,
+        commandFeedback: valid ? feedback : undefined,
       })
 
-      if (input.reply === "reject") {
+      if (reply === "reject") {
         yield* Deferred.fail(
           existing.deferred,
           input.message
@@ -237,6 +280,8 @@ const layer = Layer.effect(
             sessionID: item.info.sessionID,
             requestID: item.info.id,
             reply: "reject",
+            origin: "cascade",
+            direct: false,
           })
           yield* Deferred.fail(item.deferred, new PermissionV1.RejectedError())
         }
@@ -244,7 +289,7 @@ const layer = Layer.effect(
       }
 
       yield* Deferred.succeed(existing.deferred, undefined)
-      if (input.reply === "once") return
+      if (reply === "once") return
 
       for (const pattern of existing.info.always) {
         approved.push({
@@ -265,6 +310,8 @@ const layer = Layer.effect(
           sessionID: item.info.sessionID,
           requestID: item.info.id,
           reply: "always",
+          origin: "cascade",
+          direct: false,
         })
         yield* Deferred.succeed(item.deferred, undefined)
       }
@@ -275,7 +322,10 @@ const layer = Layer.effect(
       return Array.from(pending.values(), (item) => item.info)
     })
 
-    const setReviewer = (fn: PermissionReviewer) => Effect.sync(() => { reviewer = fn })
+    const setReviewer = (fn: PermissionReviewer) =>
+      Effect.sync(() => {
+        reviewer = fn
+      })
     return Service.of({ ask, reply, list, setReviewer })
   }),
 )

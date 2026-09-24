@@ -230,12 +230,14 @@ describe("tool.shell permissions", () => {
           yield* run(
             {
               command: "echo hello",
+              reason: "Verify the shell is working",
             },
             capture(requests),
           )
           expect(requests.length).toBe(1)
           expect(requests[0].permission).toBe("bash")
           expect(requests[0].patterns).toContain("echo hello")
+          expect(requests[0].metadata.purpose).toBe("Verify the shell is working")
         }),
       )
     }),

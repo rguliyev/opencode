@@ -34,6 +34,7 @@ import { RuntimeFlags } from "@/effect/runtime-flags"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { Permission } from "@/permission"
 import { InstallationChannel } from "@opencode-ai/core/installation/version"
+import { Permission } from "@/permission"
 
 type State = {
   hooks: Hooks[]

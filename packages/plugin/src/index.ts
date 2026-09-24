@@ -265,7 +265,11 @@ export interface Hooks {
    */
   "permission.ask"?: (
     input: PermissionRequest,
-    output: { status: "ask" | "deny" | "allow"; message?: string },
+    output: {
+      status: "ask" | "deny" | "allow"
+      message?: string
+      reviewItems?: { index: number; digest: string; command: string | null; reason: string }[]
+    },
   ) => Promise<void>
   "command.execute.before"?: (
     input: { command: string; sessionID: string; arguments: string },

@@ -38,7 +38,22 @@ export type Request = typeof Request.Type
 export const Reply = Schema.Literals(["once", "always", "reject"])
 export type Reply = typeof Reply.Type
 
-export const ReplyBody = Schema.Struct({ reply: Reply, message: Schema.optional(Schema.String) }).annotate({
+export const ReplyOrigin = Schema.Literals(["human", "automatic"])
+export type ReplyOrigin = typeof ReplyOrigin.Type
+
+export const CommandFeedback = Schema.Struct({
+  index: Schema.Number,
+  digest: Schema.String,
+  decision: Schema.Literals(["allow", "reject"]),
+})
+export type CommandFeedback = typeof CommandFeedback.Type
+
+export const ReplyBody = Schema.Struct({
+  reply: Reply,
+  message: Schema.optional(Schema.String),
+  origin: Schema.optional(ReplyOrigin),
+  commandFeedback: Schema.optional(Schema.Array(CommandFeedback)),
+}).annotate({
   identifier: "PermissionReplyBody",
 })
 export type ReplyBody = typeof ReplyBody.Type
@@ -61,6 +76,13 @@ export type ReplyInput = typeof ReplyInput.Type
 const Asked = define({ type: "permission.asked", schema: Request.fields })
 const Replied = define({
   type: "permission.replied",
-  schema: { sessionID: SessionID, requestID: ID, reply: Reply },
+  schema: {
+    sessionID: SessionID,
+    requestID: ID,
+    reply: Reply,
+    origin: Schema.optional(Schema.Literals(["human", "automatic", "unknown", "cascade"])),
+    direct: Schema.optional(Schema.Boolean),
+    commandFeedback: Schema.optional(Schema.Array(CommandFeedback)),
+  },
 })
 export const Event = { Asked, Replied, Definitions: inventory(Asked, Replied) }

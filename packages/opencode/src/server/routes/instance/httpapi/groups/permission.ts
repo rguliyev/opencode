@@ -1,5 +1,4 @@
 import { PermissionV1 } from "@opencode-ai/core/v1/permission"
-import { Permission } from "@/permission"
 import { Schema } from "effect"
 import { HttpApi, HttpApiEndpoint, HttpApiError, HttpApiGroup, OpenApi } from "effect/unstable/httpapi"
 import { PermissionNotFoundError } from "../errors"
@@ -12,6 +11,8 @@ const root = "/permission"
 const ReplyPayload = Schema.Struct({
   reply: PermissionV1.Reply,
   message: Schema.optional(Schema.String),
+  origin: Schema.optional(PermissionV1.ReplyOrigin),
+  commandFeedback: Schema.optional(Schema.Array(PermissionV1.CommandFeedback)),
 })
 
 export const PermissionApi = HttpApi.make("permission")
