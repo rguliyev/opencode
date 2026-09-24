@@ -189,13 +189,16 @@ describe("plugin permission.ask", () => {
     "unrecognised status keeps the rule decision",
     () =>
       withProject(
-        hookPlugin('output.status = "denied"'),
+        hookPlugin(
+          `output.status = "denied"\n    output.reviewItems = [{ index: 0, digest: "${"a".repeat(64)}", command: "ls", reason: "stale" }]`,
+        ),
         Effect.gen(function* () {
           const fiber = yield* ask(request([{ permission: "bash", pattern: "*", action: "ask" }])).pipe(
             Effect.forkScoped,
           )
 
-          expect(yield* waitForPending(1)).toHaveLength(1)
+          const items = yield* waitForPending(1)
+          expect(items[0].metadata.reviewItems).toBeUndefined()
           yield* rejectAll()
           yield* Fiber.await(fiber)
         }),
@@ -234,6 +237,27 @@ describe("plugin permission.ask", () => {
           yield* permission.reply({ requestID: items[0].id, reply: "once" })
           yield* Fiber.join(fiber)
           expect(yield* permission.list()).toHaveLength(0)
+        }),
+      ),
+    { git: true },
+  )
+
+  it.instance(
+    "failed hook cannot leave stale command review details",
+    () =>
+      withProject(
+        hookPlugin(
+          `output.reviewItems = [{ index: 0, digest: "${"a".repeat(64)}", command: "ls", reason: "stale" }]\n    throw new Error("hook exploded")`,
+        ),
+        Effect.gen(function* () {
+          const permission = yield* Permission.Service
+          const fiber = yield* ask(request([{ permission: "bash", pattern: "*", action: "ask" }])).pipe(
+            Effect.forkScoped,
+          )
+          const items = yield* waitForPending(1)
+          expect(items[0].metadata.reviewItems).toBeUndefined()
+          yield* permission.reply({ requestID: items[0].id, reply: "reject" })
+          yield* Fiber.await(fiber)
         }),
       ),
     { git: true },

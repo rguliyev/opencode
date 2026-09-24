@@ -1282,13 +1282,14 @@ const layer = Layer.effect(
               sessionID,
               parentSessionID: session.parentID,
               system,
-              messages: [
-                ...modelMsgs,
-                ...(isLastStep ? [{ role: "user" as const, content: MAX_STEPS_PROMPT }] : []),
-              ],
+              messages: [...modelMsgs, ...(isLastStep ? [{ role: "user" as const, content: MAX_STEPS_PROMPT }] : [])],
               tools: isLastStep ? {} : tools,
               model,
-              toolChoice: isLastStep ? "none" : format.type === "json_schema" ? structuredOutputToolChoice(model.api.id) : undefined,
+              toolChoice: isLastStep
+                ? "none"
+                : format.type === "json_schema"
+                  ? structuredOutputToolChoice(model.api.id)
+                  : undefined,
             })
 
             if (structured !== undefined) {

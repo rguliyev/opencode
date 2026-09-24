@@ -152,6 +152,8 @@ const layer = Layer.effect(
                     review.status = before
                     review.message = undefined
                   }
+                  // A failed hook cannot provide trustworthy command identities.
+                  review.reviewItems = undefined
                   yield* Effect.logWarning("permission.ask hook failed; keeping the safer decision", {
                     cause: Cause.pretty(cause),
                     permission: request.permission,
@@ -172,6 +174,7 @@ const layer = Layer.effect(
         if (review.status === "ask" || review.status === "allow") needsAsk = review.status === "ask"
         else {
           review.message = undefined
+          review.reviewItems = undefined
           yield* Effect.logWarning("permission.ask hook returned an unknown status; keeping the rule decision", {
             status: review.status,
             permission: request.permission,

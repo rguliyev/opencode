@@ -1,18 +1,58 @@
-import { For, Show, createSignal } from "solid-js"
+import { For, Show, createMemo, createSignal } from "solid-js"
 import type { PermissionRequest } from "@opencode-ai/sdk/v2"
 import { Button } from "@opencode-ai/ui/button"
 import { DockPrompt } from "@opencode-ai/session-ui/dock-prompt"
 import { Icon } from "@opencode-ai/ui/icon"
 import { useLanguage } from "@/context/language"
 
+type CommandFeedback = { index: number; digest: string; decision: "allow" | "reject" }
+type ReviewItem = { index: number; digest: string; command: string | null; reason: string }
+
 export function SessionPermissionDock(props: {
   request: PermissionRequest
   responding: boolean
-  onDecide: (response: "once" | "always" | "reject", message?: string) => void
+  onDecide: (response: "once" | "always" | "reject", message?: string, commandFeedback?: CommandFeedback[]) => void
 }) {
   const language = useLanguage()
   const [correcting, setCorrecting] = createSignal(false)
   const [feedback, setFeedback] = createSignal("")
+  const [reviewIndex, setReviewIndex] = createSignal(0)
+  const [reviewFeedback, setReviewFeedback] = createSignal<CommandFeedback[]>([])
+
+  const reviewItems = createMemo((): ReviewItem[] => {
+    if (props.request.permission !== "bash") return []
+    const raw = props.request.metadata?.reviewItems
+    if (!Array.isArray(raw)) return []
+    return raw.filter(
+      (item): item is ReviewItem =>
+        !!item &&
+        typeof item === "object" &&
+        Number.isInteger(item.index) &&
+        typeof item.digest === "string" &&
+        /^[a-f0-9]{64}$/.test(item.digest) &&
+        (typeof item.command === "string" || item.command === null) &&
+        typeof item.reason === "string",
+    )
+  })
+
+  const respondToReview = (decision: "allow" | "reject", message?: string) => {
+    const item = reviewItems()[reviewIndex()]
+    if (!item) return
+    const decisions: CommandFeedback[] = [...reviewFeedback(), { index: item.index, digest: item.digest, decision }]
+    if (decision === "allow" && reviewIndex() + 1 < reviewItems().length) {
+      setReviewFeedback(decisions)
+      setReviewIndex(reviewIndex() + 1)
+      return
+    }
+    props.onDecide(decision === "allow" ? "once" : "reject", message, decisions)
+  }
+
+  const correct = () => {
+    const message = feedback().trim()
+    if (!message) return
+    if (reviewItems().length) return respondToReview("reject", message)
+    props.onDecide("reject", message)
+  }
 
   const toolDescription = () => {
     const key = `settings.permissions.tool.${props.request.permission}.description`
@@ -55,25 +95,65 @@ export function SessionPermissionDock(props: {
             <Show
               when={correcting()}
               fallback={
-                <>
-                  <Button variant="ghost" size="normal" onClick={() => props.onDecide("reject")} disabled={props.responding}>
-                    {language.t("ui.permission.deny")}
+                <Show
+                  when={reviewItems().length > 0}
+                  fallback={
+                    <>
+                      <Button
+                        variant="ghost"
+                        size="normal"
+                        onClick={() => props.onDecide("reject")}
+                        disabled={props.responding}
+                      >
+                        {language.t("ui.permission.deny")}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="normal"
+                        onClick={() => setCorrecting(true)}
+                        disabled={props.responding}
+                      >
+                        {language.t("permission.doDifferently")}
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        size="normal"
+                        onClick={() => props.onDecide("always")}
+                        disabled={props.responding}
+                      >
+                        {language.t("ui.permission.allowAlways")}
+                      </Button>
+                      <Button
+                        variant="primary"
+                        size="normal"
+                        onClick={() => props.onDecide("once")}
+                        disabled={props.responding}
+                      >
+                        {language.t("ui.permission.allowOnce")}
+                      </Button>
+                    </>
+                  }
+                >
+                  <Button
+                    variant="ghost"
+                    size="normal"
+                    onClick={() => respondToReview("reject")}
+                    disabled={props.responding}
+                  >
+                    {language.t("permission.review.rejectWhole")}
                   </Button>
                   <Button variant="ghost" size="normal" onClick={() => setCorrecting(true)} disabled={props.responding}>
                     {language.t("permission.doDifferently")}
                   </Button>
                   <Button
-                    variant="secondary"
+                    variant="primary"
                     size="normal"
-                    onClick={() => props.onDecide("always")}
+                    onClick={() => respondToReview("allow")}
                     disabled={props.responding}
                   >
-                    {language.t("ui.permission.allowAlways")}
+                    {language.t("permission.review.allowCommand")}
                   </Button>
-                  <Button variant="primary" size="normal" onClick={() => props.onDecide("once")} disabled={props.responding}>
-                    {language.t("ui.permission.allowOnce")}
-                  </Button>
-                </>
+                </Show>
               }
             >
               <Button variant="ghost" size="normal" onClick={() => setCorrecting(false)} disabled={props.responding}>
@@ -82,7 +162,7 @@ export function SessionPermissionDock(props: {
               <Button
                 variant="primary"
                 size="normal"
-                onClick={() => props.onDecide("reject", feedback().trim())}
+                onClick={correct}
                 disabled={props.responding || !feedback().trim()}
               >
                 {language.t("permission.doDifferently.send")}
@@ -92,6 +172,22 @@ export function SessionPermissionDock(props: {
         </>
       }
     >
+      <Show when={reviewItems()[reviewIndex()]} keyed>
+        {(item) => (
+          <div data-slot="permission-row">
+            <span data-slot="permission-spacer" aria-hidden="true" />
+            <div class="flex min-w-0 flex-col gap-1">
+              <div data-slot="permission-hint">
+                {language.t("permission.review.progress", { current: reviewIndex() + 1, total: reviewItems().length })}
+              </div>
+              <code class="break-all text-12-regular text-text-base">
+                {item.command ?? language.t("permission.review.withheld")}
+              </code>
+              <div data-slot="permission-hint">{item.reason}</div>
+            </div>
+          </div>
+        )}
+      </Show>
       <Show when={correcting()}>
         <div data-slot="permission-row">
           <span data-slot="permission-spacer" aria-hidden="true" />

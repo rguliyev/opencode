@@ -197,6 +197,29 @@ describe("createCompatibleApi", () => {
     expect(new URL(requests[0]!.url).searchParams.get("directory")).toBe("/other")
   })
 
+  test("preserves correction and per-command feedback in V1 permission replies", async () => {
+    const { api, requests } = setup("v1")
+    const commandFeedback = [{ index: 0, digest: "a".repeat(64), decision: "reject" as const }]
+    await api.permission.reply({
+      sessionID: "ses_1",
+      requestID: "permission_1",
+      reply: "reject",
+      message: "Use a different command",
+      origin: "human",
+      commandFeedback,
+      location: { directory: "/other" },
+    })
+
+    expect(new URL(requests[0]!.url).pathname).toBe("/permission/permission_1/reply")
+    expect(new URL(requests[0]!.url).searchParams.get("directory")).toBe("/other")
+    expect(await requests[0]!.json()).toMatchObject({
+      reply: "reject",
+      message: "Use a different command",
+      origin: "human",
+      commandFeedback,
+    })
+  })
+
   test("disposes the V1 instance after connecting a provider", async () => {
     const { api, requests } = setup("v1")
 

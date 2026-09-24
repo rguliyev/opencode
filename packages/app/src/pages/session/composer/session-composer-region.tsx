@@ -50,9 +50,9 @@ export function SessionComposerRegion(props: {
               <SessionPermissionDock
                 request={request}
                 responding={controller.state.permissionResponding()}
-                onDecide={(response, message) => {
+                onDecide={(response, message, commandFeedback) => {
                   controller.onResponseSubmit()
-                  controller.state.decide(response, message)
+                  controller.state.decide(response, message, commandFeedback)
                 }}
               />
             </div>
