@@ -220,6 +220,24 @@ describe("createCompatibleApi", () => {
     })
   })
 
+  test("preserves human origin in V2 permission replies", async () => {
+    const { api, requests } = setup("v2")
+    await api.permission.reply({
+      sessionID: "ses_1",
+      requestID: "per_1",
+      reply: "reject",
+      message: "Use a different command",
+      origin: "human",
+    })
+
+    expect(new URL(requests[0]!.url).pathname).toBe("/api/session/ses_1/permission/per_1/reply")
+    expect(await requests[0]!.json()).toMatchObject({
+      reply: "reject",
+      message: "Use a different command",
+      origin: "human",
+    })
+  })
+
   test("disposes the V1 instance after connecting a provider", async () => {
     const { api, requests } = setup("v1")
 

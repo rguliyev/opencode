@@ -812,6 +812,59 @@ it.instance(
 )
 
 it.instance(
+  "reply - records per-command human correction",
+  () =>
+    Effect.gen(function* () {
+      const permission = yield* Permission.Service
+      const digest = "a".repeat(64)
+      yield* permission.setReviewer((_input, output) =>
+        Effect.sync(() => {
+          output.reviewItems = [{ index: 0, digest, command: "ls", reason: "Review this command" }]
+        }),
+      )
+
+      const fiber = yield* ask({
+        id: PermissionV1.ID.make("per_command_feedback"),
+        sessionID: SessionID.make("session_test"),
+        permission: "bash",
+        patterns: ["ls"],
+        metadata: {},
+        always: [],
+        ruleset: [],
+      }).pipe(Effect.forkScoped)
+      const [pending] = yield* waitForPending(1)
+      expect(pending.metadata.reviewItems).toEqual([{ index: 0, digest, command: "ls", reason: "Review this command" }])
+
+      const events = yield* EventV2Bridge.Service
+      const seen = yield* Deferred.make<unknown>()
+      const unsub = yield* events.listen((event) => {
+        if (event.type === Permission.Event.Replied.type) Deferred.doneUnsafe(seen, Effect.succeed(event.data))
+        return Effect.void
+      })
+      yield* Effect.addFinalizer(() => unsub)
+
+      yield* reply({
+        requestID: pending.id,
+        reply: "reject",
+        message: "Use a safer command",
+        origin: "human",
+        commandFeedback: [{ index: 0, digest, decision: "reject" }],
+      })
+      const exit = yield* Fiber.await(fiber)
+      expect(Exit.isFailure(exit)).toBe(true)
+      if (Exit.isFailure(exit)) expect(Cause.squash(exit.cause)).toBeInstanceOf(PermissionV1.CorrectedError)
+      expect(yield* Deferred.await(seen)).toMatchObject({
+        requestID: pending.id,
+        reply: "reject",
+        origin: "human",
+        direct: true,
+        commandFeedback: [{ index: 0, digest, decision: "reject" }],
+      })
+    }),
+  { git: true },
+)
+
+it.instance(
   "reply - always persists approval and resolves",
   () =>
     Effect.gen(function* () {
@@ -992,10 +1045,12 @@ it.instance(
             orElse: () => Effect.fail(new Error("timed out waiting for permission replied event")),
           }),
         ),
-      ).toEqual({
+      ).toMatchObject({
         sessionID: SessionID.make("session_test"),
         requestID: PermissionV1.ID.make("per_test7"),
         reply: "once",
+        origin: "unknown",
+        direct: true,
       })
     }),
   { git: true },

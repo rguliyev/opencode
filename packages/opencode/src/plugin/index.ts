@@ -34,7 +34,6 @@ import { RuntimeFlags } from "@/effect/runtime-flags"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { Permission } from "@/permission"
 import { InstallationChannel } from "@opencode-ai/core/installation/version"
-import { Permission } from "@/permission"
 
 type State = {
   hooks: Hooks[]
@@ -315,9 +314,7 @@ const layer = Layer.effect(
     // instance context, so the trigger runs directly — it mutates `output` in
     // place and asVoid drops the return value.
     const permission = yield* Permission.Service
-    yield* permission.setReviewer((input, output) =>
-      trigger("permission.ask", input, output).pipe(Effect.asVoid),
-    )
+    yield* permission.setReviewer((input, output) => trigger("permission.ask", input, output).pipe(Effect.asVoid))
 
     return Service.of({ trigger, list, init })
   }),
