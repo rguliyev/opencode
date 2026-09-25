@@ -28,10 +28,11 @@ import { useTuiStartup } from "./runtime"
 import { createSimpleContext } from "./helper"
 import { useExit } from "./exit"
 import { useArgs } from "./args"
-import { batch, onMount } from "solid-js"
+import { batch, onCleanup, onMount } from "solid-js"
 import path from "path"
 import { useKV } from "./kv"
 import { usePermission } from "./permission"
+import { groupPending, mergeTouchedRecord, mergeTouchedSessions, reconnectRetryable } from "./reconnect-state"
 
 const emptyConsoleState: ConsoleState = {
   consoleManagedProviders: [],
@@ -149,7 +150,15 @@ export const {
 
     const fullSyncedSessions = new Set<string>()
     const syncingSessions = new Map<string, Promise<void>>()
+    const syncingAbort = new Map<string, AbortController>()
     const hydratingSessions = new Map<string, { messages: Set<string>; parts: Set<string> }>()
+    let connected = false
+    let reconnectEpoch = 0
+    let recoveryAbort = new AbortController()
+    const touchedSessions = new Set<string>()
+    const touchedStatus = new Set<string>()
+    const touchedPermissions = new Set<string>()
+    const touchedQuestions = new Set<string>()
     const touchMessage = (sessionID: string, messageID: string) => {
       hydratingSessions.get(sessionID)?.messages.add(messageID)
     }
@@ -167,14 +176,144 @@ export const {
       }
     }
 
-    function listSessions() {
+    function listSessions(signal?: AbortSignal) {
       return sdk.client.session
-        .list({ start: Date.now() - 30 * 24 * 60 * 60 * 1000, ...sessionListQuery() })
+        .list({ start: Date.now() - 30 * 24 * 60 * 60 * 1000, ...sessionListQuery() }, { signal, throwOnError: true })
         .then((x) => (x.data ?? []).toSorted((a, b) => a.id.localeCompare(b.id)))
     }
 
+    function recover<T>(
+      epoch: number,
+      name: string,
+      load: (signal: AbortSignal) => Promise<T>,
+      apply: (value: T) => void,
+    ) {
+      const workspace = project.workspace.current()
+      const signal = recoveryAbort.signal
+      void (async () => {
+        let attempt = 0
+        while (!signal.aborted && epoch === reconnectEpoch && workspace === project.workspace.current()) {
+          let value: T
+          try {
+            value = await load(AbortSignal.any([signal, AbortSignal.timeout(10_000)]))
+          } catch (error) {
+            if (signal.aborted || epoch !== reconnectEpoch || workspace !== project.workspace.current()) return
+            const retryable = reconnectRetryable(error)
+            if (attempt === 0)
+              console.error(`tui reconnect ${name} refresh failed; ${retryable ? "retrying" : "stopped"}`, error)
+            if (!retryable) return
+            const backoff = Math.min(1_000 * 2 ** Math.min(attempt++, 5), 30_000)
+            await new Promise<void>((resolve) => {
+              const delay = setTimeout(done, backoff)
+              const stop = () => {
+                clearTimeout(delay)
+                done()
+              }
+              function done() {
+                signal.removeEventListener("abort", stop)
+                resolve()
+              }
+              signal.addEventListener("abort", stop, { once: true })
+              if (signal.aborted) stop()
+            })
+            continue
+          }
+          if (signal.aborted || epoch !== reconnectEpoch || workspace !== project.workspace.current()) return
+          try {
+            apply(value)
+          } catch (error) {
+            console.error(`tui reconnect ${name} apply failed`, error)
+          }
+          return
+        }
+      })()
+    }
+
     event.subscribe((event, { directory, workspace }) => {
+      if (reconnectEpoch > 0) {
+        if (event.type === "session.created" || event.type === "session.updated" || event.type === "session.deleted")
+          touchedSessions.add(event.properties.info.id)
+        if (event.type === "session.next.moved") touchedSessions.add(event.properties.sessionID)
+        if (event.type === "session.status") touchedStatus.add(event.properties.sessionID)
+        if (event.type === "permission.asked" || event.type === "permission.replied")
+          touchedPermissions.add(event.properties.sessionID)
+        if (event.type === "question.asked" || event.type === "question.replied" || event.type === "question.rejected")
+          touchedQuestions.add(event.properties.sessionID)
+      }
       switch (event.type) {
+        case "server.connected": {
+          if (!connected) {
+            connected = true
+            break
+          }
+          // Events emitted while the stream was down are not replayed. Re-read
+          // authoritative state and every session whose messages we loaded.
+          const epoch = ++reconnectEpoch
+          recoveryAbort.abort()
+          recoveryAbort = new AbortController()
+          touchedSessions.clear()
+          touchedStatus.clear()
+          touchedPermissions.clear()
+          touchedQuestions.clear()
+          const currentWorkspace = project.workspace.current()
+          recover(
+            epoch,
+            "sessions",
+            (signal) => listSessions(signal),
+            (sessions) =>
+              setStore("session", reconcile(mergeTouchedSessions(sessions, store.session, touchedSessions))),
+          )
+          recover(
+            epoch,
+            "status",
+            (signal) =>
+              sdk.client.session
+                .status({ workspace: currentWorkspace }, { signal, throwOnError: true })
+                .then((response) => response.data ?? {}),
+            (status) =>
+              setStore("session_status", reconcile(mergeTouchedRecord(status, store.session_status, touchedStatus))),
+          )
+          recover(
+            epoch,
+            "permissions",
+            (signal) =>
+              sdk.client.permission
+                .list({ workspace: currentWorkspace }, { signal, throwOnError: true })
+                .then((response) => response.data ?? []),
+            (permissions) =>
+              setStore(
+                "permission",
+                reconcile(mergeTouchedRecord(groupPending(permissions), store.permission, touchedPermissions)),
+              ),
+          )
+          recover(
+            epoch,
+            "questions",
+            (signal) =>
+              sdk.client.question
+                .list({ workspace: currentWorkspace }, { signal, throwOnError: true })
+                .then((response) => response.data ?? []),
+            (questions) =>
+              setStore(
+                "question",
+                reconcile(mergeTouchedRecord(groupPending(questions), store.question, touchedQuestions)),
+              ),
+          )
+          const sessions = new Set([...fullSyncedSessions, ...syncingSessions.keys()])
+          fullSyncedSessions.clear()
+          for (const sessionID of sessions) {
+            syncingAbort.get(sessionID)?.abort()
+            syncingSessions.delete(sessionID)
+            syncingAbort.delete(sessionID)
+            recover(
+              epoch,
+              `session ${sessionID}`,
+              () => result.session.sync(sessionID),
+              () => {},
+            )
+          }
+          break
+        }
         case "server.instance.disposed":
           void bootstrap()
           break
@@ -283,6 +422,7 @@ export const {
           }
           break
         }
+        case "session.created":
         case "session.updated": {
           const result = search(store.session, event.properties.info.id, (s) => s.id)
           if (result.found) {
@@ -556,6 +696,11 @@ export const {
       void bootstrap()
     })
 
+    onCleanup(() => {
+      recoveryAbort.abort()
+      for (const controller of syncingAbort.values()) controller.abort()
+    })
+
     const result = {
       data: store,
       set: setStore,
@@ -597,14 +742,17 @@ export const {
           const syncing = syncingSessions.get(sessionID)
           if (syncing) return syncing
           const tracker = { messages: new Set<string>(), parts: new Set<string>() }
+          const controller = new AbortController()
           hydratingSessions.set(sessionID, tracker)
+          syncingAbort.set(sessionID, controller)
           const task = (async () => {
             const [session, messages, todo, diff] = await Promise.all([
-              sdk.client.session.get({ sessionID }, { throwOnError: true }),
-              sdk.client.session.messages({ sessionID, limit: 100 }),
-              sdk.client.session.todo({ sessionID }),
-              sdk.client.session.diff({ sessionID }),
+              sdk.client.session.get({ sessionID }, { signal: controller.signal, throwOnError: true }),
+              sdk.client.session.messages({ sessionID, limit: 100 }, { signal: controller.signal, throwOnError: true }),
+              sdk.client.session.todo({ sessionID }, { signal: controller.signal, throwOnError: true }),
+              sdk.client.session.diff({ sessionID }, { signal: controller.signal, throwOnError: true }),
             ])
+            if (controller.signal.aborted) return
             setStore(
               produce((draft) => {
                 const match = search(draft.session, sessionID, (s) => s.id)
@@ -660,8 +808,9 @@ export const {
             )
             fullSyncedSessions.add(sessionID)
           })().finally(() => {
-            syncingSessions.delete(sessionID)
-            hydratingSessions.delete(sessionID)
+            if (syncingSessions.get(sessionID) === task) syncingSessions.delete(sessionID)
+            if (syncingAbort.get(sessionID) === controller) syncingAbort.delete(sessionID)
+            if (hydratingSessions.get(sessionID) === tracker) hydratingSessions.delete(sessionID)
           })
           syncingSessions.set(sessionID, task)
           return task
