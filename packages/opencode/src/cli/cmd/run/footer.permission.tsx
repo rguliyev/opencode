@@ -160,6 +160,8 @@ export function RunPermissionBody(props: {
       return "Reject permission"
     }
 
+    if (state().stage === "correct") return "Do differently"
+
     return "Permission required"
   })
 
@@ -221,7 +223,7 @@ export function RunPermissionBody(props: {
 
   useKeyboard((event) => {
     const cur = state()
-    if (cur.stage === "reject") {
+    if (cur.stage === "reject" || cur.stage === "correct") {
       return
     }
 
@@ -276,7 +278,7 @@ export function RunPermissionBody(props: {
         flexShrink={0}
       >
         <box flexDirection="row" gap={1} paddingLeft={1}>
-          <text fg={state().stage === "reject" ? props.theme.error : props.theme.warning}>△</text>
+          <text fg={state().stage === "reject" || state().stage === "correct" ? props.theme.error : props.theme.warning}>△</text>
           <text fg={props.theme.text}>{title()}</text>
         </box>
         <Switch>
@@ -290,16 +292,18 @@ export function RunPermissionBody(props: {
               </text>
             </box>
           </Match>
-          <Match when={state().stage === "reject"}>
+          <Match when={state().stage === "reject" || state().stage === "correct"}>
             <box paddingLeft={1}>
-              <text fg={props.theme.muted}>Tell OpenCode what to do differently</text>
+              <text fg={props.theme.muted}>
+                {state().stage === "correct" ? "Tell OpenCode what to do instead. A message is required." : "Tell OpenCode why you rejected this."}
+              </text>
             </box>
           </Match>
         </Switch>
       </box>
 
       <Show
-        when={state().stage !== "reject"}
+        when={state().stage !== "reject" && state().stage !== "correct"}
         fallback={
           <box width="100%" flexGrow={1} flexShrink={1} justifyContent="flex-end">
             <box

@@ -195,7 +195,9 @@ const layer = Layer.effect(
         permission: request.permission,
         patterns: request.patterns,
         // Review details come from the permission hook, not tool-supplied metadata.
-        metadata,
+        // Tool and plugin metadata may contain optional undefined fields; the
+        // HTTP event encoder requires a JSON-compatible request payload.
+        metadata: JSON.parse(JSON.stringify(metadata)) as Record<string, unknown>,
         always: request.always,
         tool: request.tool,
       }
