@@ -5,6 +5,32 @@ export function groupPending<T extends { id: string; sessionID: string }>(items:
   return grouped
 }
 
+export function touchPending(touched: Map<string, Set<string>>, sessionID: string, requestID: string) {
+  const requests = touched.get(sessionID)
+  if (requests) requests.add(requestID)
+  else touched.set(sessionID, new Set([requestID]))
+}
+
+export function mergeTouchedPending<T extends { id: string; sessionID: string }>(
+  snapshot: T[],
+  current: Record<string, T[]>,
+  touched: Map<string, Set<string>>,
+) {
+  const merged = groupPending(snapshot)
+  for (const [sessionID, requestIDs] of touched) {
+    const requests = new Map((merged[sessionID] ?? []).map((request) => [request.id, request]))
+    const latest = new Map((current[sessionID] ?? []).map((request) => [request.id, request]))
+    for (const requestID of requestIDs) {
+      const request = latest.get(requestID)
+      if (request) requests.set(requestID, request)
+      else requests.delete(requestID)
+    }
+    if (requests.size) merged[sessionID] = [...requests.values()].sort((a, b) => a.id.localeCompare(b.id))
+    else delete merged[sessionID]
+  }
+  return merged
+}
+
 export function reconnectRetryable(error: unknown) {
   const value = error !== null && typeof error === "object" ? error : undefined
   const response =
