@@ -32,7 +32,13 @@ import { batch, onCleanup, onMount } from "solid-js"
 import path from "path"
 import { useKV } from "./kv"
 import { usePermission } from "./permission"
-import { groupPending, mergeTouchedRecord, mergeTouchedSessions, reconnectRetryable } from "./reconnect-state"
+import {
+  mergeTouchedPending,
+  mergeTouchedRecord,
+  mergeTouchedSessions,
+  reconnectRetryable,
+  touchPending,
+} from "./reconnect-state"
 
 const emptyConsoleState: ConsoleState = {
   consoleManagedProviders: [],
@@ -154,11 +160,12 @@ export const {
     const hydratingSessions = new Map<string, { messages: Set<string>; parts: Set<string> }>()
     let connected = false
     let reconnectEpoch = 0
+    let pendingGeneration = 0
     let recoveryAbort = new AbortController()
     const touchedSessions = new Set<string>()
     const touchedStatus = new Set<string>()
-    const touchedPermissions = new Set<string>()
-    const touchedQuestions = new Set<string>()
+    const touchedPermissions = new Map<string, Set<string>>()
+    const touchedQuestions = new Map<string, Set<string>>()
     const touchMessage = (sessionID: string, messageID: string) => {
       hydratingSessions.get(sessionID)?.messages.add(messageID)
     }
@@ -229,21 +236,58 @@ export const {
       })()
     }
 
+    function refreshPending(epoch: number) {
+      const workspace = project.workspace.current()
+      const generation = ++pendingGeneration
+      recover(
+        epoch,
+        "permissions",
+        (signal) =>
+          sdk.client.permission
+            .list({ workspace }, { signal, throwOnError: true })
+            .then((response) => response.data ?? []),
+        (permissions) => {
+          if (generation !== pendingGeneration) return
+          setStore("permission", reconcile(mergeTouchedPending(permissions, store.permission, touchedPermissions)))
+        },
+      )
+      recover(
+        epoch,
+        "questions",
+        (signal) =>
+          sdk.client.question
+            .list({ workspace }, { signal, throwOnError: true })
+            .then((response) => response.data ?? []),
+        (questions) => {
+          if (generation !== pendingGeneration) return
+          setStore("question", reconcile(mergeTouchedPending(questions, store.question, touchedQuestions)))
+        },
+      )
+    }
+
     event.subscribe((event, { directory, workspace }) => {
+      // Also track events during the initial pending-request snapshot. A reply
+      // can arrive after list() starts but before its response is applied.
+      if (event.type === "permission.asked")
+        touchPending(touchedPermissions, event.properties.sessionID, event.properties.id)
+      if (event.type === "permission.replied")
+        touchPending(touchedPermissions, event.properties.sessionID, event.properties.requestID)
+      if (event.type === "question.asked") touchPending(touchedQuestions, event.properties.sessionID, event.properties.id)
+      if (event.type === "question.replied" || event.type === "question.rejected")
+        touchPending(touchedQuestions, event.properties.sessionID, event.properties.requestID)
       if (reconnectEpoch > 0) {
         if (event.type === "session.created" || event.type === "session.updated" || event.type === "session.deleted")
           touchedSessions.add(event.properties.info.id)
         if (event.type === "session.next.moved") touchedSessions.add(event.properties.sessionID)
         if (event.type === "session.status") touchedStatus.add(event.properties.sessionID)
-        if (event.type === "permission.asked" || event.type === "permission.replied")
-          touchedPermissions.add(event.properties.sessionID)
-        if (event.type === "question.asked" || event.type === "question.replied" || event.type === "question.rejected")
-          touchedQuestions.add(event.properties.sessionID)
       }
       switch (event.type) {
         case "server.connected": {
           if (!connected) {
             connected = true
+            // A bootstrap GET may finish before the first SSE subscription.
+            // Re-read after the stream is live to close that startup gap.
+            refreshPending(reconnectEpoch)
             break
           }
           // Events emitted while the stream was down are not replayed. Re-read
@@ -273,32 +317,7 @@ export const {
             (status) =>
               setStore("session_status", reconcile(mergeTouchedRecord(status, store.session_status, touchedStatus))),
           )
-          recover(
-            epoch,
-            "permissions",
-            (signal) =>
-              sdk.client.permission
-                .list({ workspace: currentWorkspace }, { signal, throwOnError: true })
-                .then((response) => response.data ?? []),
-            (permissions) =>
-              setStore(
-                "permission",
-                reconcile(mergeTouchedRecord(groupPending(permissions), store.permission, touchedPermissions)),
-              ),
-          )
-          recover(
-            epoch,
-            "questions",
-            (signal) =>
-              sdk.client.question
-                .list({ workspace: currentWorkspace }, { signal, throwOnError: true })
-                .then((response) => response.data ?? []),
-            (questions) =>
-              setStore(
-                "question",
-                reconcile(mergeTouchedRecord(groupPending(questions), store.question, touchedQuestions)),
-              ),
-          )
+          refreshPending(epoch)
           const sessions = new Set([...fullSyncedSessions, ...syncingSessions.keys()])
           fullSyncedSessions.clear()
           for (const sessionID of sessions) {
@@ -592,6 +611,9 @@ export const {
     async function bootstrap(input: { fatal?: boolean } = {}) {
       const fatal = input.fatal ?? true
       const workspace = project.workspace.current()
+      // Event streams do not replay requests created before attach. Keep this
+      // separate from blocking bootstrap so the prompt can appear promptly.
+      refreshPending(reconnectEpoch)
       const projectPromise = project.sync()
       const sessionListPromise = projectPromise.then(() => listSessions())
 
