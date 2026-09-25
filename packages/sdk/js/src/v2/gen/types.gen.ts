@@ -1275,6 +1275,8 @@ export type GlobalEvent = {
           sessionID: string
           requestID: string
           reply: PermissionV2Reply
+          origin?: "human" | "automatic" | "unknown" | "cascade"
+          direct?: boolean
         }
       }
     | {
@@ -1398,6 +1400,8 @@ export type GlobalEvent = {
           sessionID: string
           requestID: string
           reply: "once" | "always" | "reject"
+          origin?: "human" | "automatic" | "unknown" | "cascade"
+          direct?: boolean
         }
       }
     | {
@@ -5477,6 +5481,8 @@ export type PermissionV2Replied = {
     sessionID: string
     requestID: string
     reply: PermissionV2Reply
+    origin?: "human" | "automatic" | "unknown" | "cascade"
+    direct?: boolean
   }
 }
 
@@ -5740,6 +5746,8 @@ export type PermissionReplied = {
     sessionID: string
     requestID: string
     reply: "once" | "always" | "reject"
+    origin?: "human" | "automatic" | "unknown" | "cascade"
+    direct?: boolean
   }
 }
 
@@ -6748,6 +6756,8 @@ export type EventPermissionV2Replied = {
     sessionID: string
     requestID: string
     reply: PermissionV2Reply
+    origin?: "human" | "automatic" | "unknown" | "cascade"
+    direct?: boolean
   }
 }
 
@@ -6885,6 +6895,8 @@ export type EventPermissionReplied = {
     sessionID: string
     requestID: string
     reply: "once" | "always" | "reject"
+    origin?: "human" | "automatic" | "unknown" | "cascade"
+    direct?: boolean
   }
 }
 
@@ -9268,6 +9280,8 @@ export type PermissionReplyData = {
   body?: {
     reply: "once" | "always" | "reject"
     message?: string
+    origin?: "human" | "automatic"
+    commandFeedback?: Array<{ index: number; digest: string; decision: "allow" | "reject" }>
   }
   path: {
     requestID: string
@@ -10373,6 +10387,7 @@ export type SessionUnrevertResponse = SessionUnrevertResponses[keyof SessionUnre
 export type PermissionRespondData = {
   body?: {
     response: "once" | "always" | "reject"
+    origin?: "human" | "automatic"
   }
   path: {
     sessionID: string
@@ -12746,6 +12761,7 @@ export type V2SessionPermissionReplyData = {
   body: {
     reply: PermissionV2Reply
     message?: string
+    origin?: "human" | "automatic"
   }
   path: {
     sessionID: string

@@ -139,6 +139,14 @@ export function RunPermissionBody(props: {
   const dims = useTerminalDimensions()
   const [state, setState] = createSignal(createPermissionBodyState(props.request.id))
   const info = createMemo(() => permissionInfo(props.request))
+  const purpose = createMemo(() => {
+    const value = props.request.metadata?.purpose
+    return typeof value === "string" ? value : ""
+  })
+  const reviewReason = createMemo(() => {
+    const value = props.request.metadata?.reviewReason
+    return typeof value === "string" ? value : ""
+  })
   const ft = createMemo(() => toolFiletype(info().file))
   const narrow = createMemo(() => footerWidthPolicy(dims().width).dialog.narrow)
   const opts = createMemo(() => permissionOptions(state().stage))
@@ -393,6 +401,22 @@ export function RunPermissionBody(props: {
                   <Show when={!info().diff && info().lines.length === 0}>
                     <box paddingLeft={1}>
                       <text fg={props.theme.muted}>No diff provided</text>
+                    </box>
+                  </Show>
+                  <Show when={reviewReason()}>
+                    <box paddingLeft={1} flexDirection="column">
+                      <text fg={props.theme.muted}>Safety review</text>
+                      <text fg={props.theme.text} wrapMode="word">
+                        {reviewReason()}
+                      </text>
+                    </box>
+                  </Show>
+                  <Show when={purpose()}>
+                    <box paddingLeft={1} flexDirection="column">
+                      <text fg={props.theme.muted}>Agent's purpose</text>
+                      <text fg={props.theme.text} wrapMode="word">
+                        {purpose()}
+                      </text>
                     </box>
                   </Show>
                 </box>

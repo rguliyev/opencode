@@ -2433,8 +2433,21 @@ export type PermissionsGetOutput = {
 export type PermissionsReplyInput = {
   readonly sessionID: { readonly sessionID: string; readonly requestID: string }["sessionID"]
   readonly requestID: { readonly sessionID: string; readonly requestID: string }["requestID"]
-  readonly reply: { readonly reply: "once" | "always" | "reject"; readonly message?: string | undefined }["reply"]
-  readonly message?: { readonly reply: "once" | "always" | "reject"; readonly message?: string | undefined }["message"]
+  readonly reply: {
+    readonly reply: "once" | "always" | "reject"
+    readonly message?: string | undefined
+    readonly origin?: "human" | "automatic" | undefined
+  }["reply"]
+  readonly message?: {
+    readonly reply: "once" | "always" | "reject"
+    readonly message?: string | undefined
+    readonly origin?: "human" | "automatic" | undefined
+  }["message"]
+  readonly origin?: {
+    readonly reply: "once" | "always" | "reject"
+    readonly message?: string | undefined
+    readonly origin?: "human" | "automatic" | undefined
+  }["origin"]
 }
 
 export type PermissionsReplyOutput = void

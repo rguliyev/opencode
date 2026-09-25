@@ -34,6 +34,7 @@ export type Request = typeof Request.Type
 
 export const Reply = Permission.Reply
 export type Reply = typeof Reply.Type
+export const ReplyOrigin = Permission.ReplyOrigin
 
 export const AssertInput = Schema.Struct({
   id: ID.pipe(Schema.optional),
@@ -46,6 +47,7 @@ export const ReplyInput = Schema.Struct({
   requestID: ID,
   reply: Reply,
   message: Schema.String.pipe(Schema.optional),
+  origin: ReplyOrigin.pipe(Schema.optional),
 }).annotate({ identifier: "PermissionV2.ReplyInput" })
 export type ReplyInput = typeof ReplyInput.Type
 
@@ -226,6 +228,8 @@ const layer = Layer.effect(
             sessionID: existing.request.sessionID,
             requestID: existing.request.id,
             reply: input.reply,
+            origin: input.origin ?? "unknown",
+            direct: true,
           })
 
           if (input.reply === "reject") {
@@ -240,6 +244,8 @@ const layer = Layer.effect(
                 sessionID: item.request.sessionID,
                 requestID: item.request.id,
                 reply: "reject",
+                origin: "cascade",
+                direct: false,
               })
               yield* Deferred.fail(item.deferred, new DeclinedError())
               pending.delete(id)
@@ -277,6 +283,8 @@ const layer = Layer.effect(
               sessionID: item.request.sessionID,
               requestID: item.request.id,
               reply: "always",
+              origin: "cascade",
+              direct: false,
             })
             yield* Deferred.succeed(item.deferred, undefined)
             pending.delete(id)

@@ -1,6 +1,6 @@
 import { createStore } from "solid-js/store"
 import { dirname } from "node:path"
-import { createMemo, For, Match, Show, Switch } from "solid-js"
+import { createEffect, createMemo, For, Match, Show, Switch } from "solid-js"
 import { Portal, useRenderer, useTerminalDimensions, type JSX } from "@opentui/solid"
 import type { TextareaRenderable } from "@opentui/core"
 import { useTheme, selectedForeground } from "../../context/theme"
@@ -18,6 +18,8 @@ import { OPENCODE_BASE_MODE, useBindings, useCommandShortcut } from "../../keyma
 import { usePathFormatter } from "../../context/path-format"
 
 type PermissionStage = "permission" | "always" | "reject"
+type CommandFeedback = { index: number; digest: string; decision: "allow" | "reject" }
+type ReviewItem = { index: number; digest: string; command: string | null; reason: string }
 
 function EditBody(props: { request: PermissionRequest }) {
   const themeState = useTheme()
@@ -114,6 +116,16 @@ export function PermissionPrompt(props: { request: PermissionRequest; directory?
   const sync = useSync()
   const [store, setStore] = createStore({
     stage: "permission" as PermissionStage,
+    reviewIndex: 0,
+    commandFeedback: [] as CommandFeedback[],
+    submitted: false,
+  })
+  let currentRequest = props.request.id
+  createEffect(() => {
+    const id = props.request.id
+    if (id === currentRequest) return
+    currentRequest = id
+    setStore({ stage: "permission", reviewIndex: 0, commandFeedback: [], submitted: false })
   })
   const pathFormatter = usePathFormatter()
 
@@ -129,6 +141,30 @@ export function PermissionPrompt(props: { request: PermissionRequest; directory?
       }
     }
     return {}
+  })
+
+  const purpose = createMemo(() => {
+    const value = props.request.metadata?.purpose
+    return typeof value === "string" ? value : ""
+  })
+  const reviewReason = createMemo(() => {
+    const value = props.request.metadata?.reviewReason
+    return typeof value === "string" ? value : ""
+  })
+  const reviewItems = createMemo((): ReviewItem[] => {
+    if (props.request.permission !== "bash") return []
+    const raw = props.request.metadata?.reviewItems
+    if (!Array.isArray(raw)) return []
+    return raw.filter(
+      (item): item is ReviewItem =>
+        !!item &&
+        typeof item === "object" &&
+        Number.isInteger(item.index) &&
+        typeof item.digest === "string" &&
+        /^[a-f0-9]{64}$/.test(item.digest) &&
+        (typeof item.command === "string" || item.command === null) &&
+        typeof item.reason === "string",
+    )
   })
 
   const { theme } = useTheme()
@@ -167,6 +203,7 @@ export function PermissionPrompt(props: { request: PermissionRequest; directory?
             if (option === "cancel") return
             void sdk.client.permission.reply({
               reply: "always",
+              origin: "human",
               requestID: props.request.id,
               directory: props.directory,
               workspace: project.workspace.current(),
@@ -179,6 +216,8 @@ export function PermissionPrompt(props: { request: PermissionRequest; directory?
           onConfirm={(message) => {
             void sdk.client.permission.reply({
               reply: "reject",
+              origin: "human",
+              commandFeedback: store.commandFeedback.length ? store.commandFeedback : undefined,
               requestID: props.request.id,
               directory: props.directory,
               message: message || undefined,
@@ -186,7 +225,87 @@ export function PermissionPrompt(props: { request: PermissionRequest; directory?
             })
           }}
           onCancel={() => {
+            if (store.commandFeedback.at(-1)?.decision === "reject")
+              setStore("commandFeedback", store.commandFeedback.slice(0, -1))
             setStore("stage", "permission")
+          }}
+        />
+      </Match>
+      <Match when={store.stage === "permission" && reviewItems().length > 0}>
+        <Prompt
+          title="Review shell commands"
+          body={
+            <box flexDirection="column" gap={1}>
+              <text fg={theme.textMuted}>
+                Review flagged command {store.reviewIndex + 1} of {reviewItems().length}. Rejecting one rejects the
+                whole call.
+              </text>
+              <scrollbox height="100%">
+                <box flexDirection="column" gap={1}>
+                  <For each={reviewItems()}>
+                    {(item, position) => (
+                      <box flexDirection="column" paddingLeft={1}>
+                        <text fg={position() === store.reviewIndex ? theme.warning : theme.textMuted}>
+                          {position() < store.reviewIndex ? "✓ " : position() === store.reviewIndex ? "→ " : "· "}
+                          Command {item.index + 1}: {item.command ?? "[command withheld; inspect the tool call]"}
+                        </text>
+                        <text fg={theme.textMuted}>{item.reason}</text>
+                      </box>
+                    )}
+                  </For>
+                </box>
+              </scrollbox>
+              <Show when={purpose()}>
+                <text fg={theme.textMuted}>Agent's purpose: {purpose()}</text>
+              </Show>
+            </box>
+          }
+          options={{ allow: "Allow this command", reject: "Reject whole call" }}
+          escapeKey="reject"
+          fullscreen
+          onSelect={(option) => {
+            if (store.submitted) return
+            const item = reviewItems()[store.reviewIndex]
+            if (!item) return
+            const feedback: CommandFeedback[] = [
+              ...store.commandFeedback,
+              {
+                index: item.index,
+                digest: item.digest,
+                decision: option === "allow" ? "allow" : "reject",
+              },
+            ]
+            if (option === "reject") {
+              setStore("commandFeedback", feedback)
+              if (session()?.parentID) {
+                setStore("stage", "reject")
+                return
+              }
+              void sdk.client.permission.reply({
+                reply: "reject",
+                origin: "human",
+                commandFeedback: feedback,
+                requestID: props.request.id,
+                directory: props.directory,
+                workspace: project.workspace.current(),
+              })
+              setStore("submitted", true)
+              return
+            }
+            if (store.reviewIndex + 1 < reviewItems().length) {
+              setStore("commandFeedback", feedback)
+              setStore("reviewIndex", store.reviewIndex + 1)
+              return
+            }
+            void sdk.client.permission.reply({
+              reply: "once",
+              origin: "human",
+              commandFeedback: feedback,
+              requestID: props.request.id,
+              directory: props.directory,
+              workspace: project.workspace.current(),
+            })
+            setStore("submitted", true)
           }}
         />
       </Match>
@@ -401,7 +520,27 @@ export function PermissionPrompt(props: { request: PermissionRequest; directory?
             <Prompt
               title="Permission required"
               header={header()}
-              body={current.body}
+              body={
+                purpose() || reviewReason() ? (
+                  <box flexDirection="column" gap={1}>
+                    {current.body}
+                    <Show when={reviewReason()}>
+                      <box paddingLeft={1} flexDirection="column">
+                        <text fg={theme.textMuted}>Safety review</text>
+                        <text fg={theme.text}>{reviewReason()}</text>
+                      </box>
+                    </Show>
+                    <Show when={purpose()}>
+                      <box paddingLeft={1} flexDirection="column">
+                        <text fg={theme.textMuted}>Agent's purpose</text>
+                        <text fg={theme.text}>{purpose()}</text>
+                      </box>
+                    </Show>
+                  </box>
+                ) : (
+                  current.body
+                )
+              }
               options={{ once: "Allow once", always: "Allow always", reject: "Reject" }}
               escapeKey="reject"
               fullscreen
@@ -417,6 +556,7 @@ export function PermissionPrompt(props: { request: PermissionRequest; directory?
                   }
                   void sdk.client.permission.reply({
                     reply: "reject",
+                    origin: "human",
                     requestID: props.request.id,
                     directory: props.directory,
                     workspace: project.workspace.current(),
@@ -425,6 +565,7 @@ export function PermissionPrompt(props: { request: PermissionRequest; directory?
                 }
                 void sdk.client.permission.reply({
                   reply: "once",
+                  origin: "human",
                   requestID: props.request.id,
                   directory: props.directory,
                   workspace: project.workspace.current(),

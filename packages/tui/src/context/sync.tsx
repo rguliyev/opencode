@@ -357,6 +357,7 @@ export const {
             void sdk.client.permission.reply({
               requestID: request.id,
               reply: "once",
+              origin: "automatic",
               directory,
               workspace,
             })

@@ -19,6 +19,16 @@ export function SessionPermissionDock(props: {
     return value
   }
 
+  const purpose = () => {
+    const value = props.request.metadata?.purpose
+    return typeof value === "string" ? value : ""
+  }
+
+  const reviewReason = () => {
+    const value = props.request.metadata?.reviewReason
+    return typeof value === "string" ? value : ""
+  }
+
   return (
     <DockPrompt
       kind="permission"
@@ -56,6 +66,24 @@ export function SessionPermissionDock(props: {
         <div data-slot="permission-row">
           <span data-slot="permission-spacer" aria-hidden="true" />
           <div data-slot="permission-hint">{toolDescription()}</div>
+        </div>
+      </Show>
+
+      <Show when={reviewReason()}>
+        <div data-slot="permission-row">
+          <span data-slot="permission-spacer" aria-hidden="true" />
+          <div data-slot="permission-hint">
+            <strong>{language.t("permission.reason.review")}</strong>: {reviewReason()}
+          </div>
+        </div>
+      </Show>
+
+      <Show when={purpose()}>
+        <div data-slot="permission-row">
+          <span data-slot="permission-spacer" aria-hidden="true" />
+          <div data-slot="permission-hint">
+            <strong>{language.t("permission.reason.agent")}</strong>: {purpose()}
+          </div>
         </div>
       </Show>
 
