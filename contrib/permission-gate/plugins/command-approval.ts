@@ -11,6 +11,7 @@ import { createConnection } from "node:net"
 import path from "node:path"
 
 type PermissionInput = {
+  id?: string
   permission: string
   sessionID?: string
   patterns?: unknown
@@ -82,6 +83,7 @@ type ReviewContext = {
   workdir: string
   command_index: number
   command_count: number
+  subagent: boolean
   session_title?: string
   parent_title?: string
   purpose?: string
@@ -159,6 +161,7 @@ const maxResponseBytes = 256 * 1024
 const defaultKevSocket = "/data/rguliyev/tmp/opencode/kev-shadow-20260923/score.sock"
 const kevTimeoutMs = 2_000
 const maxKevEvidenceBytes = 12 * 1024
+const maxKevRequestBytes = 128 * 1024
 // Human-controlled kill switch. The file lives under a path OpenCode agents
 // cannot edit. It is read for every Bash request so toggling it needs no restart
 // after this plugin version has loaded. Configured hard denies run before us.
@@ -989,36 +992,46 @@ const CommandApproval: Plugin = async ({ directory, serverUrl }) => {
     } catch {}
   }
 
-  // Advisory shell-command scoring only. Dispatch Kev after local inspection,
-  // before Jev. Kev never grants permission by itself.
+  // Send every reviewable action to Kev before Jev. The current checkpoint is
+  // shell-only, so the v2 worker acknowledges non-Bash evidence without
+  // inventing a probability. Kev never grants permission by itself.
   function scoreKev(
-    command: string,
-    call: string | null,
+    kind: "bash" | "action",
+    evidence: string,
+    requestID: string,
     commandIndex: number,
     digest: string,
     context: ReviewContext,
     scripts: ScriptEvidence[],
     note?: string,
   ): Promise<Record<string, unknown>> {
-    if (!call) return Promise.resolve({ status: "withheld" })
-    // The deployed Kev worker accepts only its older, bounded context schema.
-    // Richer human/effect context goes to Jev and Luna, not this shell checkpoint.
     const kevContext = { ...context }
-    delete kevContext.human_request
-    delete kevContext.delegated_task
-    delete kevContext.immediate_effect
-    // The command is already sent separately. Avoid doubling single-command
-    // evidence in Kev's 2,048-token context window.
-    if (kevContext.command_count === 1 && kevContext.full_command === command) delete kevContext.full_command
-    const review = sanitizeReviewValue({ command, context: kevContext, scripts, note })
+    // The evidence is already sent separately. Avoid doubling it in the
+    // checkpoint's 2,048-token input window; keep the human's actual request.
+    if (kevContext.command_count === 1 && kevContext.full_command === evidence) delete kevContext.full_command
+    const review = sanitizeReviewValue({ evidence, context: kevContext, scripts, note })
     if (
       !review.complete ||
       containsCredentialLiteralUnmasked(JSON.stringify(review.value)) ||
       Buffer.byteLength(JSON.stringify(review.value.scripts)) > maxKevEvidenceBytes
     )
       return Promise.resolve({ status: "withheld" })
-    const reviewCommand = review.value.command
-    const reviewDigest = createHash("sha256").update(reviewCommand).digest("hex")
+    const request = JSON.stringify({
+      version: 2,
+      kind,
+      request_id: requestID,
+      command_index: commandIndex,
+      source_sha256: digest,
+      review_sha256: createHash("sha256").update(review.value.evidence).digest("hex"),
+      state: {
+        evidence: review.value.evidence,
+        context: review.value.context,
+        ...(kind === "bash" ? { scripts: review.value.scripts } : {}),
+        ...(kind === "bash" && review.value.note ? { scripts_unavailable: review.value.note } : {}),
+      },
+      redactions: review.kinds,
+    })
+    if (Buffer.byteLength(request) > maxKevRequestBytes) return Promise.resolve({ status: "withheld" })
     return new Promise((resolve) => {
       const socket = createConnection({ path: kevSocket })
       let done = false
@@ -1039,17 +1052,26 @@ const CommandApproval: Plugin = async ({ directory, serverUrl }) => {
         if (newline < 0) return
         try {
           const result = JSON.parse(data.slice(0, newline))
-          if (!result || typeof result !== "object" || typeof result.status !== "string")
+          if (
+            !result ||
+            typeof result !== "object" ||
+            result.version !== 2 ||
+            !["score", "unsupported_action", "context_rejected", "withheld", "unavailable"].includes(result.status)
+          )
             return finish({ status: "invalid_response" })
           finish({
             status: result.status,
-            ...(typeof result.p_allow === "number" && Number.isFinite(result.p_allow)
+            ...(typeof result.model_scope === "string" ? { model_scope: result.model_scope } : {}),
+            ...(typeof result.state_sha256 === "string" && /^[a-f0-9]{64}$/.test(result.state_sha256)
+              ? { state_sha256: result.state_sha256 }
+              : {}),
+            ...(typeof result.p_allow === "number" && result.p_allow >= 0 && result.p_allow <= 1
               ? { p_allow: result.p_allow }
               : {}),
             ...(typeof result.latency_ms === "number" && Number.isFinite(result.latency_ms)
               ? { latency_ms: result.latency_ms }
               : {}),
-            ...(typeof result.context_p_allow === "number" && Number.isFinite(result.context_p_allow)
+            ...(typeof result.context_p_allow === "number" && result.context_p_allow >= 0 && result.context_p_allow <= 1
               ? { context_p_allow: result.context_p_allow }
               : {}),
             ...(typeof result.context_status === "string" ? { context_status: result.context_status } : {}),
@@ -1059,19 +1081,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl }) => {
         }
       })
       socket.on("connect", () => {
-        socket.write(
-          JSON.stringify({
-            command: reviewCommand,
-            call,
-            command_index: commandIndex,
-            cmd_sha256: reviewDigest,
-            source_cmd_sha256: digest,
-            context: review.value.context,
-            scripts: review.value.scripts,
-            redactions: review.kinds,
-            ...(review.value.note ? { scripts_unavailable: review.value.note } : {}),
-          }) + "\n",
-        )
+        socket.write(request + "\n")
       })
     })
   }
@@ -1550,6 +1560,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl }) => {
     }
     const context: ReviewContext = {
       agent: session.agent,
+      subagent: !!session.parentID,
       ...(reviewer
         ? {
             role_policy: "Read-only inspection only; no edits, builds, tests, downloads, delegation, or state changes",
@@ -1571,9 +1582,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl }) => {
       immediate_effect: immediateEffect(input.permission),
     }
     const digest = createHash("sha256").update(raw).digest("hex")
-    // The deployed Kev checkpoint is trained only on shell commands. A JSON
-    // action can get a confident but meaningless score, so do not send it.
-    const kev = { status: "unsupported_action" }
+    const kev = await scoreKev("action", safeRaw, input.id ?? callID ?? digest, 0, digest, context, [])
     const result = await review(safeRaw, [], context, undefined, action)
     const reasons: string[] = []
     if (sanitized.kinds.length) reasons.push("sensitive literal in action")
@@ -1607,7 +1616,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl }) => {
       // Keep only a digest in the local audit log, even after redaction.
       action_withheld: true,
       redactions: sanitized.kinds,
-      kev_basis: "shell_command_model_only",
+      kev_basis: "shell_checkpoint_advisory_only",
       kev,
       luna: lunaAudit(luna),
       jev: rawAnswers
@@ -1923,6 +1932,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl }) => {
       }
       const contextBase = {
         agent: session.agent,
+        subagent: !!session.parentID,
         ...(reviewer
           ? {
               role_policy: "Read-only inspection only; no edits, builds, tests, downloads, or state changes",
@@ -1960,8 +1970,9 @@ const CommandApproval: Plugin = async ({ directory, serverUrl }) => {
           // Local inspection precedes the model chain. Kev's shell score is
           // advisory, but it finishes before Jev; original arguments are untouched.
           const kev = await scoreKev(
+            "bash",
             command,
-            base.call,
+            input.id ?? base.call ?? digest,
             commandIndex,
             digest,
             context,

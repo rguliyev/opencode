@@ -127,8 +127,16 @@ test("Jev classifies non-Bash actions with redacted context", async () => {
     socket.on("data", (chunk) => {
       data += chunk.toString("utf8")
       if (!data.includes("\n")) return
-      kevRequests.push(JSON.parse(data.split("\n", 1)[0]))
-      socket.end(JSON.stringify({ status: "score", p_allow: 0.99 }) + "\n")
+      const request = JSON.parse(data.split("\n", 1)[0])
+      kevRequests.push(request)
+      socket.end(
+        JSON.stringify({
+          version: 2,
+          status: request.kind === "bash" ? "score" : "unsupported_action",
+          ...(request.kind === "bash" ? { p_allow: 0.99 } : {}),
+          context_status: "received",
+        }) + "\n",
+      )
     })
   })
   let connections = 0
@@ -221,7 +229,12 @@ test("Jev classifies non-Bash actions with redacted context", async () => {
       readOutput,
     )
     expect(readOutput.status).toBe("allow")
-    expect(connections).toBe(0)
+    expect(connections).toBe(1)
+    expect(order).toEqual(["kev", "jev"])
+    expect(kevRequests[0].version).toBe(2)
+    expect(kevRequests[0].kind).toBe("action")
+    expect(JSON.parse(kevRequests[0].state.evidence).permission).toBe("webfetch")
+    expect(kevRequests[0].state.context.human_request).toBe("Run printf hello in the local worktree.")
     expect((seen[0].state as any).action.permission).toBe("webfetch")
     expect((seen[0].state as any).action.args.url).toBe("https://example.test/health")
     expect((seen[0].state as any).action.metadata.url).toBe("https://example.test/health")
@@ -256,6 +269,8 @@ test("Jev classifies non-Bash actions with redacted context", async () => {
     expect(editOutput.status).toBe("ask")
     expect(JSON.stringify(seen[1])).not.toContain(token)
     expect(JSON.stringify(seen[1])).toContain("[REDACTED:CREDENTIAL]")
+    expect(JSON.stringify(kevRequests[1])).not.toContain(token)
+    expect(JSON.stringify(kevRequests[1])).toContain("[REDACTED:CREDENTIAL]")
 
     const denyOutput = { status: "deny" }
     await hooks["permission.ask"](
@@ -294,7 +309,7 @@ test("Jev classifies non-Bash actions with redacted context", async () => {
     )
     expect(customOutput.status).toBe("ask")
     expect(seen).toHaveLength(3)
-    expect(connections).toBe(0)
+    expect(connections).toBe(3)
 
     // The same live socket must still receive eligible Bash commands.
     bashDeny = true
@@ -317,10 +332,15 @@ test("Jev classifies non-Bash actions with redacted context", async () => {
     expect(bashOutput.status).toBe("ask")
     expect(bashOutput.message).toContain("Luna advises allow")
     expect(seen).toHaveLength(4)
-    expect(connections).toBe(1)
+    expect(connections).toBe(4)
     expect(order).toEqual(["kev", "jev", "luna"])
-    expect(kevRequests[0].context).toMatchObject({ agent: "solo", command_count: 1 })
-    const kevContext = kevRequests[0].context
+    expect(kevRequests[3].kind).toBe("bash")
+    expect(kevRequests[3].state.context).toMatchObject({
+      agent: "solo",
+      command_count: 1,
+      human_request: "Run printf hello in the local worktree.",
+    })
+    const kevContext = kevRequests[3].state.context
     expect(kevContext && typeof kevContext === "object" && "full_command" in kevContext).toBe(false)
   } finally {
     await new Promise<void>((resolve) => kev.close(() => resolve()))
