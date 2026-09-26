@@ -34,6 +34,7 @@ export function SessionPermissionDock(props: {
         typeof item.reason === "string",
     )
   })
+  const multiCommand = createMemo(() => props.request.permission === "bash" && props.request.patterns.length > 1)
 
   const respondToReview = (decision: "allow" | "reject", message?: string) => {
     const item = reviewItems()[reviewIndex()]
@@ -129,7 +130,7 @@ export function SessionPermissionDock(props: {
                         onClick={() => props.onDecide("once")}
                         disabled={props.responding}
                       >
-                        {language.t("ui.permission.allowOnce")}
+                        {language.t(multiCommand() ? "permission.review.allowAll" : "ui.permission.allowOnce")}
                       </Button>
                     </>
                   }
@@ -145,7 +146,7 @@ export function SessionPermissionDock(props: {
                   <Button variant="ghost" size="normal" onClick={() => setCorrecting(true)} disabled={props.responding}>
                     {language.t("permission.doDifferently")}
                   </Button>
-                  <Show when={reviewItems().length > 1}>
+                  <Show when={multiCommand()}>
                     <Button
                       variant="secondary"
                       size="normal"

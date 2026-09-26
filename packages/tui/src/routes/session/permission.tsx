@@ -164,6 +164,7 @@ export function PermissionPrompt(props: { request: PermissionRequest; directory?
         typeof item.reason === "string",
     )
   })
+  const multiCommand = createMemo(() => props.request.permission === "bash" && props.request.patterns.length > 1)
 
   const { theme } = useTheme()
 
@@ -262,7 +263,7 @@ export function PermissionPrompt(props: { request: PermissionRequest; directory?
           }
           options={{
             allow: "Allow this command",
-            ...(reviewItems().length > 1 ? { allowAll: "Allow all" } : {}),
+            ...(multiCommand() ? { allowAll: "Allow all" } : {}),
             reject: "Reject whole call",
             correct: "Do differently",
           }}
@@ -562,7 +563,12 @@ export function PermissionPrompt(props: { request: PermissionRequest; directory?
                   current.body
                 )
               }
-              options={{ once: "Allow once", always: "Allow always", reject: "Reject", correct: "Do differently" }}
+              options={{
+                once: multiCommand() ? "Allow all" : "Allow once",
+                always: "Allow always",
+                reject: "Reject",
+                correct: "Do differently",
+              }}
               escapeKey="reject"
               fullscreen
               onSelect={(option) => {

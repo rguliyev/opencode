@@ -865,6 +865,45 @@ it.instance(
 )
 
 it.instance(
+  "reply - allows a multi-command call with one flagged command",
+  () =>
+    Effect.gen(function* () {
+      const permission = yield* Permission.Service
+      const digest = "a".repeat(64)
+      yield* permission.setReviewer((_input, output) =>
+        Effect.sync(() => {
+          output.reviewItems = [{ index: 1, digest, command: "echo review", reason: "Review this command" }]
+        }),
+      )
+
+      const fiber = yield* ask({
+        id: PermissionV1.ID.make("per_batch_one_flagged"),
+        sessionID: SessionID.make("session_test"),
+        permission: "bash",
+        patterns: ["echo safe", "echo review"],
+        metadata: { command: "echo safe; echo review" },
+        always: [],
+        ruleset: [],
+      }).pipe(Effect.forkScoped)
+      const [pending] = yield* waitForPending(1)
+      expect(pending.patterns).toEqual(["echo safe", "echo review"])
+      expect(pending.metadata.reviewItems).toEqual([
+        { index: 1, digest, command: "echo review", reason: "Review this command" },
+      ])
+
+      yield* reply({
+        requestID: pending.id,
+        reply: "once",
+        origin: "human",
+        commandFeedback: [{ index: 1, digest, decision: "allow" }],
+      })
+      yield* Fiber.join(fiber)
+      expect(yield* list()).toHaveLength(0)
+    }),
+  { git: true },
+)
+
+it.instance(
   "reply - always persists approval and resolves",
   () =>
     Effect.gen(function* () {
