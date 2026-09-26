@@ -89,6 +89,7 @@ type ReviewContext = {
   purpose?: string
   full_command?: string
   human_request?: string
+  human_history?: string
   delegated_task?: string
   immediate_effect?: string
 }
@@ -158,7 +159,7 @@ const maxActionBytes = 64 * 1024
 const maxScriptBytes = 96 * 1024
 const maxScripts = 4
 const maxResponseBytes = 256 * 1024
-const defaultKevSocket = "/data/rguliyev/tmp/opencode/kev-shadow-20260923/score.sock"
+const defaultKevSocket = "/data/rguliyev/tmp/opencode/kev-v2-20260926/score.sock"
 const kevTimeoutMs = 2_000
 const maxKevEvidenceBytes = 12 * 1024
 const maxKevRequestBytes = 128 * 1024
@@ -1126,11 +1127,12 @@ const CommandApproval: Plugin = async ({ directory, serverUrl }) => {
     return chain
   }
 
-  async function latestUserText(sessionID: string) {
+  async function recentUserTexts(sessionID: string, count: number) {
     const deadline = AbortSignal.timeout(5_000)
     let before: string | undefined
     let limit = 16
     let examined = 0
+    const found: string[] = []
     try {
       while (examined < 128) {
         const url = new URL(`/session/${encodeURIComponent(sessionID)}/message`, serverUrl)
@@ -1170,27 +1172,43 @@ const CommandApproval: Plugin = async ({ directory, serverUrl }) => {
             )
             .map((part: { text?: unknown }) => part.text)
             .filter((part: unknown): part is string => typeof part === "string" && !!part.trim())
-          return safeTaskText(parts.join("\n"))
+          const safe = safeTaskText(parts.join("\n"))
+          // The latest real human message is mandatory. Never silently use an
+          // older message if this one cannot be shared safely.
+          if (!safe) return found.length ? found : undefined
+          found.push(safe)
+          if (found.length >= count) return found
         }
         examined += messages.length
-        if (!next || messages.length === 0) return undefined
+        if (!next || messages.length === 0) return found.length ? found : undefined
         before = next
         limit = Math.min(16, 128 - examined)
       }
     } catch {}
-    return undefined
+    return found.length ? found : undefined
   }
 
-  async function latestHumanRequest(sessionID: string | undefined) {
+  async function latestHumanContext(sessionID: string | undefined) {
     const chain = await sessionChain(sessionID)
     const root = chain.at(-1)
     if (!root || (await sessionInfo(root))?.parentID) return undefined
-    return latestUserText(root)
+    const messages = await recentUserTexts(root, 3)
+    if (!messages?.[0]) return undefined
+    // Preserve the immediately preceding request if the older pair is too
+    // large; dropping both would make a short confirmation context-free.
+    const older = messages.slice(1).reverse()
+    const separator = "\n\n--- earlier root human message ---\n\n"
+    const history = older.join(separator)
+    const boundedHistory = Buffer.byteLength(history) <= 4_000 ? history : messages[1]
+    return {
+      human_request: messages[0],
+      ...(boundedHistory && Buffer.byteLength(boundedHistory) <= 4_000 ? { human_history: boundedHistory } : {}),
+    }
   }
 
   async function latestDelegatedTask(sessionID: string | undefined, parentID: string | undefined) {
     if (!sessionID || !parentID) return undefined
-    return latestUserText(sessionID)
+    return (await recentUserTexts(sessionID, 1))?.[0]
   }
 
   function safeContextText(value: unknown, limit: number) {
@@ -1545,10 +1563,11 @@ const CommandApproval: Plugin = async ({ directory, serverUrl }) => {
       return
     }
     const parent = session.parentID ? await sessionInfo(session.parentID) : undefined
-    const [humanRequest, delegatedTask] = await Promise.all([
-      latestHumanRequest(input.sessionID),
+    const [humanContext, delegatedTask] = await Promise.all([
+      latestHumanContext(input.sessionID),
       latestDelegatedTask(input.sessionID, session.parentID),
     ])
+    const humanRequest = humanContext?.human_request
     const missingContext = [
       ...(!humanRequest ? ["latest human request unavailable"] : []),
       ...(session.parentID && !delegatedTask ? ["delegated task unavailable"] : []),
@@ -1578,6 +1597,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl }) => {
         : {}),
       ...(Buffer.byteLength(safeRaw) <= maxContextCommandBytes ? { full_command: safeRaw } : {}),
       ...(humanRequest ? { human_request: humanRequest } : {}),
+      ...(humanContext?.human_history ? { human_history: humanContext.human_history } : {}),
       ...(delegatedTask ? { delegated_task: delegatedTask } : {}),
       immediate_effect: immediateEffect(input.permission),
     }
@@ -1917,10 +1937,11 @@ const CommandApproval: Plugin = async ({ directory, serverUrl }) => {
         return
       }
       const parent = session.parentID ? await sessionInfo(session.parentID) : undefined
-      const [humanRequest, delegatedTask] = await Promise.all([
-        latestHumanRequest(input.sessionID),
+      const [humanContext, delegatedTask] = await Promise.all([
+        latestHumanContext(input.sessionID),
         latestDelegatedTask(input.sessionID, session.parentID),
       ])
+      const humanRequest = humanContext?.human_request
       const missingContext = [
         ...(!humanRequest ? ["latest human request unavailable"] : []),
         ...(session.parentID && !delegatedTask ? ["delegated task unavailable"] : []),
@@ -1947,6 +1968,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl }) => {
         ...(safePurpose ? { purpose: safePurpose } : {}),
         ...(safeFullCommand ? { full_command: safeFullCommand } : {}),
         ...(humanRequest ? { human_request: humanRequest } : {}),
+        ...(humanContext?.human_history ? { human_history: humanContext.human_history } : {}),
         ...(delegatedTask ? { delegated_task: delegatedTask } : {}),
         immediate_effect: immediateEffect("bash"),
       }

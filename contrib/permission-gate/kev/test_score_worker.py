@@ -26,6 +26,7 @@ def request(kind, evidence, context=None):
                 "agent": "solo",
                 "workdir": "/workspace",
                 "human_request": "Inspect the local fixture.",
+                "human_history": "Earlier request: check the fixture status.",
                 "delegated_task": "Report whether the file exists.",
                 "immediate_effect": "Reads local data and returns it to the agent.",
                 "subagent": True,
@@ -65,6 +66,7 @@ class ScoreWorkerTest(unittest.TestCase):
         self.assertEqual(result["model_scope"], "shell_only_unvalidated_context")
         self.assertEqual(states[0], {"command": "printf hello", "scripts": []})
         self.assertEqual(states[1]["context"]["human_request"], "Inspect the local fixture.")
+        self.assertEqual(states[1]["context"]["human_history"], "Earlier request: check the fixture status.")
         self.assertEqual(states[1]["context"]["delegated_task"], "Report whether the file exists.")
 
     def test_rejects_unmasked_secrets_and_missing_human_context(self):

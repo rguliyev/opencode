@@ -44,6 +44,10 @@ OpenCode permission hooks and a local configuration with the expected hard-deny
 patterns.
 The gate pages through bounded session-message responses to find the latest
 root-session human request even when recent assistant tool results are large.
+It also passes up to two earlier, redacted root human messages as separately
+labeled history so short replies such as "yes" retain task context. An unsafe
+latest message stops automatic review rather than falling back to an older
+authorization; unsafe earlier history is omitted.
 For subagents, Kev, Jev, and Luna receive the latest agent-written delegated
 task, explicitly labeled as context rather than human authorization. If either
 required task context is unavailable or contains an obvious credential or
@@ -59,10 +63,9 @@ calls use the same path. Without the plugin, the default is a human prompt.
 No credentials, scope policy files, kill-switch value, decision logs, Kev
 checkpoint, training corpus, calibration state, or worker service configuration
 are tracked here. `kev/score_worker.py` requires `KEV_REPO`, `KEV_CHECKPOINT`,
-`KEV_QUESTIONS`, and `KEV_SCORE_SOCKET` at startup. It is **not installed or
-running** merely because its source exists here; the current live socket still
-speaks the older protocol. Deploy the v2 worker and matching plugin together
-only with separate human approval. The checkpoint still requires a curated,
+`KEV_QUESTIONS`, and `KEV_SCORE_SOCKET` at startup. Source presence alone does
+not imply a deployed worker. Deploy the v2 worker and matching plugin together
+only with human approval. The checkpoint still requires a curated,
 human-adjudicated non-Bash training set and held-out validation before its
 action scores can be trusted. Copying plugin sources does not activate them in
 an already-running OpenCode server; a controlled server reload is required.

@@ -389,7 +389,10 @@ test("Jev receives paginated root human context and a distinct subagent task", a
       if (!rootHumanAvailable)
         return Response.json([{ info: { role: "assistant" }, parts: [{ type: "text", text: "working" }] }])
       if (url.searchParams.get("before") === "older-root-page")
-        return Response.json([{ info: { role: "user" }, parts: [{ type: "text", text: "Check the local fixture." }] }])
+        return Response.json([
+          { info: { role: "user" }, parts: [{ type: "text", text: "Check the local fixture." }] },
+          { info: { role: "user" }, parts: [{ type: "text", text: "Yes, do it." }] },
+        ])
       if (url.searchParams.get("limit") === "16")
         return Response.json(
           Array.from({ length: 16 }, () => ({
@@ -436,7 +439,8 @@ test("Jev receives paginated root human context and a distinct subagent task", a
       output,
     )
     expect(output.status).toBe("allow")
-    expect(jevContext?.human_request).toBe("Check the local fixture.")
+    expect(jevContext?.human_request).toBe("Yes, do it.")
+    expect(jevContext?.human_history).toContain("Check the local fixture.")
     expect(jevContext?.delegated_task).toBe("Inspect the local fixture and report its status.")
     expect(requests.some((request) => request.includes("limit=8"))).toBe(true)
     expect(requests.some((request) => request.includes("before=older-root-page"))).toBe(true)

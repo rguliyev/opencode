@@ -25,7 +25,7 @@ MAX_MODEL_TOKENS = 2048
 CONTEXT_KEYS = {
     "agent", "role_policy", "workdir", "command_index", "command_count",
     "session_title", "parent_title", "purpose", "full_command",
-    "human_request", "delegated_task", "immediate_effect", "subagent",
+    "human_request", "human_history", "delegated_task", "immediate_effect", "subagent",
 }
 SENSITIVE = (
     re.compile(r"\b(?:sk-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9_]{20,}|AKIA[A-Z0-9]{16})\b"),
