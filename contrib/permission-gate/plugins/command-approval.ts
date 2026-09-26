@@ -160,7 +160,7 @@ const maxScriptBytes = 96 * 1024
 const maxScripts = 4
 const maxResponseBytes = 256 * 1024
 const defaultKevSocket = "/data/rguliyev/tmp/opencode/kev-v2-20260926/score.sock"
-const kevTimeoutMs = 2_000
+const kevTimeoutMs = 8_000
 const maxKevEvidenceBytes = 12 * 1024
 const maxKevRequestBytes = 128 * 1024
 // Human-controlled kill switch. The file lives under a path OpenCode agents

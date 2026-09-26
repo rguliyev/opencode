@@ -69,6 +69,30 @@ class ScoreWorkerTest(unittest.TestCase):
         self.assertEqual(states[1]["context"]["human_history"], "Earlier request: check the fixture status.")
         self.assertEqual(states[1]["context"]["delegated_task"], "Report whether the file exists.")
 
+    def test_shell_keeps_baseline_when_context_exceeds_checkpoint_window(self):
+        parsed = self.parse(request("bash", "printf hello"))
+
+        def score(state):
+            if "context" in state:
+                raise ValueError("state exceeds 384 tokens: 400")
+            return 0.9
+
+        result = score_worker.review(parsed, score)
+        self.assertEqual(result["status"], "score")
+        self.assertEqual(result["p_allow"], 0.9)
+        self.assertEqual(result["context_status"], "model_overflow")
+        self.assertNotIn("context_p_allow", result)
+
+    def test_shell_baseline_overflow_is_explicit(self):
+        parsed = self.parse(request("bash", "printf hello"))
+
+        def score(_state):
+            raise ValueError("state exceeds 384 tokens: 400")
+
+        result = score_worker.review(parsed, score)
+        self.assertEqual(result["status"], "context_rejected")
+        self.assertEqual(result["context_status"], "model_overflow")
+
     def test_rejects_unmasked_secrets_and_missing_human_context(self):
         safe = request("bash", "printf hello")
         unsafe = request("bash", "echo sk-" + "x" * 32)

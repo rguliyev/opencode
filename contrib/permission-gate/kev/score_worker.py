@@ -175,6 +175,16 @@ def load_model():
 
 def review(request, score):
     """Return advisory scores only; unsupported actions never get a fake score."""
+    def score_or_overflow(state):
+        try:
+            return score(state)
+        except ValueError as error:
+            # Checkpoint.encode(strict=True) raises before our own token-count
+            # check. Preserve the shell baseline when only context overflows.
+            if str(error).startswith("state exceeds ") and " tokens:" in str(error):
+                return None
+            raise
+
     state = request["state"]
     receipt = hashlib.sha256(json.dumps(state, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     if request["kind"] == "action":
@@ -182,10 +192,10 @@ def review(request, score):
     command = state["evidence"]
     scripts = state.get("scripts", [])
     started = time.perf_counter()
-    baseline = score({"command": command, "scripts": scripts})
+    baseline = score_or_overflow({"command": command, "scripts": scripts})
     if baseline is None:
         return {"version": 2, "status": "context_rejected", "context_status": "model_overflow", "state_sha256": receipt}
-    contextual = score({
+    contextual = score_or_overflow({
         "command": command,
         "scripts": scripts,
         "context": state["context"],

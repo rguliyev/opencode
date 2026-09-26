@@ -22,7 +22,10 @@ permission. The available checkpoint was trained only on shell commands and
 scripts; the v2 worker accepts full sanitized task/action context but returns
 `unsupported_action` for non-Bash rather than an uncalibrated probability.
 Contextual Bash scores are marked `shell_only_unvalidated_context` and remain
-advisory. The worker never logs or persists raw request text. A Jev escalation
+advisory. The checkpoint's native 384-token state window can reject longer
+context; the worker reports `context_status: model_overflow` while preserving
+any usable shell-only baseline. The worker never logs or persists raw request
+text. A Jev escalation
 without a local blocking rule can proceed to GPT-6 Luna via OpenRouter. Luna
 may auto-allow only a root-session, core-verified built-in `glob` operation for
 one literal file path in the local workdir, or a foreground delegation to a
