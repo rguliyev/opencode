@@ -25,13 +25,18 @@ Contextual Bash scores are marked `shell_only_unvalidated_context` and remain
 advisory. The checkpoint's native 384-token state window can reject longer
 context; the worker reports `context_status: model_overflow` while preserving
 any usable shell-only baseline. The worker never logs or persists raw request
-text. A reviewable Jev escalation without a local blocking rule proceeds to
-GPT-6 Luna via OpenRouter, including high-risk and high-confidence Jev results.
-Luna's `allow` resolves ordinary Bash and non-Bash escalations; its `ask`
-prompts the human. Jev scores are signals, not a veto on Luna. Configured
-denials, concrete local human-only rules, unreviewable or unsafe context,
-model failures, and read-only reviewer restrictions still block automatic
-approval. Task evidence must match a trusted foreground built-in call; a
+text. A reviewable Jev escalation or local blocking reason proceeds to GPT-6
+Luna via OpenRouter, including high-risk and high-confidence Jev results.
+Custom `tool_call` dispatches carry their available tool description and
+arguments to Luna and always reach it, even when Jev allows. Any
+request that would otherwise prompt the human gets a Luna attempt first. If
+the action or task context cannot be shared safely, Luna receives only a
+minimal withheld-evidence notice and must ask; raw sensitive evidence is not
+sent. Luna's `allow` resolves ordinary Bash and non-Bash escalations; its
+`ask` prompts the human. Jev scores are signals, not a veto on Luna.
+Configured denials, concrete local human-only rules, unreviewable or unsafe
+context, model failures, and read-only reviewer restrictions still block
+automatic approval. Task evidence must match a trusted foreground built-in call; a
 verified glob snapshot must stay in the workdir and contain no sensitive
 filenames. Only the match count—not discovered filenames—is sent to Jev or
 Luna. These local checks are not proof that every auth, security, production,
@@ -49,7 +54,8 @@ authorization; unsafe earlier history is omitted.
 For subagents, Kev, Jev, and Luna receive the latest agent-written delegated
 task, explicitly labeled as context rather than human authorization. If either
 required task context is unavailable or contains an obvious credential or
-personal-data marker, the gate skips automatic model review and asks the human.
+personal-data marker, the gate withholds it and asks Luna using minimal safe
+context before prompting the human.
 Deployment-specific paths are present in the source; review and adapt them
 before installing elsewhere.
 

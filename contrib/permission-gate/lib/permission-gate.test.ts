@@ -108,7 +108,7 @@ test("Jev receives a scrubbed command and context, while the local gate asks", a
     if (previousStateHome === undefined) delete process.env.XDG_STATE_HOME
     else process.env.XDG_STATE_HOME = previousStateHome
   }
-})
+}, 20_000)
 
 test("Jev classifies non-Bash actions with redacted context", async () => {
   const directory = path.resolve(import.meta.dir, "..")
@@ -176,13 +176,18 @@ test("Jev classifies non-Bash actions with redacted context", async () => {
     }
     if (url === "https://openrouter.ai/api/v1/chat/completions") {
       order.push("luna")
+      const request = JSON.parse(String(init?.body))
+      const state = JSON.parse(request.messages[1].content)
       return Response.json({
         model: "openai/gpt-6-luna",
         choices: [
           {
             finish_reason: "stop",
             message: {
-              content: JSON.stringify({ choice: "allow", reason: "The requested local command is in scope." }),
+              content: JSON.stringify({
+                choice: state.action?.tool === "custom_publish" ? "ask" : "allow",
+                reason: "The local request was reviewed.",
+              }),
             },
           },
         ],
@@ -310,6 +315,7 @@ test("Jev classifies non-Bash actions with redacted context", async () => {
     expect(customOutput.status).toBe("ask")
     expect(seen).toHaveLength(3)
     expect(connections).toBe(3)
+    expect(order.at(-1)).toBe("luna")
 
     // The same live socket must still receive eligible Bash commands.
     bashDeny = true
@@ -353,7 +359,7 @@ test("Jev classifies non-Bash actions with redacted context", async () => {
       publishOutput,
     )
     expect(publishOutput.status).toBe("ask")
-    expect(order.at(-1)).toBe("jev")
+    expect(order.at(-1)).toBe("luna")
 
     const searchOutput = { status: "ask" }
     await hooks["permission.ask"](
@@ -764,7 +770,11 @@ test("Luna resolves Jev escalations with trusted human context and strict JSON",
     const unsafeContext = { status: "allow" }
     await hooks["permission.ask"](request, unsafeContext)
     expect(unsafeContext.status).toBe("ask")
-    expect(seen).toHaveLength(priorUnsafeReviews)
+    expect(seen).toHaveLength(priorUnsafeReviews + 1)
+    expect(seen.at(-1)).toBe("luna")
+    expect((lunaState?.action as { metadata?: { evidence_status?: string } })?.metadata?.evidence_status).toBe(
+      "withheld_by_local_guard",
+    )
 
     latestHumanText = undefined
     const humanOnly = { status: "allow" }
@@ -782,7 +792,7 @@ test("Luna resolves Jev escalations with trusted human context and strict JSON",
       humanOnly,
     )
     expect(humanOnly.status).toBe("ask")
-    expect(seen.at(-1)).toBe("jev")
+    expect(seen.at(-1)).toBe("luna")
 
     const token = "sk-" + "C".repeat(40)
     latestHumanText = `Check whether src/main.ts exists; api_key=${token}`
@@ -790,8 +800,10 @@ test("Luna resolves Jev escalations with trusted human context and strict JSON",
     const scrubbed = { status: "allow" }
     await hooks["permission.ask"](request, scrubbed)
     expect(scrubbed.status).toBe("ask")
-    expect(seen).toHaveLength(priorReviews)
+    expect(seen).toHaveLength(priorReviews + 1)
+    expect(seen.at(-1)).toBe("luna")
     expect(JSON.stringify(jevState)).not.toContain(token)
+    expect(JSON.stringify(lunaState)).not.toContain(token)
 
     latestHumanText = undefined
     const editRequest = {
@@ -821,6 +833,7 @@ test("Luna resolves Jev escalations with trusted human context and strict JSON",
       policyEdit,
     )
     expect(policyEdit.status).toBe("ask")
+    expect(seen.slice(-2)).toEqual(["jev", "luna"])
 
     await hooks["tool.execute.before"](
       { tool: "grep", sessionID: "ses_luna_test", callID: "call_luna_grep" },
@@ -840,6 +853,38 @@ test("Luna resolves Jev escalations with trusted human context and strict JSON",
     const grepAsked = { status: "allow" }
     await hooks["permission.ask"](grepRequest, grepAsked)
     expect(grepAsked.status).toBe("ask")
+    lunaContent = JSON.stringify({ choice: "allow", reason: "The local request is in scope." })
+
+    await hooks["tool.definition"](
+      { toolID: "goal_block" },
+      { description: "Stop the current goal as blocked and state the concrete external requirement.", parameters: {} },
+    )
+    await hooks["tool.execute.before"](
+      { tool: "goal_block", sessionID: "ses_luna_test", callID: "call_luna_goal_block" },
+      { args: { blocker: "Waiting for a fixture." } },
+    )
+    const goalRequest = {
+      permission: "tool_call",
+      sessionID: "ses_luna_test",
+      patterns: ["goal_block"],
+      metadata: { tool: "goal_block", trusted_builtin: false, internal_permission_check: false },
+      tool: { callID: "call_luna_goal_block" },
+    }
+    const goalAllowed = { status: "ask" }
+    await hooks["permission.ask"](goalRequest, goalAllowed)
+    expect(goalAllowed.status).toBe("allow")
+    expect(seen.slice(-2)).toEqual(["jev", "luna"])
+    expect(lunaState?.action).toMatchObject({
+      permission: "tool_call",
+      tool: "goal_block",
+      tool_description: "Stop the current goal as blocked and state the concrete external requirement.",
+      args: { blocker: "Waiting for a fixture." },
+    })
+    lunaContent = JSON.stringify({ choice: "ask", reason: "The tool's effect is unclear." })
+    const goalAsked = { status: "allow" }
+    await hooks["permission.ask"](goalRequest, goalAsked)
+    expect(goalAsked.status).toBe("ask")
+    expect(seen.slice(-2)).toEqual(["jev", "luna"])
     lunaContent = JSON.stringify({ choice: "allow", reason: "The local request is in scope." })
 
     await hooks["tool.execute.before"](
@@ -948,7 +993,9 @@ test("Luna resolves Jev escalations with trusted human context and strict JSON",
       sensitiveMatch,
     )
     expect(sensitiveMatch.status).toBe("ask")
-    expect(seen).toHaveLength(beforeSensitive)
+    expect(seen).toHaveLength(beforeSensitive + 1)
+    expect(seen.at(-1)).toBe("luna")
+    expect(JSON.stringify(lunaState)).not.toContain("patient-123-45-6789.ts")
   } finally {
     globalThis.fetch = previousFetch
     if (previousStateHome === undefined) delete process.env.XDG_STATE_HOME
