@@ -25,7 +25,10 @@ Contextual Bash scores are marked `shell_only_unvalidated_context` and remain
 advisory. The worker never logs or persists raw request text. A Jev escalation
 without a local blocking rule can proceed to GPT-6 Luna via OpenRouter. Luna
 may auto-allow only a root-session, core-verified built-in `glob` operation for
-one literal file path in the local workdir. The built-in supplies a bounded
+one literal file path in the local workdir, or a foreground delegation to a
+known subagent whose later tool actions each receive separate permission
+checks. Resumed/background tasks and opaque tool calls remain human-reviewed.
+The glob built-in supplies a bounded
 filename snapshot for local checks, but only the match count—not discovered
 filenames—is sent to Jev or Luna. Wildcard discovery and sensitive-looking
 filenames stay with the human. Auto-allow also requires a safely retrieved

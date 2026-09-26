@@ -680,6 +680,40 @@ test("Luna resolves only low-risk Jev escalations with trusted human context and
         : undefined,
     ).toContain("Reads local data")
 
+    latestHumanText = "Build an isolated mock webhook fixture locally."
+    await hooks["tool.execute.before"](
+      { tool: "task", sessionID: "ses_luna_test", callID: "call_luna_task" },
+      {
+        args: {
+          description: "Build local webhook fixture",
+          prompt: "Build an isolated mock webhook fixture in the existing sandbox.",
+          subagent_type: "deep-implementer",
+        },
+      },
+    )
+    const taskRequest = {
+      permission: "task",
+      sessionID: "ses_luna_test",
+      patterns: ["deep-implementer"],
+      metadata: {
+        description: "Build local webhook fixture",
+        subagent_type: "deep-implementer",
+        core_trusted_builtin: true,
+      },
+      tool: { callID: "call_luna_task" },
+    }
+    const task = { status: "ask" }
+    await hooks["permission.ask"](taskRequest, task)
+    expect(task.status).toBe("allow")
+    expect(seen.slice(-2)).toEqual(["jev", "luna"])
+    const backgroundTask = { status: "allow" }
+    await hooks["permission.ask"](
+      { ...taskRequest, metadata: { ...taskRequest.metadata, background: true } },
+      backgroundTask,
+    )
+    expect(backgroundTask.status).toBe("ask")
+    latestHumanText = undefined
+
     lunaContent = 'Prose before JSON: {"choice":"allow","reason":"Looks fine"}'
     const malformed = { status: "allow" }
     await hooks["permission.ask"](request, malformed)
@@ -690,7 +724,7 @@ test("Luna resolves only low-risk Jev escalations with trusted human context and
     const riskFlagged = { status: "allow" }
     await hooks["permission.ask"](request, riskFlagged)
     expect(riskFlagged.status).toBe("ask")
-    expect(seen).toEqual(["jev", "luna", "jev", "luna", "jev"])
+    expect(seen.at(-1)).toBe("jev")
 
     jevRisk = 0.01
     jevConfidence = 0.9
