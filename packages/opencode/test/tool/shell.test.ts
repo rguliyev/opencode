@@ -230,12 +230,28 @@ describe("tool.shell permissions", () => {
           yield* run(
             {
               command: "echo hello",
+              reason: "Verify the shell is working",
             },
             capture(requests),
           )
           expect(requests.length).toBe(1)
           expect(requests[0].permission).toBe("bash")
           expect(requests[0].patterns).toContain("echo hello")
+          expect(requests[0].metadata.purpose).toBe("Verify the shell is working")
+        }),
+      )
+    }),
+  )
+
+  each("omits purpose metadata when no reason was supplied", () =>
+    Effect.gen(function* () {
+      const tmp = yield* tmpdirScoped()
+      yield* runIn(
+        tmp,
+        Effect.gen(function* () {
+          const requests: Array<Omit<PermissionV1.Request, "id" | "sessionID" | "tool">> = []
+          yield* run({ command: "echo hello" }, capture(requests))
+          expect(requests[0].metadata).not.toHaveProperty("purpose")
         }),
       )
     }),
@@ -337,6 +353,7 @@ describe("tool.shell permissions", () => {
         const extDirReq = requests.find((r) => r.permission === "external_directory")
         expect(extDirReq).toBeDefined()
         expect(extDirReq!.patterns).toContain(want)
+        expect(extDirReq!.metadata).not.toHaveProperty("purpose")
       }),
     ),
   )

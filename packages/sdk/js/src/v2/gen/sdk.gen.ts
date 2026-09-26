@@ -3125,6 +3125,8 @@ export class Permission extends HeyApiClient {
       workspace?: string
       reply?: "once" | "always" | "reject"
       message?: string
+      origin?: "human" | "automatic"
+      commandFeedback?: { index: number; digest: string; decision: "allow" | "reject" }[]
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -3138,6 +3140,8 @@ export class Permission extends HeyApiClient {
             { in: "query", key: "workspace" },
             { in: "body", key: "reply" },
             { in: "body", key: "message" },
+            { in: "body", key: "origin" },
+            { in: "body", key: "commandFeedback" },
           ],
         },
       ],
@@ -3168,6 +3172,7 @@ export class Permission extends HeyApiClient {
       directory?: string
       workspace?: string
       response?: "once" | "always" | "reject"
+      origin?: "human" | "automatic"
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -3181,6 +3186,7 @@ export class Permission extends HeyApiClient {
             { in: "query", key: "directory" },
             { in: "query", key: "workspace" },
             { in: "body", key: "response" },
+            { in: "body", key: "origin" },
           ],
         },
       ],
@@ -5290,6 +5296,7 @@ export class Permission2 extends HeyApiClient {
       requestID: string
       reply?: PermissionV2Reply
       message?: string
+      origin?: "human" | "automatic"
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -5302,6 +5309,7 @@ export class Permission2 extends HeyApiClient {
             { in: "path", key: "requestID" },
             { in: "body", key: "reply" },
             { in: "body", key: "message" },
+            { in: "body", key: "origin" },
           ],
         },
       ],

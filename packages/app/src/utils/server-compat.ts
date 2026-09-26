@@ -30,10 +30,13 @@ type CompatibleSessionApi = Omit<
   // archive: (input: Parameters<SessionApi["archive"]>[0] & LegacyLocation) => ReturnType<SessionApi["archive"]>
   remove: (input: Parameters<SessionApi["remove"]>[0] & LegacyLocation) => ReturnType<SessionApi["remove"]>
 }
+type CompatiblePermissionReplyInput = Parameters<ServerApi["permission"]["reply"]>[0] & {
+  location?: { directory?: string }
+  origin?: "human" | "automatic"
+  commandFeedback?: { index: number; digest: string; decision: "allow" | "reject" }[]
+}
 type CompatiblePermissionApi = Omit<ServerApi["permission"], "reply"> & {
-  reply: (
-    input: Parameters<ServerApi["permission"]["reply"]>[0] & { location?: { directory?: string } },
-  ) => ReturnType<ServerApi["permission"]["reply"]>
+  reply: (input: CompatiblePermissionReplyInput) => ReturnType<ServerApi["permission"]["reply"]>
 }
 export type CompatibleApi = Omit<ServerApi, "session" | "permission"> & {
   readonly session: CompatibleSessionApi
@@ -85,10 +88,33 @@ function sessionInfo(session: Session): SessionInfo {
 
 export function createCompatibleApi(input: CompatibleInput): CompatibleApi {
   const v1 = createV1Api(input)
+  const v2 = createV2Api(input)
   return lazyApi(
-    input.protocol.then((protocol) => (protocol === "v1" ? v1 : input.current)),
+    input.protocol.then((protocol) => (protocol === "v1" ? v1 : v2)),
     input.current,
   )
+}
+
+function createV2Api(input: CompatibleInput): CompatibleApi {
+  return {
+    ...input.current,
+    permission: {
+      ...input.current.permission,
+      async reply(value: CompatiblePermissionReplyInput) {
+        if (!value.origin) return input.current.permission.reply(value)
+        await input.legacy(value.location?.directory ?? input.directory).v2.session.permission.reply(
+          {
+            sessionID: value.sessionID,
+            requestID: value.requestID,
+            reply: value.reply,
+            message: value.message,
+            origin: value.origin,
+          },
+          { throwOnError: true },
+        )
+      },
+    },
+  }
 }
 
 function lazyApi<T extends object>(implementation: Promise<T>, shape: T): T {
@@ -493,11 +519,23 @@ function createV1Api(input: CompatibleInput): CompatibleApi {
     },
     permission: {
       ...input.current.permission,
-      async reply(value: Parameters<ServerApi["permission"]["reply"]>[0] & { location?: { directory?: string } }) {
+      async reply(value: CompatiblePermissionReplyInput) {
+        if (value.message || value.commandFeedback) {
+          await legacy(value.location).permission.reply({
+            requestID: value.requestID,
+            reply: value.reply,
+            message: value.message,
+            origin: value.origin,
+            commandFeedback: value.commandFeedback,
+            directory: directory(value.location),
+          })
+          return
+        }
         await legacy(value.location).permission.respond({
           sessionID: value.sessionID,
           permissionID: value.requestID,
           response: value.reply,
+          origin: value.origin,
           directory: directory(value.location),
         })
       },

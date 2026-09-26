@@ -260,7 +260,8 @@ const parse = Effect.fn("ShellTool.parse")(function* (command: string, ps: boole
   return tree
 })
 
-const ask = Effect.fn("ShellTool.ask")(function* (ctx: Tool.Context, scan: Scan, input: { command: string }) {
+const ask = Effect.fn("ShellTool.ask")(function* (ctx: Tool.Context, scan: Scan, input: Parameters) {
+  const purpose = input.reason?.trim().slice(0, 500)
   if (scan.dirs.size > 0) {
     const directories = Array.from(scan.dirs)
     const globs = directories.map((dir) => {
@@ -273,6 +274,7 @@ const ask = Effect.fn("ShellTool.ask")(function* (ctx: Tool.Context, scan: Scan,
       always: globs,
       metadata: {
         command: input.command,
+        ...(purpose ? { purpose } : {}),
         directories,
         patterns: globs,
       },
@@ -286,6 +288,7 @@ const ask = Effect.fn("ShellTool.ask")(function* (ctx: Tool.Context, scan: Scan,
     always: Array.from(scan.always),
     metadata: {
       command: input.command,
+      ...(purpose ? { purpose } : {}),
     },
   })
 })
