@@ -1656,19 +1656,16 @@ const CommandApproval: Plugin = async ({ directory, serverUrl }) => {
       if (scope) reasons.push(scope)
     const rawAnswers = result.raw
     const verdictAnswer = rawAnswers?.verdict
-    const jevEligible =
-      !result.allow &&
-      !session.parentID &&
-      !reviewer &&
-      raw === safeRaw &&
-      reasons.length === 0 &&
-      acceptedModels.has(result.jevModel ?? "") &&
-      lowRiskJevEscalation(rawAnswers)
-    const luna = jevEligible
+    const lunaEligible =
+      !result.allow && raw === safeRaw && reasons.length === 0 && acceptedModels.has(result.jevModel ?? "")
+    const luna = lunaEligible
       ? await reviewLuna(safeRaw, [], context, undefined, action)
       : ({ status: "skipped" } as LunaResult)
     const lunaAllow =
-      jevEligible &&
+      lunaEligible &&
+      !session.parentID &&
+      !reviewer &&
+      lowRiskJevEscalation(rawAnswers) &&
       lunaMayAutoAllowAction(action, context, matchedPaths) &&
       luna.status === "score" &&
       luna.choice === "allow"
@@ -2100,15 +2097,9 @@ const CommandApproval: Plugin = async ({ directory, serverUrl }) => {
           for (const scope of scopes) if (scope) reasons.push(scope)
           if (inspection.error) reasons.push(`no script evidence: ${inspection.error}`)
 
-          const jevEligible =
-            !result.allow &&
-            !session.parentID &&
-            !reviewer &&
-            !inspection.error &&
-            reasons.length === 0 &&
-            acceptedModels.has(result.jevModel ?? "") &&
-            lowRiskJevEscalation(raw)
-          const luna = jevEligible
+          const lunaEligible =
+            !result.allow && !inspection.error && reasons.length === 0 && acceptedModels.has(result.jevModel ?? "")
+          const luna = lunaEligible
             ? await reviewLuna(command, inspection.scripts, context)
             : ({ status: "skipped" } as LunaResult)
           // Bash is always effectful and the current static rules cannot

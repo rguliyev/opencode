@@ -25,8 +25,9 @@ Contextual Bash scores are marked `shell_only_unvalidated_context` and remain
 advisory. The checkpoint's native 384-token state window can reject longer
 context; the worker reports `context_status: model_overflow` while preserving
 any usable shell-only baseline. The worker never logs or persists raw request
-text. A Jev escalation
-without a local blocking rule can proceed to GPT-6 Luna via OpenRouter. Luna
+text. A reviewable Jev escalation without a local blocking rule proceeds to
+GPT-6 Luna via OpenRouter for a second opinion, including high-risk and
+high-confidence Jev results. Luna
 may auto-allow only a root-session, core-verified built-in `glob` operation for
 one literal file path in the local workdir, or a foreground delegation to a
 known subagent whose later tool actions each receive separate permission
@@ -44,7 +45,8 @@ edits can run project formatters without a second permission check, while the
 current static rules cannot prove every human-only auth, security, production,
 or regulated-data gate absent from arbitrary commands and tools. High-confidence
 Jev denials, model failures, malformed Luna output, missing context, and local
-blocking rules still ask the human. Only sanitized review copies leave the
+blocking rules still ask the human when Luna cannot safely auto-allow. Only
+sanitized review copies leave the
 process; executed arguments are not modified. The gate requires matching
 OpenCode permission hooks and a local configuration with the expected hard-deny
 patterns.

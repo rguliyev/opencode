@@ -724,14 +724,14 @@ test("Luna resolves only low-risk Jev escalations with trusted human context and
     const riskFlagged = { status: "allow" }
     await hooks["permission.ask"](request, riskFlagged)
     expect(riskFlagged.status).toBe("ask")
-    expect(seen.at(-1)).toBe("jev")
+    expect(seen.slice(-2)).toEqual(["jev", "luna"])
 
     jevRisk = 0.01
     jevConfidence = 0.9
     const confidentDeny = { status: "allow" }
     await hooks["permission.ask"](request, confidentDeny)
     expect(confidentDeny.status).toBe("ask")
-    expect(seen.at(-1)).toBe("jev")
+    expect(seen.slice(-2)).toEqual(["jev", "luna"])
 
     jevConfidence = 0.24
     latestHumanText = "x".repeat(6_001)
