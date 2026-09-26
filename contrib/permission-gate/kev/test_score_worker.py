@@ -2,9 +2,13 @@
 
 import hashlib
 import json
+import os
+import subprocess
 import socket
+import sys
 import tempfile
 import threading
+import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -166,6 +170,36 @@ class ScoreWorkerTest(unittest.TestCase):
                 listener.close()
         self.assertFalse(server.is_alive())
         self.assertEqual([result["status"] for result in results], ["score", "score"])
+
+    def test_main_removes_its_socket_on_sigterm(self):
+        with tempfile.TemporaryDirectory(
+            prefix="kev-v2-signal-", dir="/data/rguliyev/tmp/opencode"
+        ) as directory:
+            address = Path(directory) / "score.sock"
+            environment = {**os.environ, "KEV_SCORE_SOCKET": str(address), "PYTHONDONTWRITEBYTECODE": "1"}
+            process = subprocess.Popen(
+                [
+                    sys.executable,
+                    "-c",
+                    "import score_worker; score_worker.load_model=lambda: (lambda _: 0.9); score_worker.main()",
+                ],
+                env=environment,
+                cwd=Path(__file__).resolve().parent,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            try:
+                deadline = time.monotonic() + 5
+                while not address.exists() and process.poll() is None and time.monotonic() < deadline:
+                    time.sleep(0.05)
+                self.assertTrue(address.is_socket())
+                process.terminate()
+                self.assertEqual(process.wait(timeout=5), 0)
+                self.assertFalse(address.exists())
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                    process.wait(timeout=5)
 
 
 if __name__ == "__main__":

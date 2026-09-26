@@ -11,12 +11,13 @@ import hashlib
 import json
 import os
 import re
+import signal
 import socket
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from threading import BoundedSemaphore
+from threading import BoundedSemaphore, Event
 
 
 MAX_REQUEST_BYTES = 128 * 1024
@@ -275,6 +276,8 @@ def serve_forever(listener, score, stop=None):
 def main():
     address = Path(os.environ["KEV_SCORE_SOCKET"])
     score = load_model()
+    stop = Event()
+    signal.signal(signal.SIGTERM, lambda _number, _frame: stop.set())
     if address.exists():
         raise RuntimeError(f"Refusing to replace an existing socket: {address}")
     listener = socket.socket(socket.AF_UNIX)
@@ -284,7 +287,7 @@ def main():
         inode = address.stat().st_ino
         os.chmod(address, 0o600)
         listener.listen(16)
-        serve_forever(listener, score)
+        serve_forever(listener, score, stop)
     finally:
         listener.close()
         if inode is not None:
