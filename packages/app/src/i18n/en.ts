@@ -645,6 +645,7 @@ export const dict = {
   "permission.review.progress": "Review command {{current}} of {{total}}",
   "permission.review.rejectWhole": "Reject whole call",
   "permission.review.allowCommand": "Allow this command",
+  "permission.review.allowAll": "Allow all",
   "permission.review.withheld": "Command withheld; inspect the tool call",
   "notification.permission.description": "{{sessionTitle}} in {{projectName}} needs permission",
   "notification.question.title": "Question",

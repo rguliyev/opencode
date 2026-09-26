@@ -260,13 +260,34 @@ export function PermissionPrompt(props: { request: PermissionRequest; directory?
               </Show>
             </box>
           }
-          options={{ allow: "Allow this command", reject: "Reject whole call", correct: "Do differently" }}
+          options={{
+            allow: "Allow this command",
+            ...(reviewItems().length > 1 ? { allowAll: "Allow all" } : {}),
+            reject: "Reject whole call",
+            correct: "Do differently",
+          }}
           escapeKey="reject"
           fullscreen
           onSelect={(option) => {
             if (store.submitted) return
             const item = reviewItems()[store.reviewIndex]
             if (!item) return
+            if (option === "allowAll") {
+              setStore("submitted", true)
+              void sdk.client.permission.reply({
+                reply: "once",
+                origin: "human",
+                commandFeedback: reviewItems().map((item) => ({
+                  index: item.index,
+                  digest: item.digest,
+                  decision: "allow" as const,
+                })),
+                requestID: props.request.id,
+                directory: props.directory,
+                workspace: project.workspace.current(),
+              })
+              return
+            }
             const feedback: CommandFeedback[] = [
               ...store.commandFeedback,
               {

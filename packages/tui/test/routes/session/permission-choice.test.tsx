@@ -38,7 +38,7 @@ async function waitForReply(app: Awaited<ReturnType<typeof testRender>>, replies
   throw new Error("permission reply was not sent")
 }
 
-const request = (reviewed: boolean, child: boolean) =>
+const request = (reviewed: boolean, child: boolean, commands = 1) =>
   ({
     id: "per_test",
     sessionID: child ? "ses_child" : "ses_parent",
@@ -47,12 +47,17 @@ const request = (reviewed: boolean, child: boolean) =>
     always: ["echo *"],
     metadata: reviewed
       ? {
-          reviewItems: [{ index: 0, digest: "a".repeat(64), command: "echo test", reason: "Review the command" }],
+          reviewItems: Array.from({ length: commands }, (_, index) => ({
+            index,
+            digest: String.fromCharCode(97 + index).repeat(64),
+            command: `echo test ${index}`,
+            reason: "Review the command",
+          })),
         }
       : {},
   }) as PermissionRequest
 
-async function mount(reviewed: boolean, child = false, width = 110) {
+async function mount(reviewed: boolean, child = false, width = 110, commands = 1) {
   const tmp = await tmpdir()
   const state = path.join(tmp.path, "state")
   await mkdir(state, { recursive: true })
@@ -84,7 +89,7 @@ async function mount(reviewed: boolean, child = false, width = 110) {
                   <ProjectProvider>
                     <SyncContext.Provider value={{ data: { part: {} } } as ReturnType<typeof useSync>}>
                       <LocationProvider>
-                        <PermissionPrompt request={request(reviewed, child)} />
+                        <PermissionPrompt request={request(reviewed, child, commands)} />
                       </LocationProvider>
                     </SyncContext.Provider>
                   </ProjectProvider>
@@ -144,6 +149,63 @@ test("Do differently stays visible in an 80-column terminal", async () => {
   const setup = await mount(true, false, 80)
   try {
     await waitFor(setup.app, "Do differently")
+  } finally {
+    await setup.cleanup()
+  }
+})
+
+test("Allow all approves every flagged command for this call once", async () => {
+  const setup = await mount(true, false, 110, 2)
+  try {
+    await waitFor(setup.app, "Allow all")
+    setup.app.mockInput.pressArrow("right")
+    await setup.app.renderOnce()
+    setup.app.mockInput.pressEnter()
+    await waitForReply(setup.app, setup.replies)
+    expect(setup.replies).toEqual([
+      expect.objectContaining({
+        reply: "once",
+        commandFeedback: [
+          { index: 0, digest: "a".repeat(64), decision: "allow" },
+          { index: 1, digest: "b".repeat(64), decision: "allow" },
+        ],
+      }),
+    ])
+  } finally {
+    await setup.cleanup()
+  }
+})
+
+test("Allow all remains available after approving the first command", async () => {
+  const setup = await mount(true, false, 110, 2)
+  try {
+    await waitFor(setup.app, "Allow all")
+    setup.app.mockInput.pressEnter()
+    await waitFor(setup.app, "Review flagged command 2 of 2")
+    expect(setup.replies).toEqual([])
+    setup.app.mockInput.pressArrow("right")
+    await setup.app.renderOnce()
+    setup.app.mockInput.pressEnter()
+    await waitForReply(setup.app, setup.replies)
+    expect(setup.replies).toEqual([
+      expect.objectContaining({
+        reply: "once",
+        commandFeedback: [
+          { index: 0, digest: "a".repeat(64), decision: "allow" },
+          { index: 1, digest: "b".repeat(64), decision: "allow" },
+        ],
+      }),
+    ])
+  } finally {
+    await setup.cleanup()
+  }
+})
+
+test("single-command review does not offer Allow all", async () => {
+  const setup = await mount(true)
+  try {
+    await waitFor(setup.app, "Allow this command")
+    expect(setup.app.captureCharFrame()).not.toContain("Allow all")
   } finally {
     await setup.cleanup()
   }

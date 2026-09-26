@@ -145,6 +145,22 @@ export function SessionPermissionDock(props: {
                   <Button variant="ghost" size="normal" onClick={() => setCorrecting(true)} disabled={props.responding}>
                     {language.t("permission.doDifferently")}
                   </Button>
+                  <Show when={reviewItems().length > 1}>
+                    <Button
+                      variant="secondary"
+                      size="normal"
+                      onClick={() =>
+                        props.onDecide(
+                          "once",
+                          undefined,
+                          reviewItems().map((item) => ({ index: item.index, digest: item.digest, decision: "allow" })),
+                        )
+                      }
+                      disabled={props.responding}
+                    >
+                      {language.t("permission.review.allowAll")}
+                    </Button>
+                  </Show>
                   <Button
                     variant="primary"
                     size="normal"
@@ -172,21 +188,31 @@ export function SessionPermissionDock(props: {
         </>
       }
     >
-      <Show when={reviewItems()[reviewIndex()]} keyed>
-        {(item) => (
-          <div data-slot="permission-row">
-            <span data-slot="permission-spacer" aria-hidden="true" />
-            <div class="flex min-w-0 flex-col gap-1">
-              <div data-slot="permission-hint">
-                {language.t("permission.review.progress", { current: reviewIndex() + 1, total: reviewItems().length })}
-              </div>
-              <code class="break-all text-12-regular text-text-base">
-                {item.command ?? language.t("permission.review.withheld")}
-              </code>
-              <div data-slot="permission-hint">{item.reason}</div>
+      <Show when={reviewItems().length > 0}>
+        <div data-slot="permission-row">
+          <span data-slot="permission-spacer" aria-hidden="true" />
+          <div class="flex min-w-0 flex-col gap-2">
+            <div data-slot="permission-hint">
+              {language.t("permission.review.progress", { current: reviewIndex() + 1, total: reviewItems().length })}
             </div>
+            <For each={reviewItems()}>
+              {(item, position) => (
+                <div
+                  class="flex min-w-0 flex-col gap-1 border-l-2 pl-2"
+                  classList={{
+                    "border-border-weak-base": position() === reviewIndex(),
+                    "border-transparent": position() !== reviewIndex(),
+                  }}
+                >
+                  <code class="break-all text-12-regular text-text-base">
+                    {item.command ?? language.t("permission.review.withheld")}
+                  </code>
+                  <div data-slot="permission-hint">{item.reason}</div>
+                </div>
+              )}
+            </For>
           </div>
-        )}
+        </div>
       </Show>
       <Show when={correcting()}>
         <div data-slot="permission-row">
