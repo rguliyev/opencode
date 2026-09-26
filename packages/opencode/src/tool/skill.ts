@@ -28,7 +28,12 @@ export const SkillTool = Tool.define(
             permission: "skill",
             patterns: [params.name],
             always: [params.name],
-            metadata: {},
+            metadata: {
+              name: info.name,
+              description: info.description,
+              location: info.location,
+              content: info.content,
+            },
           })
 
           const dir = path.dirname(info.location)

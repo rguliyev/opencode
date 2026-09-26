@@ -25,16 +25,6 @@ export const GlobTool = Tool.define(
       execute: (params: { pattern: string; path?: string }, ctx: Tool.Context) =>
         Effect.gen(function* () {
           const ins = yield* InstanceState.context
-          yield* ctx.ask({
-            permission: "glob",
-            patterns: [params.pattern],
-            always: ["*"],
-            metadata: {
-              pattern: params.pattern,
-              path: params.path,
-            },
-          })
-
           let search = params.path ?? ins.directory
           search = path.isAbsolute(search) ? search : path.resolve(ins.directory, search)
           const info = yield* fs.stat(search).pipe(Effect.catch(() => Effect.succeed(undefined)))
@@ -49,11 +39,26 @@ export const GlobTool = Tool.define(
           const limit = 100
           const files = yield* ripgrep.glob({ cwd: search, pattern: params.pattern, limit })
           const truncated = files.length === limit
+          // Gather a bounded filename snapshot before review, then return this
+          // same snapshot after approval. The reviewer can assess exactly the
+          // paths that would be shown to the agent, without a second scan race.
+          const matchedPaths = files.map((file) => path.resolve(search, file.path))
+          yield* ctx.ask({
+            permission: "glob",
+            patterns: [params.pattern],
+            always: ["*"],
+            metadata: {
+              pattern: params.pattern,
+              path: params.path,
+              matched_paths: matchedPaths,
+              truncated,
+            },
+          })
 
           const output = []
           if (files.length === 0) output.push("No files found")
           if (files.length > 0) {
-            output.push(...files.map((file) => path.resolve(search, file.path)))
+            output.push(...matchedPaths)
             if (truncated) {
               output.push("")
               output.push(

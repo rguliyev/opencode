@@ -1,4 +1,7 @@
 import { expect, test } from "bun:test"
+import { mkdtempSync, rmSync, symlinkSync } from "node:fs"
+import { createServer } from "node:net"
+import { tmpdir } from "node:os"
 import path from "node:path"
 import CommandApproval from "../plugins/command-approval"
 
@@ -12,6 +15,8 @@ test("Jev receives a scrubbed command and context, while the local gate asks", a
   process.env.XDG_STATE_HOME = "/dev/null"
   globalThis.fetch = async (input, init) => {
     const url = String(input)
+    if (url.includes("/session/ses_redaction_test/message?"))
+      return Response.json([{ info: { role: "user" }, parts: [{ type: "text", text: "Inspect the local fixture." }] }])
     if (url.startsWith("http://gate.test/session/"))
       return Response.json({
         id: "ses_redaction_test",
@@ -74,6 +79,30 @@ test("Jev receives a scrubbed command and context, while the local gate asks", a
     expect(scripts[0].content).not.toContain("ghp_AAAA")
     expect(scripts[0].redactions).toContain("CREDENTIAL")
     expect(scriptOutput.status).toBe("ask")
+
+    await hooks["tool.execute.before"](
+      { tool: "skill", sessionID: "ses_redaction_test", callID: "call_skill_redaction" },
+      { args: { name: "example" } },
+    )
+    const skillOutput = { status: "allow" }
+    await hooks["permission.ask"](
+      {
+        permission: "skill",
+        sessionID: "ses_redaction_test",
+        patterns: ["example"],
+        metadata: {
+          name: "example",
+          location: "/skills/example/SKILL.md",
+          content: `Use api_key=${token} to authenticate.`,
+          core_trusted_builtin: true,
+        },
+        tool: { callID: "call_skill_redaction" },
+      },
+      skillOutput,
+    )
+    expect(skillOutput.status).toBe("ask")
+    expect(JSON.stringify(sent)).not.toContain(token)
+    expect(JSON.stringify(sent)).toContain("[REDACTED:CREDENTIAL]")
   } finally {
     globalThis.fetch = previousFetch
     if (previousStateHome === undefined) delete process.env.XDG_STATE_HOME
@@ -87,10 +116,34 @@ test("Jev classifies non-Bash actions with redacted context", async () => {
   const previousStateHome = process.env.XDG_STATE_HOME
   const previousKevSocket = process.env.OPENCODE_KEV_SOCKET
   const seen: Record<string, unknown>[] = []
+  const order: string[] = []
+  const kevRequests: Record<string, unknown>[] = []
+  let bashDeny = false
+  const socketDir = mkdtempSync(path.join(tmpdir(), "opencode-kev-gate-"))
+  const kev = createServer((socket) => {
+    connections += 1
+    order.push("kev")
+    let data = ""
+    socket.on("data", (chunk) => {
+      data += chunk.toString("utf8")
+      if (!data.includes("\n")) return
+      kevRequests.push(JSON.parse(data.split("\n", 1)[0]))
+      socket.end(JSON.stringify({ status: "score", p_allow: 0.99 }) + "\n")
+    })
+  })
+  let connections = 0
   process.env.XDG_STATE_HOME = "/dev/null"
-  process.env.OPENCODE_KEV_SOCKET = "/dev/null/no-kev-socket"
+  process.env.OPENCODE_KEV_SOCKET = path.join(socketDir, "score.sock")
+  await new Promise<void>((resolve, reject) => {
+    kev.once("error", reject)
+    kev.listen(process.env.OPENCODE_KEV_SOCKET, resolve)
+  })
   globalThis.fetch = async (input, init) => {
     const url = String(input)
+    if (url.includes("/session/ses_all_actions_test/message?"))
+      return Response.json([
+        { info: { role: "user" }, parts: [{ type: "text", text: "Run printf hello in the local worktree." }] },
+      ])
     if (url.startsWith("http://gate.test/session/"))
       return Response.json({
         id: "ses_all_actions_test",
@@ -99,18 +152,33 @@ test("Jev classifies non-Bash actions with redacted context", async () => {
         title: "Inspect a page and edit a fixture",
       })
     if (url === "https://openrouter.ai/api/alpha/decisions") {
+      order.push("jev")
       const payload = JSON.parse(String(init?.body))
       seen.push(payload)
       const answers: Record<string, unknown> = {
         verdict: {
           type: "choice",
-          choice: "allow",
-          confidence: 0.99,
-          probabilities: { allow: 0.99, deny: 0.01 },
+          choice: bashDeny ? "deny" : "allow",
+          confidence: bashDeny ? 0.24 : 0.99,
+          probabilities: bashDeny ? { allow: 0.38, deny: 0.62 } : { allow: 0.99, deny: 0.01 },
         },
       }
       for (const id of Object.keys(payload.questions)) if (id !== "verdict") answers[id] = { type: "noul", noul: 0.01 }
       return Response.json({ model: "typesafe/jev-1.13", answers })
+    }
+    if (url === "https://openrouter.ai/api/v1/chat/completions") {
+      order.push("luna")
+      return Response.json({
+        model: "openai/gpt-6-luna",
+        choices: [
+          {
+            finish_reason: "stop",
+            message: {
+              content: JSON.stringify({ choice: "allow", reason: "The requested local command is in scope." }),
+            },
+          },
+        ],
+      })
     }
     throw new Error(`Unexpected fetch: ${url}`)
   }
@@ -153,9 +221,23 @@ test("Jev classifies non-Bash actions with redacted context", async () => {
       readOutput,
     )
     expect(readOutput.status).toBe("allow")
+    expect(connections).toBe(0)
     expect((seen[0].state as any).action.permission).toBe("webfetch")
     expect((seen[0].state as any).action.args.url).toBe("https://example.test/health")
     expect((seen[0].state as any).action.metadata.url).toBe("https://example.test/health")
+
+    const configuredExternal = { status: "allow" }
+    await hooks["permission.ask"](
+      {
+        permission: "external_directory",
+        sessionID: "ses_all_actions_test",
+        patterns: [path.join(directory, "*")],
+        metadata: { filepath: directory },
+      },
+      configuredExternal,
+    )
+    expect(configuredExternal.status).toBe("allow")
+    expect(seen).toHaveLength(1)
 
     const token = "sk-" + "B".repeat(40)
     const editOutput = { status: "allow" }
@@ -212,12 +294,185 @@ test("Jev classifies non-Bash actions with redacted context", async () => {
     )
     expect(customOutput.status).toBe("ask")
     expect(seen).toHaveLength(3)
+    expect(connections).toBe(0)
+
+    // The same live socket must still receive eligible Bash commands.
+    bashDeny = true
+    order.length = 0
+    await hooks["tool.execute.before"](
+      { tool: "bash", sessionID: "ses_all_actions_test", callID: "call_bash_test" },
+      { args: { command: "printf hello" } },
+    )
+    const bashOutput = { status: "ask", message: "" }
+    await hooks["permission.ask"](
+      {
+        permission: "bash",
+        sessionID: "ses_all_actions_test",
+        patterns: ["printf hello"],
+        metadata: { command: "printf hello" },
+        tool: { callID: "call_bash_test" },
+      },
+      bashOutput,
+    )
+    expect(bashOutput.status).toBe("ask")
+    expect(bashOutput.message).toContain("Luna advises allow")
+    expect(seen).toHaveLength(4)
+    expect(connections).toBe(1)
+    expect(order).toEqual(["kev", "jev", "luna"])
+    expect(kevRequests[0].context).toMatchObject({ agent: "solo", command_count: 1 })
+    const kevContext = kevRequests[0].context
+    expect(kevContext && typeof kevContext === "object" && "full_command" in kevContext).toBe(false)
   } finally {
+    await new Promise<void>((resolve) => kev.close(() => resolve()))
+    rmSync(socketDir, { recursive: true, force: true })
     globalThis.fetch = previousFetch
     if (previousStateHome === undefined) delete process.env.XDG_STATE_HOME
     else process.env.XDG_STATE_HOME = previousStateHome
     if (previousKevSocket === undefined) delete process.env.OPENCODE_KEV_SOCKET
     else process.env.OPENCODE_KEV_SOCKET = previousKevSocket
+  }
+})
+
+test("Jev receives paginated root human context and a distinct subagent task", async () => {
+  const directory = path.resolve(import.meta.dir, "..")
+  const previousFetch = globalThis.fetch
+  const previousStateHome = process.env.XDG_STATE_HOME
+  let jevContext: Record<string, unknown> | undefined
+  const requests: string[] = []
+  let childTaskAvailable = true
+  let childTaskContainsPII = false
+  let rootHumanAvailable = true
+  const reviewCount = () => requests.filter((request) => request.startsWith("/api/alpha/decisions")).length
+  process.env.XDG_STATE_HOME = "/dev/null"
+  globalThis.fetch = async (input, init) => {
+    const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url)
+    requests.push(url.pathname + url.search)
+    if (url.pathname === "/session/ses_child_context/message")
+      return Response.json(
+        childTaskAvailable
+          ? [
+              {
+                info: { role: "user" },
+                parts: [
+                  {
+                    type: "text",
+                    text: childTaskContainsPII
+                      ? "Inspect patient alice@example.test's local fixture."
+                      : "Inspect the local fixture and report its status.",
+                  },
+                ],
+              },
+            ]
+          : [{ info: { role: "assistant" }, parts: [{ type: "text", text: "working" }] }],
+      )
+    if (url.pathname === "/session/ses_root_context/message") {
+      if (!rootHumanAvailable)
+        return Response.json([{ info: { role: "assistant" }, parts: [{ type: "text", text: "working" }] }])
+      if (url.searchParams.get("before") === "older-root-page")
+        return Response.json([{ info: { role: "user" }, parts: [{ type: "text", text: "Check the local fixture." }] }])
+      if (url.searchParams.get("limit") === "16")
+        return Response.json(
+          Array.from({ length: 16 }, () => ({
+            info: { role: "assistant" },
+            parts: [{ type: "text", text: "x".repeat(20_000) }],
+          })),
+        )
+      return Response.json([{ info: { role: "assistant" }, parts: [{ type: "text", text: "working" }] }], {
+        headers: { "X-Next-Cursor": "older-root-page" },
+      })
+    }
+    if (url.pathname === "/session/ses_child_context")
+      return Response.json({ id: "ses_child_context", directory, agent: "implementer", parentID: "ses_root_context" })
+    if (url.pathname === "/session/ses_root_context")
+      return Response.json({ id: "ses_root_context", directory, agent: "orchestrator" })
+    if (url.href === "https://openrouter.ai/api/alpha/decisions") {
+      if (typeof init?.body !== "string") throw new Error("Missing Jev request body")
+      const payload = JSON.parse(init.body)
+      jevContext = payload.state.context
+      const answers: Record<string, unknown> = {
+        verdict: { type: "choice", choice: "allow", confidence: 0.99, probabilities: { allow: 0.99, deny: 0.01 } },
+      }
+      for (const id of Object.keys(payload.questions)) if (id !== "verdict") answers[id] = { type: "noul", noul: 0.01 }
+      return Response.json({ model: "typesafe/jev-1.13", answers })
+    }
+    throw new Error(`Unexpected fetch: ${url.href}`)
+  }
+  try {
+    const hooks = await (CommandApproval as any)({ directory, serverUrl: new URL("http://gate.test") })
+    await hooks.provider.models({ models: {} }, { auth: { type: "api", key: "fake-test-key" } })
+    await hooks["tool.execute.before"](
+      { tool: "read", sessionID: "ses_child_context", callID: "call_child_context" },
+      { args: { filePath: "fixture.txt" } },
+    )
+    const output = { status: "ask" }
+    await hooks["permission.ask"](
+      {
+        permission: "read",
+        sessionID: "ses_child_context",
+        patterns: ["fixture.txt"],
+        metadata: { filepath: "fixture.txt" },
+        tool: { callID: "call_child_context" },
+      },
+      output,
+    )
+    expect(output.status).toBe("allow")
+    expect(jevContext?.human_request).toBe("Check the local fixture.")
+    expect(jevContext?.delegated_task).toBe("Inspect the local fixture and report its status.")
+    expect(requests.some((request) => request.includes("limit=8"))).toBe(true)
+    expect(requests.some((request) => request.includes("before=older-root-page"))).toBe(true)
+    expect(reviewCount()).toBe(1)
+
+    childTaskAvailable = false
+    const missingTask = { status: "allow" }
+    await hooks["permission.ask"](
+      {
+        permission: "read",
+        sessionID: "ses_child_context",
+        patterns: ["fixture.txt"],
+        metadata: { filepath: "fixture.txt" },
+        tool: { callID: "call_child_context" },
+      },
+      missingTask,
+    )
+    expect(missingTask.status).toBe("ask")
+    expect(reviewCount()).toBe(1)
+
+    childTaskAvailable = true
+    rootHumanAvailable = false
+    const missingHuman = { status: "allow" }
+    await hooks["permission.ask"](
+      {
+        permission: "read",
+        sessionID: "ses_child_context",
+        patterns: ["fixture.txt"],
+        metadata: { filepath: "fixture.txt" },
+        tool: { callID: "call_child_context" },
+      },
+      missingHuman,
+    )
+    expect(missingHuman.status).toBe("ask")
+    expect(reviewCount()).toBe(1)
+
+    rootHumanAvailable = true
+    childTaskContainsPII = true
+    const piiTask = { status: "allow" }
+    await hooks["permission.ask"](
+      {
+        permission: "read",
+        sessionID: "ses_child_context",
+        patterns: ["fixture.txt"],
+        metadata: { filepath: "fixture.txt" },
+        tool: { callID: "call_child_context" },
+      },
+      piiTask,
+    )
+    expect(piiTask.status).toBe("ask")
+    expect(reviewCount()).toBe(1)
+    expect(JSON.stringify(jevContext)).not.toContain("alice@example.test")
+  } finally {
+    globalThis.fetch = previousFetch
+    if (previousStateHome === undefined) delete process.env.XDG_STATE_HOME
+    else process.env.XDG_STATE_HOME = previousStateHome
   }
 })
 
@@ -271,5 +526,300 @@ test("read-only reviewers cannot turn a mutating action into an allow", async ()
     globalThis.fetch = previousFetch
     if (previousStateHome === undefined) delete process.env.XDG_STATE_HOME
     else process.env.XDG_STATE_HOME = previousStateHome
+  }
+})
+
+test("configured external-directory allow does not follow a symlink outside the allowlist", async () => {
+  const directory = path.resolve(import.meta.dir, "..")
+  const previousFetch = globalThis.fetch
+  const previousStateHome = process.env.XDG_STATE_HOME
+  const inside = mkdtempSync("/data/rguliyev/tmp/opencode/permission-gate-test-")
+  const outside = mkdtempSync(path.join(tmpdir(), "permission-gate-outside-"))
+  const link = path.join(inside, "escape")
+  symlinkSync(outside, link, "dir")
+  process.env.XDG_STATE_HOME = "/dev/null"
+  globalThis.fetch = async () => new Response("missing", { status: 404 })
+  try {
+    const hooks = await (CommandApproval as any)({ directory, serverUrl: new URL("http://gate.test") })
+    const output = { status: "allow" }
+    await hooks["permission.ask"](
+      {
+        permission: "external_directory",
+        sessionID: "ses_symlink_test",
+        patterns: [path.join(link, "*")],
+        metadata: { filepath: link },
+      },
+      output,
+    )
+    expect(output.status).toBe("ask")
+  } finally {
+    globalThis.fetch = previousFetch
+    if (previousStateHome === undefined) delete process.env.XDG_STATE_HOME
+    else process.env.XDG_STATE_HOME = previousStateHome
+    rmSync(inside, { recursive: true, force: true })
+    rmSync(outside, { recursive: true, force: true })
+  }
+})
+
+test("Luna resolves only low-risk Jev escalations with trusted human context and strict JSON", async () => {
+  const directory = path.resolve(import.meta.dir, "..")
+  const previousFetch = globalThis.fetch
+  const previousStateHome = process.env.XDG_STATE_HOME
+  const previousKevSocket = process.env.OPENCODE_KEV_SOCKET
+  const seen: string[] = []
+  let lunaContent = JSON.stringify({ choice: "allow", reason: "The requested local file listing is in scope." })
+  let jevRisk = 0.01
+  let jevConfidence = 0.24
+  let latestHumanText: string | undefined
+  let lunaState: Record<string, unknown> | undefined
+  let jevState: Record<string, unknown> | undefined
+  process.env.XDG_STATE_HOME = "/dev/null"
+  process.env.OPENCODE_KEV_SOCKET = "/dev/null/no-kev-socket"
+  globalThis.fetch = async (input, init) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url
+    if (url.includes("/session/ses_luna_test/message?"))
+      return Response.json([
+        { info: { role: "user" }, parts: [{ type: "text", text: "Check whether src/main.ts exists." }] },
+        { info: { role: "user" }, parts: [{ type: "text", text: "Synthetic reminder", synthetic: true }] },
+        ...(latestHumanText ? [{ info: { role: "user" }, parts: [{ type: "text", text: latestHumanText }] }] : []),
+      ])
+    if (url.startsWith("http://gate.test/session/"))
+      return Response.json({ id: "ses_luna_test", directory, agent: "solo", title: "Update README" })
+    if (url === "https://openrouter.ai/api/alpha/decisions") {
+      seen.push("jev")
+      if (typeof init?.body !== "string") throw new Error("Missing Jev request body")
+      const payload = JSON.parse(init.body)
+      jevState = payload.state
+      const answers: Record<string, unknown> = {
+        verdict: {
+          type: "choice",
+          choice: "deny",
+          confidence: jevConfidence,
+          probabilities: jevConfidence >= 0.6 ? { allow: 0.05, deny: 0.95 } : { allow: 0.38, deny: 0.62 },
+        },
+      }
+      for (const id of Object.keys(payload.questions))
+        if (id !== "verdict") answers[id] = { type: "noul", noul: id === "secrets" ? jevRisk : 0.01 }
+      return Response.json({ model: "typesafe/jev-1.13", answers })
+    }
+    if (url === "https://openrouter.ai/api/v1/chat/completions") {
+      seen.push("luna")
+      if (typeof init?.body !== "string") throw new Error("Missing Luna request body")
+      const payload = JSON.parse(init.body)
+      lunaState = JSON.parse(payload.messages[1].content)
+      return Response.json({
+        model: "openai/gpt-6-luna",
+        choices: [{ finish_reason: "stop", message: { content: lunaContent } }],
+      })
+    }
+    throw new Error(`Unexpected fetch: ${url}`)
+  }
+  try {
+    const hooks = await (CommandApproval as any)({ directory, serverUrl: new URL("http://gate.test") })
+    await hooks.provider.models({ models: {} }, { auth: { type: "api", key: "fake-test-key" } })
+    await hooks["tool.execute.before"](
+      { tool: "glob", sessionID: "ses_luna_test", callID: "call_luna_glob" },
+      { args: { pattern: "src/main.ts" } },
+    )
+    const request = {
+      permission: "glob",
+      sessionID: "ses_luna_test",
+      patterns: ["src/main.ts"],
+      metadata: {
+        pattern: "src/main.ts",
+        matched_paths: [path.join(directory, "src/main.ts")],
+        truncated: false,
+        core_trusted_builtin: true,
+      },
+      tool: { callID: "call_luna_glob" },
+    }
+    const allowed = { status: "ask" }
+    await hooks["permission.ask"](request, allowed)
+    expect(allowed.status).toBe("allow")
+    expect(seen).toEqual(["jev", "luna"])
+    const lunaAction = lunaState?.action
+    expect(
+      lunaAction && typeof lunaAction === "object" && "metadata" in lunaAction
+        ? (lunaAction.metadata as { match_count?: unknown; matched_paths?: unknown }).match_count
+        : undefined,
+    ).toBe(1)
+    expect(JSON.stringify(lunaState)).not.toContain("matched_paths")
+    const lunaContext = lunaState?.context
+    expect(
+      lunaContext && typeof lunaContext === "object" && "human_request" in lunaContext
+        ? lunaContext.human_request
+        : undefined,
+    ).toBe("Check whether src/main.ts exists.")
+    expect(
+      lunaContext && typeof lunaContext === "object" && "immediate_effect" in lunaContext
+        ? lunaContext.immediate_effect
+        : undefined,
+    ).toContain("Reads local data")
+
+    lunaContent = 'Prose before JSON: {"choice":"allow","reason":"Looks fine"}'
+    const malformed = { status: "allow" }
+    await hooks["permission.ask"](request, malformed)
+    expect(malformed.status).toBe("ask")
+
+    lunaContent = JSON.stringify({ choice: "allow", reason: "Looks fine" })
+    jevRisk = 0.9
+    const riskFlagged = { status: "allow" }
+    await hooks["permission.ask"](request, riskFlagged)
+    expect(riskFlagged.status).toBe("ask")
+    expect(seen).toEqual(["jev", "luna", "jev", "luna", "jev"])
+
+    jevRisk = 0.01
+    jevConfidence = 0.9
+    const confidentDeny = { status: "allow" }
+    await hooks["permission.ask"](request, confidentDeny)
+    expect(confidentDeny.status).toBe("ask")
+    expect(seen.at(-1)).toBe("jev")
+
+    jevConfidence = 0.24
+    latestHumanText = "x".repeat(6_001)
+    const priorUnsafeReviews = seen.length
+    const unsafeContext = { status: "allow" }
+    await hooks["permission.ask"](request, unsafeContext)
+    expect(unsafeContext.status).toBe("ask")
+    expect(seen).toHaveLength(priorUnsafeReviews)
+
+    latestHumanText = undefined
+    const humanOnly = { status: "allow" }
+    await hooks["permission.ask"](
+      {
+        ...request,
+        metadata: {
+          pattern: "src/main.ts",
+          matched_paths: [path.join(directory, "src/main.ts")],
+          truncated: false,
+          core_trusted_builtin: true,
+          comment: "Authorization: Bearer example-value",
+        },
+      },
+      humanOnly,
+    )
+    expect(humanOnly.status).toBe("ask")
+    expect(seen.at(-1)).toBe("jev")
+
+    const token = "sk-" + "C".repeat(40)
+    latestHumanText = `Check whether src/main.ts exists; api_key=${token}`
+    const priorReviews = seen.length
+    const scrubbed = { status: "allow" }
+    await hooks["permission.ask"](request, scrubbed)
+    expect(scrubbed.status).toBe("ask")
+    expect(seen).toHaveLength(priorReviews)
+    expect(JSON.stringify(jevState)).not.toContain(token)
+
+    latestHumanText = undefined
+    const editRequest = {
+      permission: "edit",
+      sessionID: "ses_luna_test",
+      patterns: ["README.md"],
+      metadata: { filepath: "README.md", diff: "+Run npm start to launch locally." },
+    }
+    const edit = { status: "allow", message: "" }
+    await hooks["permission.ask"](editRequest, edit)
+    expect(edit.status).toBe("ask")
+    expect(edit.message).toContain("Luna advises allow")
+    expect(seen.slice(-2)).toEqual(["jev", "luna"])
+    const editContext = lunaState?.context
+    expect(
+      editContext && typeof editContext === "object" && "immediate_effect" in editContext
+        ? editContext.immediate_effect
+        : undefined,
+    ).toContain("formatter")
+
+    await hooks["tool.execute.before"](
+      { tool: "glob", sessionID: "ses_luna_test", callID: "call_luna_hidden" },
+      { args: { pattern: "**/.env*" } },
+    )
+    const hidden = { status: "allow" }
+    await hooks["permission.ask"](
+      {
+        permission: "glob",
+        sessionID: "ses_luna_test",
+        patterns: ["**/.env*"],
+        metadata: { pattern: "**/.env*", matched_paths: [], truncated: false, core_trusted_builtin: true },
+        tool: { callID: "call_luna_hidden" },
+      },
+      hidden,
+    )
+    expect(hidden.status).toBe("ask")
+
+    await hooks["tool.execute.before"](
+      { tool: "glob", sessionID: "ses_luna_test", callID: "call_luna_wildcard" },
+      { args: { pattern: "**/*.ts" } },
+    )
+    const wildcard = { status: "allow" }
+    await hooks["permission.ask"](
+      {
+        permission: "glob",
+        sessionID: "ses_luna_test",
+        patterns: ["**/*.ts"],
+        metadata: {
+          pattern: "**/*.ts",
+          matched_paths: [path.join(directory, "Alice-1987-08-30.ts")],
+          truncated: false,
+          core_trusted_builtin: true,
+        },
+        tool: { callID: "call_luna_wildcard" },
+      },
+      wildcard,
+    )
+    expect(wildcard.status).toBe("ask")
+    expect(JSON.stringify(jevState)).not.toContain("Alice-1987-08-30")
+    expect(JSON.stringify(lunaState)).not.toContain("Alice-1987-08-30")
+
+    await hooks["tool.execute.before"](
+      { tool: "glob", sessionID: "ses_luna_test", callID: "call_luna_outside" },
+      { args: { pattern: "**/*.ts", path: "../outside" } },
+    )
+    const outside = { status: "allow" }
+    await hooks["permission.ask"](
+      {
+        permission: "glob",
+        sessionID: "ses_luna_test",
+        patterns: ["**/*.ts"],
+        metadata: {
+          pattern: "**/*.ts",
+          path: "../outside",
+          matched_paths: [],
+          truncated: false,
+          core_trusted_builtin: true,
+        },
+        tool: { callID: "call_luna_outside" },
+      },
+      outside,
+    )
+    expect(outside.status).toBe("ask")
+
+    const untrustedTool = { status: "allow" }
+    await hooks["permission.ask"](
+      { ...request, metadata: { ...request.metadata, core_trusted_builtin: false } },
+      untrustedTool,
+    )
+    expect(untrustedTool.status).toBe("ask")
+
+    const truncated = { status: "allow" }
+    await hooks["permission.ask"]({ ...request, metadata: { ...request.metadata, truncated: true } }, truncated)
+    expect(truncated.status).toBe("ask")
+
+    const beforeSensitive = seen.length
+    const sensitiveMatch = { status: "allow" }
+    await hooks["permission.ask"](
+      {
+        ...request,
+        metadata: { ...request.metadata, matched_paths: [path.join(directory, "patient-123-45-6789.ts")] },
+      },
+      sensitiveMatch,
+    )
+    expect(sensitiveMatch.status).toBe("ask")
+    expect(seen).toHaveLength(beforeSensitive)
+  } finally {
+    globalThis.fetch = previousFetch
+    if (previousStateHome === undefined) delete process.env.XDG_STATE_HOME
+    else process.env.XDG_STATE_HOME = previousStateHome
+    if (previousKevSocket === undefined) delete process.env.OPENCODE_KEV_SOCKET
+    else process.env.OPENCODE_KEV_SOCKET = previousKevSocket
   }
 })

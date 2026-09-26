@@ -2,6 +2,7 @@ import { PermissionV1 } from "@opencode-ai/core/v1/permission"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { describe, expect } from "bun:test"
 import path from "path"
+import { symlink } from "node:fs/promises"
 import { Effect } from "effect"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import type { Tool } from "@/tool/tool"
@@ -94,6 +95,67 @@ describe("tool.assertExternalDirectory", () => {
       expect(req!.always).toEqual([expected])
     }),
   )
+
+  if (process.platform !== "win32") {
+    it.instance("asks for a symlink target outside the project", () =>
+      Effect.gen(function* () {
+        const test = yield* TestInstance
+        const outside = yield* tmpdirScoped()
+        const link = path.join(test.directory, "outside-link")
+        yield* Effect.promise(() => symlink(outside, link, "dir"))
+        const { requests, ctx } = makeCtx()
+
+        yield* assertExternalDirectoryEffect(ctx, path.join(link, "file.txt"))
+
+        const req = requests.find((item) => item.permission === "external_directory")
+        expect(req).toBeDefined()
+        expect(req!.patterns).toEqual([glob(path.join(outside, "*"))])
+        expect(req!.metadata).toMatchObject({
+          filepath: path.join(link, "file.txt"),
+          resolved_filepath: path.join(outside, "file.txt"),
+        })
+      }),
+    )
+
+    it.instance("asks for a dangling symlink pointing to an outside file", () =>
+      Effect.gen(function* () {
+        const test = yield* TestInstance
+        const outside = yield* tmpdirScoped()
+        const target = path.join(outside, "not-created.txt")
+        const link = path.join(test.directory, "dangling-link")
+        yield* Effect.promise(() => symlink(target, link, "file"))
+        const { requests, ctx } = makeCtx()
+
+        yield* assertExternalDirectoryEffect(ctx, link)
+
+        const req = requests.find((item) => item.permission === "external_directory")
+        expect(req).toBeDefined()
+        expect(req!.patterns).toEqual([glob(path.join(outside, "*"))])
+        expect(req!.metadata).toMatchObject({ filepath: link, resolved_filepath: target })
+      }),
+    )
+
+    it.instance("asks for a file under a dangling symlinked outside directory", () =>
+      Effect.gen(function* () {
+        const test = yield* TestInstance
+        const outside = yield* tmpdirScoped()
+        const target = path.join(outside, "not-created-dir")
+        const link = path.join(test.directory, "dangling-dir-link")
+        yield* Effect.promise(() => symlink(target, link, "dir"))
+        const { requests, ctx } = makeCtx()
+
+        yield* assertExternalDirectoryEffect(ctx, path.join(link, "new.txt"))
+
+        const req = requests.find((item) => item.permission === "external_directory")
+        expect(req).toBeDefined()
+        expect(req!.patterns).toEqual([glob(path.join(target, "*"))])
+        expect(req!.metadata).toMatchObject({
+          filepath: path.join(link, "new.txt"),
+          resolved_filepath: path.join(target, "new.txt"),
+        })
+      }),
+    )
+  }
 
   it.live("skips prompting when bypass=true", () =>
     Effect.gen(function* () {
