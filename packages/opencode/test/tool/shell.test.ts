@@ -220,6 +220,23 @@ describe("tool.shell", () => {
 })
 
 describe("tool.shell permissions", () => {
+  each("rejects empty Bash calls before execution", () =>
+    Effect.gen(function* () {
+      const tmp = yield* tmpdirScoped()
+      yield* runIn(
+        tmp,
+        Effect.gen(function* () {
+          for (const command of ["", " \t "]) {
+            const requests: Array<Omit<PermissionV1.Request, "id" | "sessionID" | "tool">> = []
+            const error = yield* fail({ command }, capture(requests))
+            expect(error.message).toBe("Command must not be empty")
+            expect(requests).toEqual([])
+          }
+        }),
+      )
+    }),
+  )
+
   it.live("reviews cwd-only and redirection-only Bash calls before execution", () => {
     if (!bash) return Effect.void
     return withShell(
