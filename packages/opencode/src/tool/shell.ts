@@ -281,6 +281,12 @@ const ask = Effect.fn("ShellTool.ask")(function* (ctx: Tool.Context, scan: Scan,
     })
   }
 
+  // A shell assignment or syntax the scanner does not classify can still
+  // have side effects. Never execute a nonempty call without a Bash review.
+  if (scan.patterns.size === 0 && input.command.trim()) {
+    scan.patterns.add(input.command.trim())
+    scan.always.add(input.command.trim())
+  }
   if (scan.patterns.size === 0) return
   yield* ctx.ask({
     permission: ShellID.ToolID,
@@ -407,10 +413,29 @@ export const ShellTool = Tool.define(
           }
         }
 
-        if (tokens.length && (!cmd || !CWD.has(cmd))) {
-          scan.patterns.add(source(node))
-          scan.always.add(BashArity.prefix(tokens).join(" ") + " *")
+        const text = source(node)
+        if (text) {
+          scan.patterns.add(text)
+          // A redirect can create or truncate a file even when the command
+          // itself is cwd-only. Never persist a broad prefix allow for it.
+          scan.always.add(
+            !tokens.length ||
+              CWD.has(cmd ?? "") ||
+              /[<>;&|`$]/.test(text) ||
+              node.parent?.type === "redirected_statement"
+              ? text
+              : BashArity.prefix(tokens).join(" ") + " *",
+          )
         }
+      }
+
+      // A bare redirection has no command node, but can create/truncate a file.
+      for (const redirect of root.descendantsOfType("redirected_statement")) {
+        if (!redirect) continue
+        const text = redirect.text.trim()
+        if (!text) continue
+        scan.patterns.add(text)
+        scan.always.add(text)
       }
 
       return scan
