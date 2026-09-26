@@ -26,26 +26,16 @@ advisory. The checkpoint's native 384-token state window can reject longer
 context; the worker reports `context_status: model_overflow` while preserving
 any usable shell-only baseline. The worker never logs or persists raw request
 text. A reviewable Jev escalation without a local blocking rule proceeds to
-GPT-6 Luna via OpenRouter for a second opinion, including high-risk and
-high-confidence Jev results. Luna
-may auto-allow only a root-session, core-verified built-in `glob` operation for
-one literal file path in the local workdir, or a foreground delegation to a
-known subagent whose later tool actions each receive separate permission
-checks. Resumed/background tasks and opaque tool calls remain human-reviewed.
-The glob built-in supplies a bounded
-filename snapshot for local checks, but only the match count—not discovered
-filenames—is sent to Jev or Luna. Wildcard discovery and sensitive-looking
-filenames stay with the human. Auto-allow also requires a safely retrieved
-latest human request, a valid
-low-confidence Jev verdict, and no Jev risk over its existing human-review
-threshold. For Bash, edits, remote tools, and other actions, Luna is advisory:
-its `allow` cannot replace human approval, but its verdict is shown in the
-human prompt. This restriction is intentional:
-edits can run project formatters without a second permission check, while the
-current static rules cannot prove every human-only auth, security, production,
-or regulated-data gate absent from arbitrary commands and tools. High-confidence
-Jev denials, model failures, malformed Luna output, missing context, and local
-blocking rules still ask the human when Luna cannot safely auto-allow. Only
+GPT-6 Luna via OpenRouter, including high-risk and high-confidence Jev results.
+Luna's `allow` resolves ordinary Bash and non-Bash escalations; its `ask`
+prompts the human. Jev scores are signals, not a veto on Luna. Configured
+denials, concrete local human-only rules, unreviewable or unsafe context,
+model failures, and read-only reviewer restrictions still block automatic
+approval. Task evidence must match a trusted foreground built-in call; a
+verified glob snapshot must stay in the workdir and contain no sensitive
+filenames. Only the match count—not discovered filenames—is sent to Jev or
+Luna. These local checks are not proof that every auth, security, production,
+or regulated-data change is safe; Luna must ask on such changes. Only
 sanitized review copies leave the
 process; executed arguments are not modified. The gate requires matching
 OpenCode permission hooks and a local configuration with the expected hard-deny

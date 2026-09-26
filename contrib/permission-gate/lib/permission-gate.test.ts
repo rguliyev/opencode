@@ -329,8 +329,7 @@ test("Jev classifies non-Bash actions with redacted context", async () => {
       },
       bashOutput,
     )
-    expect(bashOutput.status).toBe("ask")
-    expect(bashOutput.message).toContain("Luna advises allow")
+    expect(bashOutput.status).toBe("allow")
     expect(seen).toHaveLength(4)
     expect(connections).toBe(4)
     expect(order).toEqual(["kev", "jev", "luna"])
@@ -342,6 +341,32 @@ test("Jev classifies non-Bash actions with redacted context", async () => {
     })
     const kevContext = kevRequests[3].state.context
     expect(kevContext && typeof kevContext === "object" && "full_command" in kevContext).toBe(false)
+
+    const publishOutput = { status: "ask" }
+    await hooks["permission.ask"](
+      {
+        permission: "bash",
+        sessionID: "ses_all_actions_test",
+        patterns: ["git push fork dev"],
+        metadata: { command: "git push fork dev" },
+      },
+      publishOutput,
+    )
+    expect(publishOutput.status).toBe("ask")
+    expect(order.at(-1)).toBe("jev")
+
+    const searchOutput = { status: "ask" }
+    await hooks["permission.ask"](
+      {
+        permission: "bash",
+        sessionID: "ses_all_actions_test",
+        patterns: ['rg -n "git push" README.md'],
+        metadata: { command: 'rg -n "git push" README.md' },
+      },
+      searchOutput,
+    )
+    expect(searchOutput.status).toBe("allow")
+    expect(order.at(-1)).toBe("luna")
   } finally {
     await new Promise<void>((resolve) => kev.close(() => resolve()))
     rmSync(socketDir, { recursive: true, force: true })
@@ -585,7 +610,7 @@ test("configured external-directory allow does not follow a symlink outside the 
   }
 })
 
-test("Luna resolves only low-risk Jev escalations with trusted human context and strict JSON", async () => {
+test("Luna resolves Jev escalations with trusted human context and strict JSON", async () => {
   const directory = path.resolve(import.meta.dir, "..")
   const previousFetch = globalThis.fetch
   const previousStateHome = process.env.XDG_STATE_HOME
@@ -723,14 +748,14 @@ test("Luna resolves only low-risk Jev escalations with trusted human context and
     jevRisk = 0.9
     const riskFlagged = { status: "allow" }
     await hooks["permission.ask"](request, riskFlagged)
-    expect(riskFlagged.status).toBe("ask")
+    expect(riskFlagged.status).toBe("allow")
     expect(seen.slice(-2)).toEqual(["jev", "luna"])
 
     jevRisk = 0.01
     jevConfidence = 0.9
     const confidentDeny = { status: "allow" }
     await hooks["permission.ask"](request, confidentDeny)
-    expect(confidentDeny.status).toBe("ask")
+    expect(confidentDeny.status).toBe("allow")
     expect(seen.slice(-2)).toEqual(["jev", "luna"])
 
     jevConfidence = 0.24
@@ -777,8 +802,7 @@ test("Luna resolves only low-risk Jev escalations with trusted human context and
     }
     const edit = { status: "allow", message: "" }
     await hooks["permission.ask"](editRequest, edit)
-    expect(edit.status).toBe("ask")
-    expect(edit.message).toContain("Luna advises allow")
+    expect(edit.status).toBe("allow")
     expect(seen.slice(-2)).toEqual(["jev", "luna"])
     const editContext = lunaState?.context
     expect(
@@ -786,6 +810,37 @@ test("Luna resolves only low-risk Jev escalations with trusted human context and
         ? editContext.immediate_effect
         : undefined,
     ).toContain("formatter")
+
+    const policyEdit = { status: "allow" }
+    await hooks["permission.ask"](
+      {
+        ...editRequest,
+        patterns: ["src/auth/policy.ts"],
+        metadata: { filepath: "src/auth/policy.ts", diff: "+allow = true" },
+      },
+      policyEdit,
+    )
+    expect(policyEdit.status).toBe("ask")
+
+    await hooks["tool.execute.before"](
+      { tool: "grep", sessionID: "ses_luna_test", callID: "call_luna_grep" },
+      { args: { pattern: "main", path: "src" } },
+    )
+    const grepRequest = {
+      permission: "grep",
+      sessionID: "ses_luna_test",
+      patterns: ["main", "src"],
+      metadata: { pattern: "main", path: "src", core_trusted_builtin: true },
+      tool: { callID: "call_luna_grep" },
+    }
+    const grepAllowed = { status: "ask" }
+    await hooks["permission.ask"](grepRequest, grepAllowed)
+    expect(grepAllowed.status).toBe("allow")
+    lunaContent = JSON.stringify({ choice: "ask", reason: "The search target is unclear." })
+    const grepAsked = { status: "allow" }
+    await hooks["permission.ask"](grepRequest, grepAsked)
+    expect(grepAsked.status).toBe("ask")
+    lunaContent = JSON.stringify({ choice: "allow", reason: "The local request is in scope." })
 
     await hooks["tool.execute.before"](
       { tool: "glob", sessionID: "ses_luna_test", callID: "call_luna_hidden" },
@@ -803,6 +858,27 @@ test("Luna resolves only low-risk Jev escalations with trusted human context and
       hidden,
     )
     expect(hidden.status).toBe("ask")
+
+    await hooks["tool.execute.before"](
+      { tool: "glob", sessionID: "ses_luna_test", callID: "call_luna_safe_wildcard" },
+      { args: { pattern: "**/*.ts" } },
+    )
+    const safeWildcard = { status: "ask" }
+    await hooks["permission.ask"](
+      {
+        ...request,
+        patterns: ["**/*.ts"],
+        tool: { callID: "call_luna_safe_wildcard" },
+        metadata: {
+          pattern: "**/*.ts",
+          matched_paths: [path.join(directory, "src/main.ts")],
+          truncated: false,
+          core_trusted_builtin: true,
+        },
+      },
+      safeWildcard,
+    )
+    expect(safeWildcard.status).toBe("allow")
 
     await hooks["tool.execute.before"](
       { tool: "glob", sessionID: "ses_luna_test", callID: "call_luna_wildcard" },

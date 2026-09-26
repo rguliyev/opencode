@@ -358,6 +358,12 @@ function requiresHuman(command: string) {
   )
 }
 
+function requiresHumanOperation(command: string) {
+  return /(?:^|[\n;|&(){}])\s*(?:(?:sudo|env)\s+)?(?:git\s+push|gh\s+pr\s+(?:create|edit|merge|close)|terraform\s+(?:apply|destroy)|terragrunt\s+(?:apply|destroy)|atlantis\s+apply|kubectl\s+(?:apply|delete|patch|replace|scale|rollout|set)|gcloud\s+(?:projects\s+add-iam-policy-binding|iam\s+|secrets\s+(?:create|delete|update|versions\s+(?:add|destroy|disable)))|aws\s+(?:iam\s+|secretsmanager\s+(?:create|delete|update|put|rotate))|tailscale\s+(?:set|up)\b[^\n;|&]*--exit-node|(?:rm\s+-rf|mkfs|wipefs)\b)/i.test(
+    command,
+  )
+}
+
 function immediateEffect(permission: string) {
   switch (permission) {
     case "edit":
@@ -809,39 +815,15 @@ function combine(response: JevResponse, reviewer: boolean): ReviewResult {
   }
 }
 
-// Luna may resolve a Jev *model* escalation, never missing/invalid Jev output
-// or a Jev risk that already crossed the configured human-review threshold.
-function lowRiskJevEscalation(answers: Record<string, ChoiceAnswer | NoulAnswer | undefined> | undefined) {
-  const verdict = answers?.verdict
-  if (!verdict || verdict.type !== "choice" || !["allow", "deny"].includes(verdict.choice)) return false
-  // High-confidence Jev denials are not overridable by a second model.
-  if (!finiteProbability(verdict.confidence) || verdict.confidence >= minConfidence) return false
-  const probabilities = verdict.probabilities
-  if (
-    !probabilities ||
-    Object.keys(probabilities).sort().join(",") !== "allow,deny" ||
-    !finiteProbability(probabilities.allow) ||
-    !finiteProbability(probabilities.deny) ||
-    Math.abs(probabilities.allow + probabilities.deny - 1) > 0.02 ||
-    probabilities[verdict.choice] < probabilities[verdict.choice === "allow" ? "deny" : "allow"]
-  )
-    return false
-  for (const id of Object.keys(riskQuestions)) {
-    const answer = answers?.[id]
-    const threshold = id.startsWith("gcp_") ? gcpRiskThreshold : riskThreshold
-    if (!answer || answer.type !== "noul" || !finiteProbability(answer.noul) || answer.noul >= threshold) return false
-  }
-  return true
-}
-
-// Luna may override Jev only for mechanically bounded local operations.
-// Edits can execute formatter plugins; Bash and remote or opaque tools can
-// mutate state. Model risk scores cannot enforce human-only gates for those.
+// Concrete local blockers and configured denials remain human gates. Jev's
+// probabilities are evidence for Luna, not a second veto after Luna allows.
 function sensitiveFilename(value: string) {
   return (
+    /(?:^|[/])\.env(?:$|[.*?/])/i.test(value) ||
     /(?:^|[/._-])(?:\.env|secrets?|credentials?|tokens?|passwords?|private|patients?|medical|health|ssn|social.?security|passports?|pii|phi|hipaa|payroll|customers?|employees?|dob)(?:$|[/._-])/i.test(
       value,
     ) ||
+    /[A-Za-z]+[-_]\d{4}-\d{2}-\d{2}/.test(value) ||
     /\b\d{3}-\d{2}-\d{4}\b/.test(value) ||
     /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i.test(value)
   )
@@ -891,12 +873,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function lunaMayAutoAllowAction(action: ActionEvidence, context: ReviewContext, matchedPaths: unknown) {
   if (action.permission === "task") return lunaMayAutoAllowTask(action)
-  if (action.permission !== "glob" || action.tool !== "glob" || action.patterns.length !== 1) return false
-  if (!context.human_request || context.human_request.includes("[REDACTED:")) return false
+  if (action.permission === "external_directory" || action.permission === "tool_call") return false
+  if (action.permission !== "glob") return true
+  if (action.tool !== "glob" || action.patterns.length !== 1) return false
   if (!action.args || typeof action.args !== "object" || Array.isArray(action.args)) return false
   const args = action.args
-  // Omitted path means the built-in searches its verified session directory.
-  // An explicit path could traverse or resolve through a symlink elsewhere.
+  // Only a verified snapshot wholly within this session's directory is safe
+  // to auto-allow. Discovery patterns themselves need not be literal.
   if (Object.keys(args).some((key) => key !== "pattern")) return false
   if (action.metadata?.core_trusted_builtin !== true) return false
   if (
@@ -914,18 +897,14 @@ function lunaMayAutoAllowAction(action: ActionEvidence, context: ReviewContext, 
   if (typeof pattern !== "string" || !pattern || pattern.length > 512) return false
   if (action.patterns[0] !== pattern || action.metadata?.pattern !== pattern) return false
   if (action.metadata.path !== undefined) return false
-  // No wildcard discovery: the output is either "No files found" or the
-  // exact path already present in the permission pattern.
   if (
-    /[*?{}\[\]!]/.test(pattern) ||
     sensitiveFilename(pattern) ||
     path.isAbsolute(pattern) ||
     pattern.includes("\\") ||
-    pattern.split("/").includes("..") ||
-    path.posix.normalize(pattern) !== pattern
+    pattern.split("/").includes("..")
   )
     return false
-  if (!Array.isArray(matchedPaths) || matchedPaths.length > 1 || action.metadata.truncated !== false) return false
+  if (!Array.isArray(matchedPaths) || action.metadata.truncated !== false) return false
   if (action.metadata.match_count !== matchedPaths.length) return false
   if (
     matchedPaths.some((file) => {
@@ -936,7 +915,8 @@ function lunaMayAutoAllowAction(action: ActionEvidence, context: ReviewContext, 
         safe.kinds.length > 0 ||
         safe.value !== file ||
         sensitiveFilename(file) ||
-        file !== path.resolve(context.workdir, pattern)
+        !path.relative(context.workdir, file) ||
+        path.relative(context.workdir, file).startsWith("..")
       )
     })
   )
@@ -961,7 +941,7 @@ function lunaAudit(result: LunaResult) {
 
 function lunaAdvisory(result: { status?: string; choice?: string } | undefined) {
   if (result?.status !== "score") return undefined
-  if (result.choice === "allow") return "Luna advises allow; this action still requires human approval"
+  if (result.choice === "allow") return "Luna allows, but a local safety rule requires approval"
   if (result.choice === "ask") return "Luna advises human review"
   return undefined
 }
@@ -1649,6 +1629,15 @@ const CommandApproval: Plugin = async ({ directory, serverUrl }) => {
     const reasons: string[] = []
     if (sanitized.kinds.length) reasons.push("sensitive literal in action")
     if (requiresHuman(raw)) reasons.push("credential or secret access")
+    if (new Set(["read", "grep", "glob", "edit", "skill"]).has(input.permission) && patterns.some(sensitiveFilename))
+      reasons.push("sensitive file or search target")
+    if (
+      input.permission === "edit" &&
+      patterns.some((pattern) =>
+        /(?:^|[/_.-])(?:auth|permission|policy|iam|crypto|cert|audit|pii|patient|migration)(?:$|[/_.-])/i.test(pattern),
+      )
+    )
+      reasons.push("human-only policy or data change may apply")
     if (input.permission === "tool_call" && input.metadata?.trusted_builtin !== true)
       reasons.push("opaque custom tool requires human review")
     const sessions = await sessionChain(input.sessionID)
@@ -1663,9 +1652,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl }) => {
       : ({ status: "skipped" } as LunaResult)
     const lunaAllow =
       lunaEligible &&
-      !session.parentID &&
       !reviewer &&
-      lowRiskJevEscalation(rawAnswers) &&
       lunaMayAutoAllowAction(action, context, matchedPaths) &&
       luna.status === "score" &&
       luna.choice === "allow"
@@ -2086,9 +2073,11 @@ const CommandApproval: Plugin = async ({ directory, serverUrl }) => {
           if (inspection.scripts.some((script) => script.redactions?.length))
             reasons.push("credential-like literal in inspected script")
           if (requiresHuman(command)) reasons.push("credential or secret access")
+          if (requiresHumanOperation(command)) reasons.push("human-only operation")
           const scopes = [gcpScopeReviewMessage(command, sessions), awsScopeReviewMessage(command, sessions)]
           for (const script of inspection.scripts) {
             if (requiresHuman(script.content)) reasons.push("script credential or secret access")
+            if (requiresHumanOperation(script.content)) reasons.push("script human-only operation")
             scopes.push(
               gcpScopeReviewMessage(script.content, sessions),
               awsScopeReviewMessage(script.content, sessions),
@@ -2098,13 +2087,13 @@ const CommandApproval: Plugin = async ({ directory, serverUrl }) => {
           if (inspection.error) reasons.push(`no script evidence: ${inspection.error}`)
 
           const lunaEligible =
-            !result.allow && !inspection.error && reasons.length === 0 && acceptedModels.has(result.jevModel ?? "")
+            !result.allow &&
+            reasons.every((reason) => reason.startsWith("no script evidence")) &&
+            acceptedModels.has(result.jevModel ?? "")
           const luna = lunaEligible
-            ? await reviewLuna(command, inspection.scripts, context)
+            ? await reviewLuna(command, inspection.scripts, context, inspection.error ?? undefined)
             : ({ status: "skipped" } as LunaResult)
-          // Bash is always effectful and the current static rules cannot
-          // prove every human-only operation absent. Luna remains advisory.
-          const lunaAllow = false
+          const lunaAllow = lunaEligible && !reviewer && luna.status === "score" && luna.choice === "allow"
 
           return {
             ...id,
