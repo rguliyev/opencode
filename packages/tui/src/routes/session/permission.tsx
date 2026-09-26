@@ -164,7 +164,11 @@ export function PermissionPrompt(props: { request: PermissionRequest; directory?
         typeof item.reason === "string",
     )
   })
-  const multiCommand = createMemo(() => props.request.permission === "bash" && props.request.patterns.length > 1)
+  const multiCommand = createMemo(() => {
+    if (props.request.permission !== "bash") return false
+    const count = props.request.metadata?.commandCount
+    return props.request.patterns.length > 1 || (typeof count === "number" && Number.isInteger(count) && count > 1)
+  })
 
   const { theme } = useTheme()
 

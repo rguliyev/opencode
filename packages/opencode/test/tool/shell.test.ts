@@ -335,6 +335,23 @@ describe("tool.shell permissions", () => {
           expect(requests[0].permission).toBe("bash")
           expect(requests[0].patterns).toContain("echo foo")
           expect(requests[0].patterns).toContain("echo bar")
+          expect(requests[0].metadata.commandCount).toBe(2)
+        }),
+      )
+    }),
+  )
+
+  each("counts repeated shell commands even when their permission pattern is deduplicated", () =>
+    Effect.gen(function* () {
+      const tmp = yield* tmpdirScoped()
+      yield* runIn(
+        tmp,
+        Effect.gen(function* () {
+          const requests: Array<Omit<PermissionV1.Request, "id" | "sessionID" | "tool">> = []
+          yield* run({ command: "echo foo && echo foo" }, capture(requests))
+          const bashReq = requests.find((request) => request.permission === "bash")
+          expect(bashReq?.patterns).toEqual(["echo foo"])
+          expect(bashReq?.metadata.commandCount).toBe(2)
         }),
       )
     }),

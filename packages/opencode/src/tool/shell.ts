@@ -74,6 +74,7 @@ type Scan = {
   dirs: Set<string>
   patterns: Set<string>
   always: Set<string>
+  commandCount: number
 }
 
 type Chunk = {
@@ -294,6 +295,7 @@ const ask = Effect.fn("ShellTool.ask")(function* (ctx: Tool.Context, scan: Scan,
     always: Array.from(scan.always),
     metadata: {
       command: input.command,
+      commandCount: scan.commandCount,
       ...(purpose ? { purpose } : {}),
     },
   })
@@ -395,10 +397,12 @@ export const ShellTool = Tool.define(
         dirs: new Set<string>(),
         patterns: new Set<string>(),
         always: new Set<string>(),
+        commandCount: 0,
       }
       const shellKind = ShellID.toKind(Shell.name(shell))
 
       for (const node of commands(root)) {
+        scan.commandCount++
         const command = parts(node)
         const tokens = command.map((item) => item.text)
         const cmd = ps || shellKind === "cmd" ? tokens[0]?.toLowerCase() : tokens[0]

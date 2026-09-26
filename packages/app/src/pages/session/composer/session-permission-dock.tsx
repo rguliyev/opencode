@@ -34,7 +34,11 @@ export function SessionPermissionDock(props: {
         typeof item.reason === "string",
     )
   })
-  const multiCommand = createMemo(() => props.request.permission === "bash" && props.request.patterns.length > 1)
+  const multiCommand = createMemo(() => {
+    if (props.request.permission !== "bash") return false
+    const count = props.request.metadata?.commandCount
+    return props.request.patterns.length > 1 || (typeof count === "number" && Number.isInteger(count) && count > 1)
+  })
 
   const respondToReview = (decision: "allow" | "reject", message?: string) => {
     const item = reviewItems()[reviewIndex()]

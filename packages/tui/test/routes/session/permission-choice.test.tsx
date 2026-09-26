@@ -38,7 +38,7 @@ async function waitForReply(app: Awaited<ReturnType<typeof testRender>>, replies
   throw new Error("permission reply was not sent")
 }
 
-const request = (reviewed: boolean, child: boolean, commands = 1, total = commands, offset = 0) =>
+const request = (reviewed: boolean, child: boolean, commands = 1, total = commands, offset = 0, executed = total) =>
   ({
     id: "per_test",
     sessionID: child ? "ses_child" : "ses_parent",
@@ -47,6 +47,7 @@ const request = (reviewed: boolean, child: boolean, commands = 1, total = comman
     always: ["echo *"],
     metadata: reviewed
       ? {
+          commandCount: executed,
           reviewItems: Array.from({ length: commands }, (_, position) => {
             const index = offset + position
             return {
@@ -57,10 +58,18 @@ const request = (reviewed: boolean, child: boolean, commands = 1, total = comman
             }
           }),
         }
-      : {},
+      : { commandCount: executed },
   }) as PermissionRequest
 
-async function mount(reviewed: boolean, child = false, width = 110, commands = 1, total = commands, offset = 0) {
+async function mount(
+  reviewed: boolean,
+  child = false,
+  width = 110,
+  commands = 1,
+  total = commands,
+  offset = 0,
+  executed = total,
+) {
   const tmp = await tmpdir()
   const state = path.join(tmp.path, "state")
   await mkdir(state, { recursive: true })
@@ -92,7 +101,7 @@ async function mount(reviewed: boolean, child = false, width = 110, commands = 1
                   <ProjectProvider>
                     <SyncContext.Provider value={{ data: { part: {} } } as ReturnType<typeof useSync>}>
                       <LocationProvider>
-                        <PermissionPrompt request={request(reviewed, child, commands, total, offset)} />
+                        <PermissionPrompt request={request(reviewed, child, commands, total, offset, executed)} />
                       </LocationProvider>
                     </SyncContext.Provider>
                   </ProjectProvider>
@@ -207,6 +216,25 @@ test("Allow all approves an ordinary multi-command request once", async () => {
     await waitForReply(setup.app, setup.replies)
     expect(setup.replies).toEqual([expect.objectContaining({ reply: "once" })])
     expect(setup.replies[0]).not.toHaveProperty("commandFeedback")
+  } finally {
+    await setup.cleanup()
+  }
+})
+
+test("Allow all appears when repeated shell commands share one permission pattern", async () => {
+  const setup = await mount(true, false, 110, 1, 1, 0, 2)
+  try {
+    await waitFor(setup.app, "Allow all")
+    setup.app.mockInput.pressArrow("right")
+    await setup.app.renderOnce()
+    setup.app.mockInput.pressEnter()
+    await waitForReply(setup.app, setup.replies)
+    expect(setup.replies).toEqual([
+      expect.objectContaining({
+        reply: "once",
+        commandFeedback: [{ index: 0, digest: "a".repeat(64), decision: "allow" }],
+      }),
+    ])
   } finally {
     await setup.cleanup()
   }
