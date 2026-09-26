@@ -48,8 +48,9 @@ const fakePlugin = Plugin.Service.of({
   trigger: (_name, _input, output) => Effect.succeed(output),
 } satisfies Plugin.Interface)
 
+const asked: { permission: string; patterns: readonly string[]; tool?: { callID: string } }[] = []
 const fakePermission = Permission.Service.of({
-  ask: () => Effect.void,
+  ask: (request) => Effect.sync(() => void asked.push(request)),
   reply: () => Effect.void,
   list: () => Effect.succeed([]),
   setReviewer: () => Effect.void,
@@ -97,6 +98,7 @@ const it = testEffect(layer)
 
 it.effect("preserves running tool start time across metadata updates", () =>
   Effect.gen(function* () {
+    asked.length = 0
     const state: SessionV1.ToolPart = {
       id: partID,
       sessionID,
@@ -160,6 +162,7 @@ it.effect("preserves running tool start time across metadata updates", () =>
     )
 
     expect(updates).toEqual([100, 100])
+    expect(asked).toMatchObject([{ permission: "tool_call", patterns: ["timing"], tool: { callID } }])
     expect(state.state.status).toBe("running")
     if (state.state.status === "running") {
       expect(state.state.time.start).toBe(100)

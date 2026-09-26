@@ -67,6 +67,24 @@ export function webSearchEnabled(providerID: ProviderV2.ID, flags = { exa: false
 type TaskDef = Tool.InferDef<typeof TaskTool>
 type ReadDef = Tool.InferDef<typeof ReadTool>
 
+// Only the registry may mark these built-ins as self-gated. A custom tool that
+// reuses a built-in ID must still receive dispatch-time permission review.
+const selfGatedBuiltinIDs = new Set([
+  "bash",
+  "read",
+  "glob",
+  "grep",
+  "edit",
+  "write",
+  "apply_patch",
+  "webfetch",
+  "websearch",
+  "task",
+  "skill",
+  "lsp",
+  "todowrite",
+])
+
 type State = {
   custom: Tool.Def[]
   builtin: Tool.Def[]
@@ -289,7 +307,9 @@ const layer = Layer.effect(
     })
 
     const tools: Interface["tools"] = Effect.fn("ToolRegistry.tools")(function* (input) {
-      const filtered = (yield* all()).filter((tool) => {
+      const s = yield* InstanceState.get(state)
+      const builtins = new Set(s.builtin)
+      const filtered = [...s.builtin, ...s.custom].filter((tool) => {
         if (tool.id === WebSearchTool.id) {
           return webSearchEnabled(input.providerID, { exa: flags.enableExa, parallel: flags.enableParallel })
         }
@@ -322,6 +342,8 @@ const layer = Layer.effect(
               : undefined
           return {
             id: tool.id,
+            trustedBuiltin: builtins.has(tool),
+            internalPermissionCheck: builtins.has(tool) && selfGatedBuiltinIDs.has(tool.id),
             description: [
               output.description,
               tool.id === TaskTool.id ? yield* describeTask(input.agent) : undefined,

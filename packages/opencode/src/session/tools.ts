@@ -78,12 +78,12 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
           },
         }
       }),
-    ask: (req) =>
+    ask: ({ toolCallID, ...req }) =>
       permission
         .ask({
           ...req,
           sessionID: input.session.id,
-          tool: { messageID: input.processor.message.id, callID: options.toolCallId },
+          tool: { messageID: input.processor.message.id, callID: toolCallID ?? options.toolCallId },
           ruleset: Permission.merge(input.agent.permission, input.session.permission ?? []),
         })
         .pipe(Effect.orDie),
@@ -108,6 +108,19 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
               { tool: item.id, sessionID: ctx.sessionID, callID: ctx.callID },
               { args },
             )
+            // Always enter Permission.ask at dispatch. A loaded gate may defer
+            // trusted built-ins to their richer internal check; without it,
+            // the default "ask" prevents silent execution.
+            yield* ctx.ask({
+              permission: "tool_call",
+              patterns: [item.id],
+              always: [],
+              metadata: {
+                tool: item.id,
+                trusted_builtin: item.trustedBuiltin === true,
+                internal_permission_check: item.internalPermissionCheck === true,
+              },
+            })
             const result = yield* item.execute(args, ctx)
             const output = {
               ...result,

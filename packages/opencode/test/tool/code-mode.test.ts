@@ -368,7 +368,10 @@ describe("code mode execute", () => {
       tool.execute({ code: "await tools.a.tool({}); await tools.b.tool({}); return 'done'" }, permissionCtx),
     )
 
-    expect(asked.map((req: any) => req.permission)).toEqual(["a_tool", "b_tool"])
+    expect(asked.map((req: any) => [req.permission, req.toolCallID])).toEqual([
+      ["a_tool", "call_code_mode/1"],
+      ["b_tool", "call_code_mode/2"],
+    ])
   })
 
   test("a denied permission fails the child call with a catchable message, not the whole execute", async () => {

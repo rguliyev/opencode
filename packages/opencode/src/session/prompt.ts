@@ -312,7 +312,7 @@ const layer = Layer.effect(
       }
       yield* plugin.trigger(
         "tool.execute.before",
-        { tool: TaskTool.id, sessionID, callID: part.id },
+        { tool: TaskTool.id, sessionID, callID: part.callID },
         { args: taskArgs },
       )
 
@@ -324,6 +324,20 @@ const layer = Layer.effect(
         yield* events.publish(Session.Event.Error, { sessionID, error: error.toObject() })
         throw error
       }
+
+      // Synthetic task calls bypass TaskTool's ordinary agent check. Review
+      // them at dispatch with the same call ID the plugin saw above.
+      yield* permission
+        .ask({
+          permission: "tool_call",
+          patterns: [TaskTool.id],
+          always: [],
+          metadata: { tool: TaskTool.id, trusted_builtin: true, internal_permission_check: false },
+          sessionID,
+          tool: { messageID: assistantMessage.id, callID: part.callID },
+          ruleset: Permission.merge(taskAgent.permission, session.permission ?? []),
+        })
+        .pipe(Effect.orDie)
 
       let error: Error | undefined
       const taskAbort = new AbortController()
