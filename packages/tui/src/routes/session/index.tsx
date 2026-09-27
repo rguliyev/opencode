@@ -19,6 +19,7 @@ import { mkdir, writeFile } from "node:fs/promises"
 import { useRoute, useRouteData } from "../../context/route"
 import { useProject } from "../../context/project"
 import { useSync } from "../../context/sync"
+import { reconnectRetryable } from "../../context/reconnect-state"
 import { useEvent } from "../../context/event"
 import { SplitBorder } from "../../ui/border"
 import { useTuiPaths, useTuiTerminalEnvironment } from "../../context/runtime"
@@ -285,42 +286,51 @@ export function Session() {
 
   createEffect(() => {
     const sessionID = route.sessionID
-    void (async () => {
-      const previousWorkspace = untrack(() => project.workspace.current())
-      const result = await sdk.client.session.get({ sessionID }, { throwOnError: true })
-      if (!result.data) {
-        toast.show({
-          message: `Session not found: ${sessionID}`,
-          variant: "error",
-          duration: 5000,
-        })
-        navigate({ type: "home" })
-        return
-      }
-
-      if (result.data.workspaceID !== previousWorkspace) {
-        project.workspace.set(result.data.workspaceID)
-
-        // Sync all the data for this workspace. Note that this
-        // workspace may not exist anymore which is why this is not
-        // fatal. If it doesn't we still want to show the session
-        // (which will be non-interactive)
-        try {
-          await sync.bootstrap({ fatal: false })
-        } catch {}
-      }
-      editor.reconnect(result.data.directory)
-      await sync.session.sync(sessionID)
-      if (route.sessionID === sessionID && scroll) scroll.scrollBy(100_000)
-    })().catch((error) => {
-      if (route.sessionID !== sessionID) return
-      toast.show({
-        message: errorMessage(error),
-        variant: "error",
-        duration: 5000,
-      })
-      navigate({ type: "home" })
+    let cancelled = false
+    onCleanup(() => {
+      cancelled = true
     })
+    void (async () => {
+      let attempt = 0
+      while (!cancelled && route.sessionID === sessionID) {
+        try {
+          const previousWorkspace = untrack(() => project.workspace.current())
+          const result = await sdk.client.session.get(
+            { sessionID },
+            { signal: AbortSignal.timeout(10_000), throwOnError: true },
+          )
+          if (cancelled || route.sessionID !== sessionID) return
+          if (!result.data) {
+            toast.show({ message: `Session not found: ${sessionID}`, variant: "error", duration: 5000 })
+            navigate({ type: "home" })
+            return
+          }
+
+          if (result.data.workspaceID !== previousWorkspace) {
+            project.workspace.set(result.data.workspaceID)
+            // A deleted workspace should not prevent the session from opening.
+            try {
+              await sync.bootstrap({ fatal: false })
+            } catch {}
+          }
+          if (cancelled || route.sessionID !== sessionID) return
+          editor.reconnect(result.data.directory)
+          await sync.session.sync(sessionID)
+          if (!cancelled && route.sessionID === sessionID && scroll) scroll.scrollBy(100_000)
+          return
+        } catch (error) {
+          if (cancelled || route.sessionID !== sessionID) return
+          if (!reconnectRetryable(error)) {
+            toast.show({ message: errorMessage(error), variant: "error", duration: 5000 })
+            navigate({ type: "home" })
+            return
+          }
+          // A server restart can interrupt the initial session load. Keep the
+          // route open and retry instead of navigating away from the session.
+          await new Promise((resolve) => setTimeout(resolve, Math.min(1_000 * 2 ** Math.min(attempt++, 5), 30_000)))
+        }
+      }
+    })()
   })
 
   let lastSwitch: string | undefined = undefined

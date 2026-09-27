@@ -71,6 +71,11 @@ function renderOutput(input: {
   return [
     `<task id="${input.sessionID}" state="${input.state}">`,
     ...(input.summary ? [`<summary>${input.summary}</summary>`] : []),
+    ...(input.state === "running"
+      ? []
+      : [
+          `<task_status>This child task has terminated and is no longer running. Do not wait for or report it as active. Process the ${input.state === "completed" ? "result" : "failure"} below now.</task_status>`,
+        ]),
     `<${tag}>`,
     input.text,
     `</${tag}>`,

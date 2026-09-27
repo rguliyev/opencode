@@ -81,6 +81,12 @@ IMPORTANT:
 
 const STRUCTURED_OUTPUT_SYSTEM_PROMPT = `IMPORTANT: The user has requested structured output. You MUST use the StructuredOutput tool to provide your final response. Do NOT respond with plain text - you MUST call the StructuredOutput tool with your answer formatted according to the schema.`
 
+export function structuredOutputToolChoice(modelID: string) {
+  // These Claude models reject forced tool choice; the system prompt requests StructuredOutput instead.
+  if (/claude-(?:opus-5[-.]5|(?:fable|mythos)-5[-.]1)(?:$|[-.@:])/i.test(modelID)) return undefined
+  return "required" as const
+}
+
 function mcpResourceBase64Size(value: string) {
   const trimmed = value.replace(/\s/g, "")
   const padding = trimmed.endsWith("==") ? 2 : trimmed.endsWith("=") ? 1 : 0
@@ -306,7 +312,7 @@ const layer = Layer.effect(
       }
       yield* plugin.trigger(
         "tool.execute.before",
-        { tool: TaskTool.id, sessionID, callID: part.id },
+        { tool: TaskTool.id, sessionID, callID: part.callID },
         { args: taskArgs },
       )
 
@@ -318,6 +324,20 @@ const layer = Layer.effect(
         yield* events.publish(Session.Event.Error, { sessionID, error: error.toObject() })
         throw error
       }
+
+      // Synthetic task calls bypass TaskTool's ordinary agent check. Review
+      // them at dispatch with the same call ID the plugin saw above.
+      yield* permission
+        .ask({
+          permission: "tool_call",
+          patterns: [TaskTool.id],
+          always: [],
+          metadata: { tool: TaskTool.id, trusted_builtin: true, internal_permission_check: false },
+          sessionID,
+          tool: { messageID: assistantMessage.id, callID: part.callID },
+          ruleset: Permission.merge(taskAgent.permission, session.permission ?? []),
+        })
+        .pipe(Effect.orDie)
 
       let error: Error | undefined
       const taskAbort = new AbortController()
@@ -1276,13 +1296,14 @@ const layer = Layer.effect(
               sessionID,
               parentSessionID: session.parentID,
               system,
-              messages: [
-                ...modelMsgs,
-                ...(isLastStep ? [{ role: "assistant" as const, content: MAX_STEPS_PROMPT }] : []),
-              ],
-              tools,
+              messages: [...modelMsgs, ...(isLastStep ? [{ role: "user" as const, content: MAX_STEPS_PROMPT }] : [])],
+              tools: isLastStep ? {} : tools,
               model,
-              toolChoice: format.type === "json_schema" ? "required" : undefined,
+              toolChoice: isLastStep
+                ? "none"
+                : format.type === "json_schema"
+                  ? structuredOutputToolChoice(model.api.id)
+                  : undefined,
             })
 
             if (structured !== undefined) {

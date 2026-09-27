@@ -74,6 +74,7 @@ type Scan = {
   dirs: Set<string>
   patterns: Set<string>
   always: Set<string>
+  commandCount: number
 }
 
 type Chunk = {
@@ -260,7 +261,8 @@ const parse = Effect.fn("ShellTool.parse")(function* (command: string, ps: boole
   return tree
 })
 
-const ask = Effect.fn("ShellTool.ask")(function* (ctx: Tool.Context, scan: Scan, input: { command: string }) {
+const ask = Effect.fn("ShellTool.ask")(function* (ctx: Tool.Context, scan: Scan, input: Parameters) {
+  const purpose = input.reason?.trim().slice(0, 500)
   if (scan.dirs.size > 0) {
     const directories = Array.from(scan.dirs)
     const globs = directories.map((dir) => {
@@ -273,12 +275,19 @@ const ask = Effect.fn("ShellTool.ask")(function* (ctx: Tool.Context, scan: Scan,
       always: globs,
       metadata: {
         command: input.command,
+        ...(purpose ? { purpose } : {}),
         directories,
         patterns: globs,
       },
     })
   }
 
+  // A shell assignment or syntax the scanner does not classify can still
+  // have side effects. Never execute a nonempty call without a Bash review.
+  if (scan.patterns.size === 0 && input.command.trim()) {
+    scan.patterns.add(input.command.trim())
+    scan.always.add(input.command.trim())
+  }
   if (scan.patterns.size === 0) return
   yield* ctx.ask({
     permission: ShellID.ToolID,
@@ -286,6 +295,8 @@ const ask = Effect.fn("ShellTool.ask")(function* (ctx: Tool.Context, scan: Scan,
     always: Array.from(scan.always),
     metadata: {
       command: input.command,
+      commandCount: scan.commandCount,
+      ...(purpose ? { purpose } : {}),
     },
   })
 })
@@ -386,10 +397,12 @@ export const ShellTool = Tool.define(
         dirs: new Set<string>(),
         patterns: new Set<string>(),
         always: new Set<string>(),
+        commandCount: 0,
       }
       const shellKind = ShellID.toKind(Shell.name(shell))
 
       for (const node of commands(root)) {
+        scan.commandCount++
         const command = parts(node)
         const tokens = command.map((item) => item.text)
         const cmd = ps || shellKind === "cmd" ? tokens[0]?.toLowerCase() : tokens[0]
@@ -404,10 +417,29 @@ export const ShellTool = Tool.define(
           }
         }
 
-        if (tokens.length && (!cmd || !CWD.has(cmd))) {
-          scan.patterns.add(source(node))
-          scan.always.add(BashArity.prefix(tokens).join(" ") + " *")
+        const text = source(node)
+        if (text) {
+          scan.patterns.add(text)
+          // A redirect can create or truncate a file even when the command
+          // itself is cwd-only. Never persist a broad prefix allow for it.
+          scan.always.add(
+            !tokens.length ||
+              CWD.has(cmd ?? "") ||
+              /[<>;&|`$]/.test(text) ||
+              node.parent?.type === "redirected_statement"
+              ? text
+              : BashArity.prefix(tokens).join(" ") + " *",
+          )
         }
+      }
+
+      // A bare redirection has no command node, but can create/truncate a file.
+      for (const redirect of root.descendantsOfType("redirected_statement")) {
+        if (!redirect) continue
+        const text = redirect.text.trim()
+        if (!text) continue
+        scan.patterns.add(text)
+        scan.always.add(text)
       }
 
       return scan
@@ -608,6 +640,7 @@ export const ShellTool = Tool.define(
           parameters: prompt.parameters,
           execute: (params: Parameters, ctx: Tool.Context) =>
             Effect.gen(function* () {
+              if (!params.command.trim()) throw new Error("Command must not be empty")
               const instanceCtx = yield* InstanceState.context
               const cwd = params.workdir
                 ? yield* resolvePath(params.workdir, instanceCtx.directory, shell)

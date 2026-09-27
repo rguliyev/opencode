@@ -56,7 +56,11 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
   const truncate = yield* Truncate.Service
   const flags = yield* RuntimeFlags.Service
 
-  const context = (args: Record<string, unknown>, options: ToolExecutionOptions): Tool.Context => ({
+  const context = (
+    args: Record<string, unknown>,
+    options: ToolExecutionOptions,
+    trustedBuiltin = false,
+  ): Tool.Context => ({
     sessionID: input.session.id,
     abort: options.abortSignal!,
     messageID: input.processor.message.id,
@@ -78,12 +82,16 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
           },
         }
       }),
-    ask: (req) =>
+    ask: ({ toolCallID, ...req }) =>
       permission
         .ask({
           ...req,
+          // Set by the dispatcher after resolving the actual tool definition,
+          // not by tool-supplied metadata. Plugin tools cannot claim to be a
+          // built-in by reusing a built-in ID or forging their own ctx.ask.
+          metadata: { ...req.metadata, core_trusted_builtin: trustedBuiltin },
           sessionID: input.session.id,
-          tool: { messageID: input.processor.message.id, callID: options.toolCallId },
+          tool: { messageID: input.processor.message.id, callID: toolCallID ?? options.toolCallId },
           ruleset: Permission.merge(input.agent.permission, input.session.permission ?? []),
         })
         .pipe(Effect.orDie),
@@ -102,12 +110,25 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
       execute(args, options) {
         return run.promise(
           Effect.gen(function* () {
-            const ctx = context(args, options)
+            const ctx = context(args, options, item.trustedBuiltin === true)
             yield* plugin.trigger(
               "tool.execute.before",
               { tool: item.id, sessionID: ctx.sessionID, callID: ctx.callID },
               { args },
             )
+            // Always enter Permission.ask at dispatch. A loaded gate may defer
+            // trusted built-ins to their richer internal check; without it,
+            // the default "ask" prevents silent execution.
+            yield* ctx.ask({
+              permission: "tool_call",
+              patterns: [item.id],
+              always: [],
+              metadata: {
+                tool: item.id,
+                trusted_builtin: item.trustedBuiltin === true,
+                internal_permission_check: item.internalPermissionCheck === true,
+              },
+            })
             const result = yield* item.execute(args, ctx)
             const output = {
               ...result,

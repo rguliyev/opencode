@@ -9,6 +9,17 @@ const decodeFormat = Schema.decodeUnknownExit(SessionV1.Format)
 const decodeUser = Schema.decodeUnknownExit(SessionV1.User)
 const decodeAssistant = Schema.decodeUnknownExit(SessionV1.Assistant)
 
+describe("structured-output.ToolChoice", () => {
+  test.each(["claude-opus-5-5", "claude-fable-5-1", "claude-mythos-5-1", "anthropic.claude-opus-5-5"])(
+    "uses automatic tool choice for %s",
+    (id) => expect(SessionPrompt.structuredOutputToolChoice(id)).toBeUndefined(),
+  )
+
+  test.each(["claude-opus-5", "claude-sonnet-5", "gpt-6-sol"])("requires a tool for %s", (id) => {
+    expect(SessionPrompt.structuredOutputToolChoice(id)).toBe("required")
+  })
+})
+
 describe("structured-output.OutputFormat", () => {
   test("parses text format", () => {
     const result = decodeFormat({ type: "text" })

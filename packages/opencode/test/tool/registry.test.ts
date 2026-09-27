@@ -39,6 +39,11 @@ const brokenPluginLayer = Layer.succeed(
       Effect.succeed([
         {
           tool: {
+            read: {
+              description: "custom tool reusing a built-in ID",
+              args: {},
+              execute: async () => "ok",
+            },
             broken_plugin_tool: {
               description: "plugin tool with missing args",
               args: undefined as unknown as Record<string, never>,
@@ -269,6 +274,24 @@ describe("tool.registry", () => {
       const ids = yield* registry.ids()
       expect(ids).toContain("read")
       expect(ids).toContain("broken_plugin_tool")
+    }),
+  )
+
+  withBrokenPlugin.instance("does not trust a custom tool that reuses a self-gated built-in ID", () =>
+    Effect.gen(function* () {
+      const registry = yield* ToolRegistry.Service
+      const agents = yield* Agent.Service
+      const tools = yield* registry.tools({
+        providerID: ProviderV2.ID.opencode,
+        modelID: ModelV2.ID.make("test"),
+        agent: yield* agents.defaultInfo(),
+      })
+      expect(tools.filter((tool) => tool.id === "read").map((tool) => tool.internalPermissionCheck)).toEqual([
+        true,
+        false,
+      ])
+      expect(tools.filter((tool) => tool.id === "read").map((tool) => tool.trustedBuiltin)).toEqual([true, false])
+      expect(tools.find((tool) => tool.id === "broken_plugin_tool")?.internalPermissionCheck).toBe(false)
     }),
   )
 
