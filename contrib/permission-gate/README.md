@@ -28,7 +28,15 @@ any usable shell-only baseline. The worker never logs or persists raw request
 text. A reviewable Jev escalation or local blocking reason proceeds to GPT-6
 Luna via OpenRouter, including high-risk and high-confidence Jev results.
 Custom `tool_call` dispatches carry their available tool description and
-arguments to Luna and always reach it, even when Jev allows. Any
+arguments to Luna and always reach it, even when Jev allows. A description is
+not proof of effects: automatic approval requires a core-attested npm origin
+and pinned digests of the known goal-plugin source and package manifest, plus
+the core-resolved entrypoint. The verified goal status
+tools may initialize and persist local state on first use; resume and block
+change local goal state. Unknown or changed custom tools still ask the human.
+For grep, the regex expression is separate from the lexically resolved
+requested path; symlinks and matched files are explicitly unverified until the
+tool's later external-directory check and search. Any
 request that would otherwise prompt the human gets a Luna attempt first. If
 the action or task context cannot be shared safely, Luna receives only a
 minimal withheld-evidence notice and must ask; raw sensitive evidence is not
@@ -45,12 +53,27 @@ sanitized review copies leave the
 process; executed arguments are not modified. The gate requires matching
 OpenCode permission hooks and a local configuration with the expected hard-deny
 patterns.
-The gate pages through bounded session-message responses to find the latest
-root-session human request even when recent assistant tool results are large.
-It also passes up to two earlier, redacted root human messages as separately
-labeled history so short replies such as "yes" retain task context. An unsafe
-latest message stops automatic review rather than falling back to an older
-authorization; unsafe earlier history is omitted.
+The gate verifies every parent session through the root, then reads only that
+root session's user rows from OpenCode's local SQLite database in read-only
+mode. This avoids hydrating thousands of assistant replies and oversized tool
+results through the message API; bounded API paging remains a fallback if the
+session is not in a local database. At most 512 user messages and 96 KiB of
+sanitized timeline are sent, with message IDs and times. Non-text attachments
+are never sent; redacted literals and omitted attachments are marked and
+cannot themselves authorize an action. A short "continue" can refer to the
+still-applicable original task, while later constraints or revocations remain
+visible. New slash-command template text, and direct text modified or inserted
+by a `chat.message` hook, are marked synthetic after the hook and represented
+only by non-authorizing markers. A latest such message therefore requires human
+review rather than silently reusing a previous task.
+Legacy unmarked command-expanded messages cannot be proven direct-human from
+the historical database alone. Synthetic and compaction-replayed prompts are
+not human authorization.
+If lineage, history, or safe redaction is incomplete, the gate asks rather than
+silently dropping intervening messages or promoting a child task to human
+authority. History is reread for each review so edits to older messages cannot
+leave a stale authorization cache. The size limits bound review latency and
+disclosure; oversized histories still require human review.
 For subagents, Kev, Jev, and Luna receive the latest agent-written delegated
 task, explicitly labeled as context rather than human authorization. If either
 required task context is unavailable or contains an obvious credential or

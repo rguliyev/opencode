@@ -483,8 +483,10 @@ const layer = Layer.effect(
             if (part.type === "compaction") continue
             const replayPart =
               part.type === "file" && MessageV2.isMedia(part.mime)
-                ? { type: "text" as const, text: `[Attached ${part.mime}: ${part.filename ?? "file"}]` }
-                : part
+                ? { type: "text" as const, text: `[Attached ${part.mime}: ${part.filename ?? "file"}]`, synthetic: true }
+                : part.type === "text"
+                  ? { ...part, synthetic: true }
+                  : part
             yield* session.updatePart({
               ...replayPart,
               id: PartID.ascending(),

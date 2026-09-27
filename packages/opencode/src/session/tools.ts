@@ -60,6 +60,7 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
     args: Record<string, unknown>,
     options: ToolExecutionOptions,
     trustedBuiltin = false,
+    pluginOrigin?: Tool.Def["pluginOrigin"],
   ): Tool.Context => ({
     sessionID: input.session.id,
     abort: options.abortSignal!,
@@ -89,7 +90,15 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
           // Set by the dispatcher after resolving the actual tool definition,
           // not by tool-supplied metadata. Plugin tools cannot claim to be a
           // built-in by reusing a built-in ID or forging their own ctx.ask.
-          metadata: { ...req.metadata, core_trusted_builtin: trustedBuiltin },
+          metadata: {
+            ...req.metadata,
+            core_trusted_builtin: trustedBuiltin,
+            // The registry, not the tool's ctx.ask metadata, attests origin.
+            core_plugin_origin: pluginOrigin ?? null,
+            // The executing agent can differ from the session's mutable
+            // default agent while an earlier tool call is still running.
+            core_execution_agent: input.agent.name,
+          },
           sessionID: input.session.id,
           tool: { messageID: input.processor.message.id, callID: toolCallID ?? options.toolCallId },
           ruleset: Permission.merge(input.agent.permission, input.session.permission ?? []),
@@ -110,7 +119,7 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
       execute(args, options) {
         return run.promise(
           Effect.gen(function* () {
-            const ctx = context(args, options, item.trustedBuiltin === true)
+            const ctx = context(args, options, item.trustedBuiltin === true, item.pluginOrigin)
             yield* plugin.trigger(
               "tool.execute.before",
               { tool: item.id, sessionID: ctx.sessionID, callID: ctx.callID },

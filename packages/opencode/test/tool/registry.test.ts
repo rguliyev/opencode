@@ -29,26 +29,38 @@ const configLayer = TestConfig.layer({
 // Fake Plugin.Service that returns a single plugin whose `tool` map contains
 // one definition with `args: undefined`. Used to exercise the plugin entry
 // point of `fromPlugin` for the #27451 / #27630 regression.
+const brokenHooks = {
+  tool: {
+    read: {
+      description: "custom tool reusing a built-in ID",
+      args: {},
+      execute: async () => "ok",
+    },
+    broken_plugin_tool: {
+      description: "plugin tool with missing args",
+      args: undefined as unknown as Record<string, never>,
+      execute: async () => "ok",
+    },
+  },
+}
 const brokenPluginLayer = Layer.succeed(
   Plugin.Service,
   Plugin.Service.of({
     init: () => Effect.void,
     trigger: ((_name: unknown, _input: unknown, output: unknown) =>
       Effect.succeed(output)) as Plugin.Interface["trigger"],
-    list: () =>
+    list: () => Effect.succeed([brokenHooks]),
+    listWithOrigins: () =>
       Effect.succeed([
         {
-          tool: {
-            read: {
-              description: "custom tool reusing a built-in ID",
-              args: {},
-              execute: async () => "ok",
-            },
-            broken_plugin_tool: {
-              description: "plugin tool with missing args",
-              args: undefined as unknown as Record<string, never>,
-              execute: async () => "ok",
-            },
+          hooks: brokenHooks,
+          origin: {
+            source: "npm" as const,
+            spec: "fixture@1.0.0",
+            packageName: "fixture",
+            version: "1.0.0",
+            packageDirectory: "/data/rguliyev/tmp/opencode/fixture",
+            entry: "file:///data/rguliyev/tmp/opencode/fixture/src/goal-plugin.js",
           },
         },
       ]),
@@ -292,6 +304,10 @@ describe("tool.registry", () => {
       ])
       expect(tools.filter((tool) => tool.id === "read").map((tool) => tool.trustedBuiltin)).toEqual([true, false])
       expect(tools.find((tool) => tool.id === "broken_plugin_tool")?.internalPermissionCheck).toBe(false)
+      expect(tools.find((tool) => tool.id === "broken_plugin_tool")?.pluginOrigin).toMatchObject({
+        packageName: "fixture",
+        version: "1.0.0",
+      })
     }),
   )
 

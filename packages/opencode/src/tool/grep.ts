@@ -36,6 +36,9 @@ export const GrepTool = Tool.define(
             throw new Error("pattern is required")
           }
 
+          const ins = yield* InstanceState.context
+          const requested = path.resolve(ins.directory, params.path ?? ".")
+
           yield* ctx.ask({
             permission: "grep",
             patterns: [params.pattern],
@@ -44,13 +47,11 @@ export const GrepTool = Tool.define(
               pattern: params.pattern,
               path: params.path,
               include: params.include,
+              requested_path: requested,
+              path_resolution: "lexical; symlinks and matched files are not yet verified",
             },
           })
 
-          const ins = yield* InstanceState.context
-          const requested = path.isAbsolute(params.path ?? ins.directory)
-            ? (params.path ?? ins.directory)
-            : path.join(ins.directory, params.path ?? ".")
           const requestedInfo = yield* fs.stat(requested).pipe(Effect.catch(() => Effect.succeed(undefined)))
           yield* assertExternalDirectoryEffect(ctx, requested, {
             bypass: false,

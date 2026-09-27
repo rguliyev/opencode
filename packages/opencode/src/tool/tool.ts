@@ -64,6 +64,8 @@ export interface Def<
   internalPermissionCheck?: boolean
   /** Set only by the registry; custom/plugin tools cannot assert provenance. */
   trustedBuiltin?: boolean
+  /** Attested by the registry from the loaded package, not plugin tool metadata. */
+  pluginOrigin?: { packageName: string; version: string; packageDirectory: string; entry: string }
   execute(args: Schema.Schema.Type<Parameters>, ctx: Context): Effect.Effect<ExecuteResult<M>>
   formatValidationError?(error: unknown): string
 }

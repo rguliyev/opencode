@@ -1837,6 +1837,13 @@ unix(
         })
 
         expect(result.info.role).toBe("assistant")
+        const sessions = yield* Session.Service
+        const commandUser = (yield* sessions.messages({ sessionID: chat.id })).find((item) => item.info.role === "user")
+        const commandText = commandUser?.parts.find((part) => part.type === "text")
+        expect(commandText).toMatchObject({
+          synthetic: true,
+          metadata: { permissionContextOrigin: "command_template" },
+        })
         const inputs = yield* llm.inputs
         expect(JSON.stringify(inputs.at(-1)?.messages)).toContain("configured")
       }),
