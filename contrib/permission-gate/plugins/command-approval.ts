@@ -1526,7 +1526,10 @@ const CommandApproval: Plugin = async ({ directory, serverUrl }) => {
   async function latestDelegatedTask(sessionID: string | undefined, parentID: string | undefined) {
     if (!sessionID || !parentID) return undefined
     const latest = (await sessionUserMessages(sessionID))?.at(-1)
-    return latest && !latest.withheld ? latest.text : undefined
+    // The delegated task is agent-authored context, never human authority.
+    // A redacted literal need not erase the rest of an otherwise reviewable
+    // task; synthetic prompts and non-text attachments remain unavailable.
+    return latest && (!latest.withheld || latest.withheld === "redacted_literal") ? latest.text : undefined
   }
 
   function safeContextText(value: unknown, limit: number) {

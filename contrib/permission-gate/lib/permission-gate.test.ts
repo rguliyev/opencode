@@ -495,6 +495,7 @@ test("Jev receives paginated root human context and a distinct subagent task", a
   const requests: string[] = []
   let childTaskAvailable = true
   let childTaskContainsPII = false
+  let childTaskRedacted = false
   let childTaskWithheld = false
   let rootHumanAvailable = true
   const reviewCount = () => requests.filter((request) => request.startsWith("/api/alpha/decisions")).length
@@ -521,11 +522,17 @@ test("Jev receives paginated root human context and a distinct subagent task", a
               ]
             : [
               message(
-                childTaskContainsPII ? "msg_child_task_pii" : "msg_child_task",
+                childTaskContainsPII
+                  ? "msg_child_task_pii"
+                  : childTaskRedacted
+                    ? "msg_child_task_redacted"
+                    : "msg_child_task",
                 "user",
                 childTaskContainsPII
                   ? "Inspect patient alice@example.test's local fixture."
-                  : "Inspect the local fixture and report its status.",
+                  : childTaskRedacted
+                    ? "Inspect the local fixture. INCIDENT_GRAFANA_TOKEN_URL=https://example.test/mcp/oauth/token"
+                    : "Inspect the local fixture and report its status.",
               ),
             ]
           : [message("msg_child_assistant", "assistant", "working")],
@@ -593,6 +600,24 @@ test("Jev receives paginated root human context and a distinct subagent task", a
     expect(requests.some((request) => request.includes("before=older-root-page"))).toBe(true)
     expect(reviewCount()).toBe(1)
 
+    childTaskRedacted = true
+    const redactedTask = { status: "ask" }
+    await hooks["permission.ask"](
+      {
+        permission: "read",
+        sessionID: "ses_child_context",
+        patterns: ["fixture.txt"],
+        metadata: { filepath: "fixture.txt" },
+        tool: { callID: "call_child_context" },
+      },
+      redactedTask,
+    )
+    expect(redactedTask.status).toBe("allow")
+    expect(reviewCount()).toBe(2)
+    expect(jevContext?.delegated_task).toContain("INCIDENT_GRAFANA_TOKEN_URL=[REDACTED:CREDENTIAL]")
+    expect(JSON.stringify(jevContext)).not.toContain("https://example.test/mcp/oauth/token")
+    childTaskRedacted = false
+
     childTaskAvailable = false
     const missingTask = { status: "allow" }
     await hooks["permission.ask"](
@@ -606,7 +631,7 @@ test("Jev receives paginated root human context and a distinct subagent task", a
       missingTask,
     )
     expect(missingTask.status).toBe("ask")
-    expect(reviewCount()).toBe(1)
+    expect(reviewCount()).toBe(2)
 
     childTaskAvailable = true
     rootHumanAvailable = false
@@ -622,7 +647,7 @@ test("Jev receives paginated root human context and a distinct subagent task", a
       missingHuman,
     )
     expect(missingHuman.status).toBe("ask")
-    expect(reviewCount()).toBe(1)
+    expect(reviewCount()).toBe(2)
 
     rootHumanAvailable = true
     childTaskContainsPII = true
@@ -638,7 +663,7 @@ test("Jev receives paginated root human context and a distinct subagent task", a
       piiTask,
     )
     expect(piiTask.status).toBe("ask")
-    expect(reviewCount()).toBe(1)
+    expect(reviewCount()).toBe(2)
     expect(JSON.stringify(jevContext)).not.toContain("alice@example.test")
 
     childTaskContainsPII = false
@@ -655,7 +680,7 @@ test("Jev receives paginated root human context and a distinct subagent task", a
       withheldTask,
     )
     expect(withheldTask.status).toBe("ask")
-    expect(reviewCount()).toBe(1)
+    expect(reviewCount()).toBe(2)
   } finally {
     globalThis.fetch = previousFetch
     if (previousStateHome === undefined) delete process.env.XDG_STATE_HOME

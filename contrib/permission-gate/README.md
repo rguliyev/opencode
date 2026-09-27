@@ -84,9 +84,11 @@ authority. History is reread for each review so edits to older messages cannot
 leave a stale authorization cache. The size limits bound review latency and
 disclosure; oversized histories still require human review.
 For subagents, Kev, Jev, and Luna receive the latest agent-written delegated
-task, explicitly labeled as context rather than human authorization. If either
-required task context is unavailable or contains an obvious credential or
-personal-data marker, the gate withholds it and asks Luna using minimal safe
+task, explicitly labeled as context rather than human authorization. A
+credential-like literal is redacted in that task rather than causing the
+entire task to disappear; the marker cannot authorize an action. Missing,
+synthetic, non-text, oversized, or unsafe-to-redact delegated tasks, and
+personal-data markers, still cause the gate to ask Luna using minimal safe
 context before prompting the human.
 Deployment-specific paths are present in the source; review and adapt them
 before installing elsewhere.
