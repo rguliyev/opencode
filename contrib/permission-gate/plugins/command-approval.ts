@@ -1040,7 +1040,16 @@ type LunaResult = {
   choice?: "allow" | "ask"
   reason?: string
   latency_ms?: number
-  diagnostic?: "envelope" | "model" | "choices" | "finish" | "content" | "json" | "schema"
+  diagnostic?:
+    | "envelope"
+    | "model"
+    | "choices"
+    | "finish_length"
+    | "finish_filter"
+    | "finish_other"
+    | "content"
+    | "json"
+    | "schema"
 }
 
 function lunaAudit(result: LunaResult) {
@@ -1671,7 +1680,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl }) => {
           }
     const key = openRouterKey()
     if (!key) return { status: "unavailable" }
-    const payload = JSON.stringify({
+    const payload = {
       model: lunaModel,
       reasoning_effort: "none",
       provider: { require_parameters: true },
@@ -1699,58 +1708,73 @@ const CommandApproval: Plugin = async ({ directory, serverUrl }) => {
           },
         },
       },
-      max_completion_tokens: 160,
-    })
+    }
     const started = Date.now()
+    const signal = AbortSignal.timeout(lunaTimeoutMs)
     try {
-      const response = await fetch(lunaEndpoint, {
-        method: "POST",
-        signal: AbortSignal.timeout(lunaTimeoutMs),
-        headers: {
-          Authorization: `Bearer ${key}`,
-          "Content-Type": "application/json",
-          "X-OpenRouter-Title": "OpenCode permission review",
-        },
-        body: payload,
-      })
-      if (!response.ok) {
-        void response.body?.cancel().catch(() => {})
-        return { status: "unavailable", latency_ms: Date.now() - started }
+      // The old 160-token cap can truncate JSON. Retry only an explicit length
+      // stop; never accept a partial or filtered reply.
+      for (const budget of [512, 1024]) {
+        const response = await fetch(lunaEndpoint, {
+          method: "POST",
+          signal,
+          headers: {
+            Authorization: `Bearer ${key}`,
+            "Content-Type": "application/json",
+            "X-OpenRouter-Title": "OpenCode permission review",
+          },
+          body: JSON.stringify({ ...payload, max_completion_tokens: budget }),
+        })
+        if (!response.ok) {
+          void response.body?.cancel().catch(() => {})
+          return { status: "unavailable", latency_ms: Date.now() - started }
+        }
+        const body = await boundedJson(response)
+        if (!body || typeof body !== "object")
+          return { status: "invalid_response", diagnostic: "envelope", latency_ms: Date.now() - started }
+        if (body.model !== lunaModel)
+          return { status: "invalid_response", diagnostic: "model", latency_ms: Date.now() - started }
+        if (!Array.isArray(body.choices) || body.choices.length !== 1)
+          return { status: "invalid_response", diagnostic: "choices", latency_ms: Date.now() - started }
+        const item = body.choices[0]
+        if (item?.finish_reason === "length" && budget === 512) continue
+        if (item?.finish_reason !== "stop")
+          return {
+            status: "invalid_response",
+            diagnostic:
+              item?.finish_reason === "length"
+                ? "finish_length"
+                : item?.finish_reason === "content_filter"
+                  ? "finish_filter"
+                  : "finish_other",
+            latency_ms: Date.now() - started,
+          }
+        if (typeof item.message?.content !== "string")
+          return { status: "invalid_response", diagnostic: "content", latency_ms: Date.now() - started }
+        let answer: unknown
+        try {
+          answer = JSON.parse(item.message.content)
+        } catch {
+          return { status: "invalid_response", diagnostic: "json", latency_ms: Date.now() - started }
+        }
+        if (
+          !answer ||
+          typeof answer !== "object" ||
+          Object.keys(answer).sort().join(",") !== "choice,reason" ||
+          (answer.choice !== "allow" && answer.choice !== "ask") ||
+          typeof answer.reason !== "string" ||
+          !answer.reason.trim() ||
+          answer.reason.length > 500
+        )
+          return { status: "invalid_response", diagnostic: "schema", latency_ms: Date.now() - started }
+        return {
+          status: "score",
+          choice: answer.choice,
+          reason: answer.reason,
+          latency_ms: Date.now() - started,
+        }
       }
-      const body = await boundedJson(response)
-      if (!body || typeof body !== "object")
-        return { status: "invalid_response", diagnostic: "envelope", latency_ms: Date.now() - started }
-      if (body.model !== lunaModel)
-        return { status: "invalid_response", diagnostic: "model", latency_ms: Date.now() - started }
-      if (!Array.isArray(body.choices) || body.choices.length !== 1)
-        return { status: "invalid_response", diagnostic: "choices", latency_ms: Date.now() - started }
-      const item = body.choices[0]
-      if (item?.finish_reason !== "stop")
-        return { status: "invalid_response", diagnostic: "finish", latency_ms: Date.now() - started }
-      if (typeof item.message?.content !== "string")
-        return { status: "invalid_response", diagnostic: "content", latency_ms: Date.now() - started }
-      let answer: unknown
-      try {
-        answer = JSON.parse(item.message.content)
-      } catch {
-        return { status: "invalid_response", diagnostic: "json", latency_ms: Date.now() - started }
-      }
-      if (
-        !answer ||
-        typeof answer !== "object" ||
-        Object.keys(answer).sort().join(",") !== "choice,reason" ||
-        (answer.choice !== "allow" && answer.choice !== "ask") ||
-        typeof answer.reason !== "string" ||
-        !answer.reason.trim() ||
-        answer.reason.length > 500
-      )
-        return { status: "invalid_response", diagnostic: "schema", latency_ms: Date.now() - started }
-      return {
-        status: "score",
-        choice: answer.choice,
-        reason: answer.reason,
-        latency_ms: Date.now() - started,
-      }
+      return { status: "invalid_response", diagnostic: "finish_length", latency_ms: Date.now() - started }
     } catch (error) {
       const status =
         error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")

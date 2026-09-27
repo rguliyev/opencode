@@ -1069,6 +1069,10 @@ test("Luna resolves Jev escalations with trusted human context and strict JSON",
   let earlierUpdates: string[] = []
   let lunaState: Record<string, unknown> | undefined
   let jevState: Record<string, unknown> | undefined
+  let lunaFinishReasons: string[] = []
+  let lunaStatuses: number[] = []
+  const lunaBudgets: number[] = []
+  const lunaSignals: (AbortSignal | null | undefined)[] = []
   process.env.XDG_STATE_HOME = "/dev/null"
   process.env.OPENCODE_KEV_SOCKET = "/dev/null/no-kev-socket"
   globalThis.fetch = async (input, init) => {
@@ -1111,10 +1115,14 @@ test("Luna resolves Jev escalations with trusted human context and strict JSON",
       seen.push("luna")
       if (typeof init?.body !== "string") throw new Error("Missing Luna request body")
       const payload = JSON.parse(init.body)
+      lunaBudgets.push(payload.max_completion_tokens)
+      lunaSignals.push(init.signal)
       lunaState = JSON.parse(payload.messages[1].content)
+      const status = lunaStatuses.shift() ?? 200
+      if (status !== 200) return new Response("unavailable", { status })
       return Response.json({
         model: "openai/gpt-6-luna",
-        choices: [{ finish_reason: "stop", message: { content: lunaContent } }],
+        choices: [{ finish_reason: lunaFinishReasons.shift() ?? "stop", message: { content: lunaContent } }],
       })
     }
     throw new Error(`Unexpected fetch: ${url}`)
@@ -1142,6 +1150,7 @@ test("Luna resolves Jev escalations with trusted human context and strict JSON",
     await hooks["permission.ask"](request, allowed)
     expect(allowed.status).toBe("allow")
     expect(seen).toEqual(["jev", "luna"])
+    expect(lunaBudgets).toEqual([512])
     const lunaAction = lunaState?.action
     expect(
       lunaAction && typeof lunaAction === "object" && "metadata" in lunaAction
@@ -1225,6 +1234,35 @@ test("Luna resolves Jev escalations with trusted human context and strict JSON",
     expect(malformed.status).toBe("ask")
 
     lunaContent = JSON.stringify({ choice: "allow", reason: "Looks fine" })
+    lunaFinishReasons = ["length", "stop"]
+    const beforeLengthRetry = seen.length
+    const lengthRetry = { status: "ask" }
+    await hooks["permission.ask"](request, lengthRetry)
+    expect(lengthRetry.status).toBe("allow")
+    expect(seen.slice(beforeLengthRetry)).toEqual(["jev", "luna", "luna"])
+    expect(lunaBudgets.slice(-2)).toEqual([512, 1024])
+    expect(lunaSignals.at(-1)).toBe(lunaSignals.at(-2))
+
+    lunaFinishReasons = ["length"]
+    lunaStatuses = [200, 503]
+    const retryFailure = { status: "allow" }
+    await hooks["permission.ask"](request, retryFailure)
+    expect(retryFailure.status).toBe("ask")
+
+    lunaFinishReasons = ["length", "length"]
+    const beforeExhaustedRetry = seen.length
+    const exhaustedRetry = { status: "allow" }
+    await hooks["permission.ask"](request, exhaustedRetry)
+    expect(exhaustedRetry.status).toBe("ask")
+    expect(seen.slice(beforeExhaustedRetry)).toEqual(["jev", "luna", "luna"])
+
+    lunaFinishReasons = ["content_filter"]
+    const beforeFiltered = seen.length
+    const filtered = { status: "allow" }
+    await hooks["permission.ask"](request, filtered)
+    expect(filtered.status).toBe("ask")
+    expect(seen.slice(beforeFiltered)).toEqual(["jev", "luna"])
+
     jevRisk = 0.9
     const riskFlagged = { status: "allow" }
     await hooks["permission.ask"](request, riskFlagged)

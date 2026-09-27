@@ -42,6 +42,9 @@ the action or task context cannot be shared safely, Luna receives only a
 minimal withheld-evidence notice and must ask; raw sensitive evidence is not
 sent. Luna's `allow` resolves ordinary Bash and non-Bash escalations; its
 `ask` prompts the human. Jev scores are signals, not a veto on Luna.
+Luna retries a length-truncated response once with a larger output budget
+within the same eight-second deadline. Incomplete, filtered, malformed, or
+otherwise invalid responses never grant permission.
 Configured denials, concrete local human-only rules, unreviewable or unsafe
 context, model failures, and read-only reviewer restrictions still block
 automatic approval. Task evidence must match a trusted foreground built-in call; a
