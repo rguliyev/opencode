@@ -2,6 +2,8 @@ import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import type {
   Hooks,
   PluginInput,
+  PermissionReviewInput,
+  PermissionReviewOutput,
   Plugin as PluginInstance,
   PluginModule,
   WorkspaceAdapter as PluginWorkspaceAdapter,
@@ -64,6 +66,9 @@ export interface Interface {
   readonly list: () => Effect.Effect<Hooks[]>
   readonly listWithOrigins: () => Effect.Effect<{ hooks: Hooks; origin: ToolOrigin }[]>
   readonly init: () => Effect.Effect<void>
+  readonly setPermissionModelReviewer: (
+    fn: (input: PermissionReviewInput) => Effect.Effect<PermissionReviewOutput, unknown>,
+  ) => Effect.Effect<void>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/Plugin") {}
@@ -163,6 +168,7 @@ const layer = Layer.effect(
     const events = yield* EventV2Bridge.Service
     const config = yield* Config.Service
     const flags = yield* RuntimeFlags.Service
+    let modelReviewer: ((input: PermissionReviewInput) => Effect.Effect<PermissionReviewOutput, unknown>) | undefined
 
     const state = yield* InstanceState.make<State>(
       Effect.fn("Plugin.state")(function* (ctx) {
@@ -186,6 +192,10 @@ const layer = Layer.effect(
         const cfg = yield* config.get()
         const input: PluginInput = {
           client,
+          reviewPermission: (request) => {
+            if (!modelReviewer) return Promise.reject(new Error("Configured permission model is unavailable"))
+            return bridge.promise(modelReviewer(request))
+          },
           project: ctx.project,
           worktree: ctx.worktree,
           directory: ctx.directory,
@@ -347,6 +357,11 @@ const layer = Layer.effect(
       yield* InstanceState.get(state)
     })
 
+    const setPermissionModelReviewer = (fn: NonNullable<typeof modelReviewer>) =>
+      Effect.sync(() => {
+        modelReviewer = fn
+      })
+
     // Invoke the `permission.ask` hook, which is otherwise declared in the
     // plugin API and never triggered. The dependency points plugin -> permission
     // on purpose: the reverse edge would drag plugin loading into every graph
@@ -357,7 +372,7 @@ const layer = Layer.effect(
     const permission = yield* Permission.Service
     yield* permission.setReviewer((input, output) => trigger("permission.ask", input, output).pipe(Effect.asVoid))
 
-    return Service.of({ trigger, list, listWithOrigins, init })
+    return Service.of({ trigger, list, listWithOrigins, init, setPermissionModelReviewer })
   }),
 )
 

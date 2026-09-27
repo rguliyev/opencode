@@ -26,7 +26,11 @@ advisory. The checkpoint's native 384-token state window can reject longer
 context; the worker reports `context_status: model_overflow` while preserving
 any usable shell-only baseline. The worker never logs or persists raw request
 text. A reviewable Jev escalation or local blocking reason proceeds to GPT-6
-Luna via OpenRouter, including high-risk and high-confidence Jev results.
+Luna through OpenCode's configured `small_model` (`openai/gpt-6-luna`),
+including high-risk and high-confidence Jev results. The core uses its
+configured OpenAI OAuth access for a one-shot, tool-free structured review;
+the plugin has no OpenRouter or API-key fallback for Luna and creates no
+reviewer session.
 Custom `tool_call` dispatches carry their available tool description and
 arguments to Luna and always reach it, even when Jev allows. A description is
 not proof of effects: automatic approval requires a core-attested npm origin
@@ -42,10 +46,9 @@ the action or task context cannot be shared safely, Luna receives only a
 minimal withheld-evidence notice and must ask; raw sensitive evidence is not
 sent. Luna's `allow` resolves ordinary Bash and non-Bash escalations; its
 `ask` prompts the human. Jev scores are signals, not a veto on Luna.
-Luna retries a length-truncated or malformed model answer once with a larger
-output budget within the same eight-second deadline. A reply grants permission
-only after a complete stop and strict JSON validation; filtered or still-invalid
-replies never grant permission.
+Luna makes at most one provider request within an eight-second deadline. A
+reply grants permission only after strict model identity, shape, and reason
+validation; errors or malformed replies never grant permission.
 Configured denials, concrete local human-only rules, unreviewable or unsafe
 context, model failures, and read-only reviewer restrictions still block
 automatic approval. Task evidence must match a trusted foreground built-in call; a

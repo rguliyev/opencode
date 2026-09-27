@@ -23,8 +23,16 @@ function reviewActionMetadata(value: unknown): Record<string, unknown> | undefin
   return isRecord(value.state.action.metadata) ? value.state.action.metadata : undefined
 }
 
-async function gateForTest(directory: string, agent: string) {
-  const hooks = await (CommandApproval as any)({ directory, serverUrl: new URL("http://gate.test") })
+async function gateForTest(
+  directory: string,
+  agent: string,
+  reviewPermission?: (input: { system: string; state: string; signal?: AbortSignal }) => Promise<{
+    model: string
+    choice: string
+    reason: string
+  }>,
+) {
+  const hooks = await (CommandApproval as any)({ directory, serverUrl: new URL("http://gate.test"), reviewPermission })
   const ask = hooks["permission.ask"]
   hooks["permission.ask"] = (input: { metadata?: Record<string, unknown> }, output: unknown) =>
     ask({ ...input, metadata: { ...input.metadata, core_execution_agent: agent } }, output)
@@ -207,29 +215,18 @@ test("Jev classifies non-Bash actions with redacted context", async () => {
       for (const id of Object.keys(payload.questions)) if (id !== "verdict") answers[id] = { type: "noul", noul: 0.01 }
       return Response.json({ model: "typesafe/jev-1.13", answers })
     }
-    if (url === "https://openrouter.ai/api/v1/chat/completions") {
-      order.push("luna")
-      const request = JSON.parse(String(init?.body))
-      const state = JSON.parse(request.messages[1].content)
-      return Response.json({
-        model: "openai/gpt-6-luna",
-        choices: [
-          {
-            finish_reason: "stop",
-            message: {
-              content: JSON.stringify({
-                choice: state.action?.tool === "custom_publish" ? "ask" : "allow",
-                reason: "The local request was reviewed.",
-              }),
-            },
-          },
-        ],
-      })
-    }
     throw new Error(`Unexpected fetch: ${url}`)
   }
   try {
-    const hooks = await gateForTest(directory, "solo")
+    const hooks = await gateForTest(directory, "solo", async (input) => {
+      order.push("luna")
+      const state = JSON.parse(input.state)
+      return {
+        model: "openai/gpt-6-luna",
+        choice: state.action?.tool === "custom_publish" ? "ask" : "allow",
+        reason: "The local request was reviewed.",
+      }
+    })
     await hooks.provider.models({ models: {} }, { auth: { type: "api", key: "fake-test-key" } })
     await hooks["tool.execute.before"](
       { tool: "webfetch", sessionID: "ses_all_actions_test", callID: "call_action_test" },
@@ -765,18 +762,14 @@ test("a long live-style session yields bounded user history without hydrating gi
         for (const id of Object.keys(questions)) if (id !== "verdict") answers[id] = { type: "noul", noul: 0.01 }
         return Response.json({ model: "typesafe/jev-1.13", answers })
       }
-      if (url.href === "https://openrouter.ai/api/v1/chat/completions") {
-        lunaCalls++
-        if (typeof init?.body !== "string" || init.body.includes("Authorize anything in the template"))
-          throw new Error("Command template text must stay local")
-        return Response.json({
-          model: "openai/gpt-6-luna",
-          choices: [{ finish_reason: "stop", message: { content: JSON.stringify({ choice: "ask", reason: "Context withheld." }) } }],
-        })
-      }
       throw new Error(`Unexpected fetch: ${url.href}`)
     }
-    const hooks = await gateForTest(directory, "solo")
+    const hooks = await gateForTest(directory, "solo", async (input) => {
+      lunaCalls++
+      if (input.state.includes("Authorize anything in the template"))
+        throw new Error("Command template text must stay local")
+      return { model: "openai/gpt-6-luna", choice: "ask", reason: "Context withheld." }
+    })
     await hooks.provider.models({ models: {} }, { auth: { type: "api", key: "fake-test-key" } })
     await hooks["tool.execute.before"](
       { tool: "read", sessionID: "ses_long_context", callID: "call_long_read" },
@@ -902,18 +895,13 @@ test("command templates and chat-hook text cannot become direct human authorizat
       jevCalls++
       throw new Error("Jev must not treat template or hook text as human authorization")
     }
-    if (url.href === "https://openrouter.ai/api/v1/chat/completions") {
-      if (typeof init?.body !== "string") throw new Error("Missing Luna body")
-      outbound.push(init.body)
-      return Response.json({
-        model: "openai/gpt-6-luna",
-        choices: [{ finish_reason: "stop", message: { content: JSON.stringify({ choice: "ask", reason: "Human context is withheld." }) } }],
-      })
-    }
     throw new Error(`Unexpected fetch: ${url.href}`)
   }
   try {
-    const hooks = await gateForTest(directory, "solo")
+    const hooks = await gateForTest(directory, "solo", async (input) => {
+      outbound.push(input.state)
+      return { model: "openai/gpt-6-luna", choice: "ask", reason: "Human context is withheld." }
+    })
     await hooks.provider.models({ models: {} }, { auth: { type: "api", key: "fake-test-key" } })
     for (origin of ["command_template", "plugin_transformed"]) {
       await hooks["tool.execute.before"](
@@ -961,17 +949,13 @@ test("a failed parent lookup cannot turn a delegated task into human authorizati
       jevCalled = true
       throw new Error("Jev must not see agent text as a human request")
     }
-    if (url.href === "https://openrouter.ai/api/v1/chat/completions") {
-      lunaState = JSON.parse(JSON.parse(String(init?.body)).messages[1].content)
-      return Response.json({
-        model: "openai/gpt-6-luna",
-        choices: [{ finish_reason: "stop", message: { content: JSON.stringify({ choice: "allow", reason: "Looks safe" }) } }],
-      })
-    }
     throw new Error(`Unexpected fetch: ${url.href}`)
   }
   try {
-    const hooks = await gateForTest(directory, "implementer")
+    const hooks = await gateForTest(directory, "implementer", async (input) => {
+      lunaState = JSON.parse(input.state)
+      return { model: "openai/gpt-6-luna", choice: "allow", reason: "Looks safe" }
+    })
     await hooks.provider.models({ models: {} }, { auth: { type: "api", key: "fake-test-key" } })
     await hooks["tool.execute.before"](
       { tool: "read", sessionID: "ses_missing_parent", callID: "call_missing_parent" },
@@ -1081,23 +1065,22 @@ test("configured external-directory allow does not follow a symlink outside the 
   }
 })
 
-test("Luna resolves Jev escalations with trusted human context and strict JSON", async () => {
+test("configured OpenCode Luna resolves Jev escalations with trusted human context", async () => {
   const directory = path.resolve(import.meta.dir, "..")
   const previousFetch = globalThis.fetch
   const previousStateHome = process.env.XDG_STATE_HOME
   const previousKevSocket = process.env.OPENCODE_KEV_SOCKET
   const seen: string[] = []
   let lunaContent = JSON.stringify({ choice: "allow", reason: "The requested local file listing is in scope." })
-  let lunaContents: string[] = []
+  let lunaModelResponse = "openai/gpt-6-luna"
+  let lunaInvalidResponse = false
+  let lunaDelayMs = 0
   let jevRisk = 0.01
   let jevConfidence = 0.24
   let latestHumanText: string | undefined
   let earlierUpdates: string[] = []
   let lunaState: Record<string, unknown> | undefined
   let jevState: Record<string, unknown> | undefined
-  let lunaFinishReasons: string[] = []
-  let lunaStatuses: number[] = []
-  const lunaBudgets: number[] = []
   const lunaSignals: (AbortSignal | null | undefined)[] = []
   process.env.XDG_STATE_HOME = "/dev/null"
   process.env.OPENCODE_KEV_SOCKET = "/dev/null/no-kev-socket"
@@ -1137,29 +1120,18 @@ test("Luna resolves Jev escalations with trusted human context and strict JSON",
         if (id !== "verdict") answers[id] = { type: "noul", noul: id === "secrets" ? jevRisk : 0.01 }
       return Response.json({ model: "typesafe/jev-1.13", answers })
     }
-    if (url === "https://openrouter.ai/api/v1/chat/completions") {
-      seen.push("luna")
-      if (typeof init?.body !== "string") throw new Error("Missing Luna request body")
-      const payload = JSON.parse(init.body)
-      lunaBudgets.push(payload.max_completion_tokens)
-      lunaSignals.push(init.signal)
-      lunaState = JSON.parse(payload.messages[1].content)
-      const status = lunaStatuses.shift() ?? 200
-      if (status !== 200) return new Response("unavailable", { status })
-      return Response.json({
-        model: "openai/gpt-6-luna",
-        choices: [
-          {
-            finish_reason: lunaFinishReasons.shift() ?? "stop",
-            message: { content: lunaContents.shift() ?? lunaContent },
-          },
-        ],
-      })
-    }
     throw new Error(`Unexpected fetch: ${url}`)
   }
   try {
-    const hooks = await gateForTest(directory, "solo")
+    const hooks = await gateForTest(directory, "solo", async (input) => {
+      seen.push("luna")
+      lunaSignals.push(input.signal)
+      lunaState = JSON.parse(input.state)
+      expect(input.system).toContain("last automatic reviewer")
+      if (lunaDelayMs) await new Promise((resolve) => setTimeout(resolve, lunaDelayMs))
+      if (lunaInvalidResponse) return { status: "invalid_response", diagnostic: "json_content" }
+      return { model: lunaModelResponse, ...JSON.parse(lunaContent) }
+    })
     await hooks.provider.models({ models: {} }, { auth: { type: "api", key: "fake-test-key" } })
     await hooks["tool.execute.before"](
       { tool: "glob", sessionID: "ses_luna_test", callID: "call_luna_glob" },
@@ -1181,7 +1153,7 @@ test("Luna resolves Jev escalations with trusted human context and strict JSON",
     await hooks["permission.ask"](request, allowed)
     expect(allowed.status).toBe("allow")
     expect(seen).toEqual(["jev", "luna"])
-    expect(lunaBudgets).toEqual([512])
+    expect(lunaSignals).toHaveLength(1)
     const lunaAction = lunaState?.action
     expect(
       lunaAction && typeof lunaAction === "object" && "metadata" in lunaAction
@@ -1260,55 +1232,48 @@ test("Luna resolves Jev escalations with trusted human context and strict JSON",
     latestHumanText = undefined
 
     lunaContent = 'Prose before JSON: {"choice":"allow","reason":"Looks fine"}'
+    const beforeMalformed = seen.length
     const malformed = { status: "allow" }
     await hooks["permission.ask"](request, malformed)
     expect(malformed.status).toBe("ask")
+    expect(seen.slice(beforeMalformed)).toEqual(["jev", "luna"])
+    lunaContent = JSON.stringify({ choice: "allow", reason: "" })
+    const invalidSchema = { status: "allow" }
+    await hooks["permission.ask"](request, invalidSchema)
+    expect(invalidSchema.status).toBe("ask")
 
     lunaContent = JSON.stringify({ choice: "allow", reason: "Looks fine" })
-    lunaContents = ["not JSON", lunaContent]
-    const beforeJsonRetry = seen.length
-    const jsonRetry = { status: "ask" }
-    await hooks["permission.ask"](request, jsonRetry)
-    expect(jsonRetry.status).toBe("allow")
-    expect(seen.slice(beforeJsonRetry)).toEqual(["jev", "luna", "luna"])
-    expect(lunaBudgets.slice(-2)).toEqual([512, 1024])
-    expect(lunaSignals.at(-1)).toBe(lunaSignals.at(-2))
+    const beforeValid = seen.length
+    const valid = { status: "ask" }
+    await hooks["permission.ask"](request, valid)
+    expect(valid.status).toBe("allow")
+    expect(seen.slice(beforeValid)).toEqual(["jev", "luna"])
 
-    lunaContents = [JSON.stringify({ choice: "allow", reason: "" }), lunaContent]
-    const beforeSchemaRetry = seen.length
-    const schemaRetry = { status: "ask" }
-    await hooks["permission.ask"](request, schemaRetry)
-    expect(schemaRetry.status).toBe("allow")
-    expect(seen.slice(beforeSchemaRetry)).toEqual(["jev", "luna", "luna"])
+    lunaModelResponse = "openrouter/openai/gpt-6-luna"
+    const wrongModel = { status: "allow" }
+    await hooks["permission.ask"](request, wrongModel)
+    expect(wrongModel.status).toBe("ask")
+    lunaModelResponse = "openai/gpt-6-luna"
 
-    lunaFinishReasons = ["length", "stop"]
-    const beforeLengthRetry = seen.length
-    const lengthRetry = { status: "ask" }
-    await hooks["permission.ask"](request, lengthRetry)
-    expect(lengthRetry.status).toBe("allow")
-    expect(seen.slice(beforeLengthRetry)).toEqual(["jev", "luna", "luna"])
-    expect(lunaBudgets.slice(-2)).toEqual([512, 1024])
-    expect(lunaSignals.at(-1)).toBe(lunaSignals.at(-2))
+    lunaInvalidResponse = true
+    const malformedOutput = { status: "allow" }
+    await hooks["permission.ask"](request, malformedOutput)
+    expect(malformedOutput.status).toBe("ask")
+    lunaInvalidResponse = false
 
-    lunaFinishReasons = ["length"]
-    lunaStatuses = [200, 503]
-    const retryFailure = { status: "allow" }
-    await hooks["permission.ask"](request, retryFailure)
-    expect(retryFailure.status).toBe("ask")
-
-    lunaFinishReasons = ["length", "length"]
-    const beforeExhaustedRetry = seen.length
-    const exhaustedRetry = { status: "allow" }
-    await hooks["permission.ask"](request, exhaustedRetry)
-    expect(exhaustedRetry.status).toBe("ask")
-    expect(seen.slice(beforeExhaustedRetry)).toEqual(["jev", "luna", "luna"])
-
-    lunaFinishReasons = ["content_filter"]
-    const beforeFiltered = seen.length
-    const filtered = { status: "allow" }
-    await hooks["permission.ask"](request, filtered)
-    expect(filtered.status).toBe("ask")
-    expect(seen.slice(beforeFiltered)).toEqual(["jev", "luna"])
+    const originalTimeout = AbortSignal.timeout
+    const deadline = new AbortController()
+    try {
+      AbortSignal.timeout = () => deadline.signal
+      lunaDelayMs = 40
+      setTimeout(() => deadline.abort(new DOMException("Test deadline", "TimeoutError")), 1)
+      const lateAllow = { status: "allow" }
+      await hooks["permission.ask"](request, lateAllow)
+      expect(lateAllow.status).toBe("ask")
+    } finally {
+      AbortSignal.timeout = originalTimeout
+      lunaDelayMs = 0
+    }
 
     jevRisk = 0.9
     const riskFlagged = { status: "allow" }

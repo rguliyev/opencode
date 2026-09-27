@@ -11,6 +11,7 @@ import { RuntimeFlags } from "../../src/effect/runtime-flags"
 import { EventV2Bridge } from "../../src/event-v2-bridge"
 import { Permission } from "../../src/permission"
 import { Plugin } from "../../src/plugin/index"
+import { Provider } from "../../src/provider/provider"
 import { InstanceBootstrap } from "../../src/project/bootstrap"
 import { InstanceStore } from "../../src/project/instance-store"
 import { SessionID } from "../../src/session/schema"
@@ -31,6 +32,19 @@ const noopBootstrap = Layer.succeed(InstanceBootstrap.Service, InstanceBootstrap
 const it = testEffect(
   AppNodeBuilder.build(
     LayerNode.group([Plugin.node, Permission.node, EventV2Bridge.node, CrossSpawnSpawner.node, InstanceStore.node]),
+    [
+      [Auth.node, AuthTest.empty],
+      [Account.node, AccountTest.empty],
+      [Npm.node, NpmTest.noop],
+      [InstanceStore.bootstrapNode, noopBootstrap],
+      [RuntimeFlags.node, RuntimeFlags.layer({ disableDefaultPlugins: true })],
+    ],
+  ),
+)
+
+const itWithProvider = testEffect(
+  AppNodeBuilder.build(
+    LayerNode.group([Provider.node, Plugin.node, Permission.node, EventV2Bridge.node, CrossSpawnSpawner.node, InstanceStore.node]),
     [
       [Auth.node, AuthTest.empty],
       [Account.node, AccountTest.empty],
@@ -135,6 +149,60 @@ const request = (ruleset: PermissionV1.Ruleset): Parameters<Permission.Interface
 })
 
 describe("plugin permission.ask", () => {
+  itWithProvider.instance(
+    "the provider registers OpenCode's configured-model reviewer",
+    () =>
+      withProject(
+        [
+          "export default async (input) => ({",
+          '  "permission.ask": async (_request, output) => {',
+          '    try { await input.reviewPermission({ system: "policy", state: "{}" }) }',
+          '    catch (error) { output.status = "ask"; output.message = error.message }',
+          "  },",
+          "})",
+        ].join("\n"),
+        Effect.gen(function* () {
+          const fiber = yield* ask(request([{ permission: "bash", pattern: "*", action: "ask" }])).pipe(
+            Effect.forkScoped,
+          )
+          const items = yield* waitForPending(1)
+          expect(items[0].metadata.reviewReason).toBe("Luna is not the configured small model")
+          yield* rejectAll()
+          yield* Fiber.await(fiber)
+        }),
+      ),
+    { git: true },
+  )
+
+  it.instance(
+    "in-process permission model review reaches a plugin without starting a session",
+    () =>
+      withProject(
+        [
+          "export default async (input) => ({",
+          '  "permission.ask": async (_request, output) => {',
+          '    const result = await input.reviewPermission({ system: "policy", state: "{}" })',
+          "    output.status = result.choice",
+          "  },",
+          "})",
+        ].join("\n"),
+        Effect.gen(function* () {
+          const plugin = yield* Plugin.Service
+          let calls = 0
+          yield* plugin.setPermissionModelReviewer((input) =>
+            Effect.sync(() => {
+              calls++
+              expect(input).toMatchObject({ system: "policy", state: "{}" })
+              return { model: "openai/gpt-6-luna", choice: "allow", reason: "Test-only decision" }
+            }),
+          )
+          expect(yield* ask(request([{ permission: "bash", pattern: "*", action: "ask" }]))).toBeUndefined()
+          expect(calls).toBe(1)
+        }),
+      ),
+    { git: true },
+  )
+
   it.instance(
     "hook allows a request the rules would ask about",
     () =>

@@ -52,8 +52,20 @@ export type WorkspaceAdapter = {
   target(config: WorkspaceInfo): WorkspaceTarget | Promise<WorkspaceTarget>
 }
 
+export type PermissionReviewInput = {
+  system: string
+  state: string
+  signal?: AbortSignal
+}
+
+export type PermissionReviewOutput =
+  | { model: string; choice: string; reason: string }
+  | { status: "invalid_response"; diagnostic: "json_content" }
+
 export type PluginInput = {
   client: ReturnType<typeof createOpencodeClient>
+  /** One-shot review using OpenCode's configured small model; never starts a session or executes tools. */
+  reviewPermission?: (input: PermissionReviewInput) => Promise<PermissionReviewOutput>
   project: Project
   directory: string
   worktree: string
