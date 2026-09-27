@@ -157,7 +157,7 @@ const goalToolEffects: Record<string, string> = {
     "Stops this session's autonomous goal work, writes local blocked state, and may announce the transition in OpenCode.",
 }
 
-export async function verifiedGoalEffect(
+async function verifiedGoalEffect(
   tool: string | undefined,
   origin: unknown,
   manifest = {

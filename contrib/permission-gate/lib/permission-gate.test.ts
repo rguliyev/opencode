@@ -1,12 +1,11 @@
 import { expect, test } from "bun:test"
 import { createHash } from "node:crypto"
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
+import { mkdtempSync, rmSync, symlinkSync } from "node:fs"
 import { createServer } from "node:net"
 import { tmpdir } from "node:os"
 import path from "node:path"
-import { pathToFileURL } from "node:url"
 import { Database as SQLiteDatabase } from "bun:sqlite"
-import CommandApproval, { verifiedGoalEffect } from "../plugins/command-approval"
+import CommandApproval from "../plugins/command-approval"
 
 function message(id: string, role: "user" | "assistant", text: string, synthetic = false) {
   return {
@@ -27,52 +26,11 @@ async function gateForTest(directory: string, agent: string) {
   return hooks
 }
 
-test("custom tool effects require the attested package version and exact source digest", async () => {
-  const root = mkdtempSync(path.join(tmpdir(), "goal-effect-fixture-"))
-  const source = path.join(root, "src")
-  mkdirSync(source)
-  const file = path.join(source, "goal-plugin.js")
-  const packageFile = path.join(root, "package.json")
-  const packageContent = JSON.stringify({
-    name: "goal-fixture",
-    version: "1.0.0",
-    exports: { "./server": "./src/goal-plugin.js" },
-  })
-  writeFileSync(packageFile, packageContent)
-  writeFileSync(file, "export const getGoal = () => 'status'\n")
-  const digest = createHash("sha256")
-    .update("src/goal-plugin.js\0")
-    .update("export const getGoal = () => 'status'\n")
-    .update("\0")
-    .digest("hex")
-  const manifest = {
-    packageName: "goal-fixture",
-    version: "1.0.0",
-    digest,
-    packageDigest: createHash("sha256").update(packageContent).digest("hex"),
-    entry: "src/goal-plugin.js",
-    files: ["goal-plugin.js"],
-    effects: { get_goal: "Reads local goal state." },
-  }
-  const origin = {
-    packageName: "goal-fixture",
-    version: "1.0.0",
-    packageDirectory: root,
-    entry: pathToFileURL(file).href,
-  }
-  try {
-    expect(await verifiedGoalEffect("get_goal", origin, manifest)).toBe("Reads local goal state.")
-    expect(await verifiedGoalEffect("goal_block", origin, manifest)).toBeUndefined()
-    expect(await verifiedGoalEffect("get_goal", { ...origin, version: "1.0.1" }, manifest)).toBeUndefined()
-    expect(await verifiedGoalEffect("get_goal", { ...origin, entry: pathToFileURL(packageFile).href }, manifest)).toBeUndefined()
-    writeFileSync(packageFile, JSON.stringify({ name: "goal-fixture", version: "1.0.0", exports: { "./server": "./evil.js" } }))
-    expect(await verifiedGoalEffect("get_goal", origin, manifest)).toBeUndefined()
-    writeFileSync(packageFile, packageContent)
-    writeFileSync(file, "export const getGoal = () => 'mutated'\n")
-    expect(await verifiedGoalEffect("get_goal", origin, manifest)).toBeUndefined()
-  } finally {
-    rmSync(root, { recursive: true, force: true })
-  }
+test("permission plugin exports only its entry point", async () => {
+  // The legacy loader invokes every function export as a plugin. A named
+  // helper export returns undefined and breaks registration of all plugins.
+  const module = await import("../plugins/command-approval")
+  expect(Object.keys(module)).toEqual(["default"])
 })
 
 test("Jev receives a scrubbed command and context, while the local gate asks", async () => {
