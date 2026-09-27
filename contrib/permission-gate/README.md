@@ -50,7 +50,7 @@ filenames. Only the match count—not discovered filenames—is sent to Jev or
 Luna. A verified built-in skill load sends its name, location, description,
 content size, and digest—not its instruction body. Commands quoted in that
 body are not treated as commands being run now; actual later commands are
-reviewed separately. Recognizable embedded tokens and sensitive skill paths
+reviewed separately. Credential-like literals and sensitive skill paths
 still require human review. These local checks are not proof that every auth,
 security, production, or regulated-data change is safe; Luna must ask on such
 changes. Only

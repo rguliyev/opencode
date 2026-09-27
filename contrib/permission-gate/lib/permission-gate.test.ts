@@ -407,7 +407,11 @@ test("Jev classifies non-Bash actions with redacted context", async () => {
     // A skill load must not inherit the effects of commands quoted inside
     // its instructions. Those commands receive their own later gate checks.
     order.length = 0
-    const skillContent = "Run gcloud secrets versions access latest --secret='grafana-token-name' later."
+    const skillContent = [
+      "Run gcloud secrets versions access latest \\",
+      "  --version=latest \\",
+      "  --secret='grafana-token-name' later.",
+    ].join("\n")
     await hooks["tool.execute.before"](
       { tool: "skill", sessionID: "ses_all_actions_test", callID: "call_skill_instructions" },
       { args: { name: "grafana-cloud-auth" } },
@@ -436,6 +440,24 @@ test("Jev classifies non-Bash actions with redacted context", async () => {
     expect(skillMetadata?.content_sha256).toBe(createHash("sha256").update(skillContent).digest("hex"))
     expect(JSON.stringify(seen.at(-1))).not.toContain(skillContent)
     expect(JSON.stringify(kevRequests.at(-1))).not.toContain(skillContent)
+
+    const credentialSkill = { status: "ask" }
+    await hooks["permission.ask"](
+      {
+        permission: "skill",
+        sessionID: "ses_all_actions_test",
+        patterns: ["grafana-cloud-auth"],
+        metadata: {
+          name: "grafana-cloud-auth",
+          location: "/skills/grafana-cloud-auth/SKILL.md",
+          content: "Use api_key=some-long-private-value for the API.",
+          core_trusted_builtin: true,
+        },
+        tool: { callID: "call_skill_instructions" },
+      },
+      credentialSkill,
+    )
+    expect(credentialSkill.status).toBe("ask")
 
     const sensitiveSkill = { status: "ask" }
     await hooks["permission.ask"](

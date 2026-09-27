@@ -371,8 +371,18 @@ function redact(command: string) {
 // and access tokens (ya29....). None matched the previous patterns, so a live
 // authorization code was both sent to OpenRouter and written to the decision log.
 const googleOAuthLiteral = /\b4\/0A[A-Za-z0-9_-]{20,}|\b1\/\/[A-Za-z0-9_-]{20,}|\bya29\.[A-Za-z0-9_-]{20,}/
-const recognizableSecretLiteral =
-  /\b(?:sk-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{20,}|AIza[A-Za-z0-9_-]{25,}|xox[baprs]-[A-Za-z0-9-]{20,}|AKIA[A-Z0-9]{16}|eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})\b|-----BEGIN [A-Z ]*PRIVATE KEY-----/i
+
+function hasSkillCredentialLiteral(content: string) {
+  // In gcloud's `secrets versions access` command, --secret selects a
+  // resource by name; its argument is not the secret payload. Keep every
+  // other credential detector active for the skill's returned content.
+  const withoutResourceSelectors = content.replace(
+    /(\bgcloud\s+secrets\s+versions\s+access\b(?:(?!\n[ \t]*\n)[\s\S]){0,300}?)--secret(?:=|\s+)(?:'[A-Za-z0-9._-]{1,128}'|"[A-Za-z0-9._-]{1,128}"|[A-Za-z0-9._-]{1,128})/gi,
+    "$1--secret-resource-name",
+  )
+  const scan = sanitizeReviewText(withoutResourceSelectors)
+  return !scan.complete || scan.kinds.length > 0 || containsCredentialLiteralUnmasked(withoutResourceSelectors)
+}
 
 function containsCredentialLiteralBase(command: string) {
   return (
@@ -1888,11 +1898,9 @@ const CommandApproval: Plugin = async ({ directory, serverUrl }) => {
         return
       }
       skillLocation = metadata.location
-      // Unlike a command reference, an actual token in the returned skill
+      // Unlike a command reference, a literal credential in the returned
       // content would be disclosed to the agent after this permission.
-      // `gcloud ... --secret=RESOURCE_NAME` names a resource; it is not a
-      // credential value. Keep the hard stop for recognizable embedded tokens.
-      skillContainsCredentialLiteral = recognizableSecretLiteral.test(content) || googleOAuthLiteral.test(content)
+      skillContainsCredentialLiteral = hasSkillCredentialLiteral(content)
       metadata.content_sha256 = createHash("sha256").update(content).digest("hex")
       metadata.content_bytes = Buffer.byteLength(content)
       delete metadata.content
