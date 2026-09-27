@@ -1063,6 +1063,7 @@ test("Luna resolves Jev escalations with trusted human context and strict JSON",
   const previousKevSocket = process.env.OPENCODE_KEV_SOCKET
   const seen: string[] = []
   let lunaContent = JSON.stringify({ choice: "allow", reason: "The requested local file listing is in scope." })
+  let lunaContents: string[] = []
   let jevRisk = 0.01
   let jevConfidence = 0.24
   let latestHumanText: string | undefined
@@ -1122,7 +1123,12 @@ test("Luna resolves Jev escalations with trusted human context and strict JSON",
       if (status !== 200) return new Response("unavailable", { status })
       return Response.json({
         model: "openai/gpt-6-luna",
-        choices: [{ finish_reason: lunaFinishReasons.shift() ?? "stop", message: { content: lunaContent } }],
+        choices: [
+          {
+            finish_reason: lunaFinishReasons.shift() ?? "stop",
+            message: { content: lunaContents.shift() ?? lunaContent },
+          },
+        ],
       })
     }
     throw new Error(`Unexpected fetch: ${url}`)
@@ -1234,6 +1240,22 @@ test("Luna resolves Jev escalations with trusted human context and strict JSON",
     expect(malformed.status).toBe("ask")
 
     lunaContent = JSON.stringify({ choice: "allow", reason: "Looks fine" })
+    lunaContents = ["not JSON", lunaContent]
+    const beforeJsonRetry = seen.length
+    const jsonRetry = { status: "ask" }
+    await hooks["permission.ask"](request, jsonRetry)
+    expect(jsonRetry.status).toBe("allow")
+    expect(seen.slice(beforeJsonRetry)).toEqual(["jev", "luna", "luna"])
+    expect(lunaBudgets.slice(-2)).toEqual([512, 1024])
+    expect(lunaSignals.at(-1)).toBe(lunaSignals.at(-2))
+
+    lunaContents = [JSON.stringify({ choice: "allow", reason: "" }), lunaContent]
+    const beforeSchemaRetry = seen.length
+    const schemaRetry = { status: "ask" }
+    await hooks["permission.ask"](request, schemaRetry)
+    expect(schemaRetry.status).toBe("allow")
+    expect(seen.slice(beforeSchemaRetry)).toEqual(["jev", "luna", "luna"])
+
     lunaFinishReasons = ["length", "stop"]
     const beforeLengthRetry = seen.length
     const lengthRetry = { status: "ask" }

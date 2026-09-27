@@ -1049,6 +1049,7 @@ type LunaResult = {
     | "finish_other"
     | "content"
     | "json"
+    | "json_content"
     | "schema"
 }
 
@@ -1712,8 +1713,8 @@ const CommandApproval: Plugin = async ({ directory, serverUrl }) => {
     const started = Date.now()
     const signal = AbortSignal.timeout(lunaTimeoutMs)
     try {
-      // The old 160-token cap can truncate JSON. Retry only an explicit length
-      // stop; never accept a partial or filtered reply.
+      // Retry only truncated or malformed model output, within one shared deadline.
+      // A partial, filtered, or still-invalid reply never grants permission.
       for (const budget of [512, 1024]) {
         const response = await fetch(lunaEndpoint, {
           method: "POST",
@@ -1730,7 +1731,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl }) => {
           return { status: "unavailable", latency_ms: Date.now() - started }
         }
         const body = await boundedJson(response)
-        if (!body || typeof body !== "object")
+        if (!isRecord(body))
           return { status: "invalid_response", diagnostic: "envelope", latency_ms: Date.now() - started }
         if (body.model !== lunaModel)
           return { status: "invalid_response", diagnostic: "model", latency_ms: Date.now() - started }
@@ -1755,7 +1756,8 @@ const CommandApproval: Plugin = async ({ directory, serverUrl }) => {
         try {
           answer = JSON.parse(item.message.content)
         } catch {
-          return { status: "invalid_response", diagnostic: "json", latency_ms: Date.now() - started }
+          if (budget === 512) continue
+          return { status: "invalid_response", diagnostic: "json_content", latency_ms: Date.now() - started }
         }
         if (
           !answer ||
@@ -1765,8 +1767,10 @@ const CommandApproval: Plugin = async ({ directory, serverUrl }) => {
           typeof answer.reason !== "string" ||
           !answer.reason.trim() ||
           answer.reason.length > 500
-        )
+        ) {
+          if (budget === 512) continue
           return { status: "invalid_response", diagnostic: "schema", latency_ms: Date.now() - started }
+        }
         return {
           status: "score",
           choice: answer.choice,
