@@ -371,6 +371,8 @@ function redact(command: string) {
 // and access tokens (ya29....). None matched the previous patterns, so a live
 // authorization code was both sent to OpenRouter and written to the decision log.
 const googleOAuthLiteral = /\b4\/0A[A-Za-z0-9_-]{20,}|\b1\/\/[A-Za-z0-9_-]{20,}|\bya29\.[A-Za-z0-9_-]{20,}/
+const recognizableSecretLiteral =
+  /\b(?:sk-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{20,}|AIza[A-Za-z0-9_-]{25,}|xox[baprs]-[A-Za-z0-9-]{20,}|AKIA[A-Z0-9]{16}|eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})\b|-----BEGIN [A-Z ]*PRIVATE KEY-----/i
 
 function containsCredentialLiteralBase(command: string) {
   return (
@@ -1028,6 +1030,7 @@ type LunaResult = {
   choice?: "allow" | "ask"
   reason?: string
   latency_ms?: number
+  diagnostic?: "envelope" | "model" | "choices" | "finish" | "content" | "json" | "schema"
 }
 
 function lunaAudit(result: LunaResult) {
@@ -1039,6 +1042,7 @@ function lunaAudit(result: LunaResult) {
       ? { reason: safeReason.value }
       : {}),
     ...(result.latency_ms !== undefined ? { latency_ms: result.latency_ms } : {}),
+    ...(result.diagnostic ? { diagnostic: result.diagnostic } : {}),
   }
 }
 
@@ -1704,12 +1708,23 @@ const CommandApproval: Plugin = async ({ directory, serverUrl }) => {
         return { status: "unavailable", latency_ms: Date.now() - started }
       }
       const body = await boundedJson(response)
-      if (!body || typeof body !== "object" || body.model !== lunaModel || !Array.isArray(body.choices))
-        return { status: "invalid_response", latency_ms: Date.now() - started }
+      if (!body || typeof body !== "object")
+        return { status: "invalid_response", diagnostic: "envelope", latency_ms: Date.now() - started }
+      if (body.model !== lunaModel)
+        return { status: "invalid_response", diagnostic: "model", latency_ms: Date.now() - started }
+      if (!Array.isArray(body.choices) || body.choices.length !== 1)
+        return { status: "invalid_response", diagnostic: "choices", latency_ms: Date.now() - started }
       const item = body.choices[0]
-      if (body.choices.length !== 1 || item?.finish_reason !== "stop" || typeof item?.message?.content !== "string")
-        return { status: "invalid_response", latency_ms: Date.now() - started }
-      const answer = JSON.parse(item.message.content) as unknown
+      if (item?.finish_reason !== "stop")
+        return { status: "invalid_response", diagnostic: "finish", latency_ms: Date.now() - started }
+      if (typeof item.message?.content !== "string")
+        return { status: "invalid_response", diagnostic: "content", latency_ms: Date.now() - started }
+      let answer: unknown
+      try {
+        answer = JSON.parse(item.message.content)
+      } catch {
+        return { status: "invalid_response", diagnostic: "json", latency_ms: Date.now() - started }
+      }
       if (
         !answer ||
         typeof answer !== "object" ||
@@ -1719,7 +1734,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl }) => {
         !answer.reason.trim() ||
         answer.reason.length > 500
       )
-        return { status: "invalid_response", latency_ms: Date.now() - started }
+        return { status: "invalid_response", diagnostic: "schema", latency_ms: Date.now() - started }
       return {
         status: "score",
         choice: answer.choice,
@@ -1733,7 +1748,11 @@ const CommandApproval: Plugin = async ({ directory, serverUrl }) => {
           : error instanceof SyntaxError
             ? "invalid_response"
             : "unavailable"
-      return { status, latency_ms: Date.now() - started }
+      return {
+        status,
+        ...(status === "invalid_response" ? { diagnostic: "json" as const } : {}),
+        latency_ms: Date.now() - started,
+      }
     }
   }
 
@@ -1843,6 +1862,41 @@ const CommandApproval: Plugin = async ({ directory, serverUrl }) => {
         : undefined
     delete metadata.core_plugin_origin
     delete metadata.core_execution_agent
+    // Loading a skill reads instructions; it does not execute commands quoted
+    // in them. Preserve identity and a digest for review, not the prose itself.
+    let skillLocation: string | undefined
+    let skillContainsCredentialLiteral = false
+    if (input.permission === "skill") {
+      const args = call?.args
+      const content = metadata.content
+      if (
+        call?.tool !== "skill" ||
+        !isRecord(args) ||
+        Object.keys(args).some((key) => key !== "name") ||
+        typeof args.name !== "string" ||
+        patterns.length !== 1 ||
+        patterns[0] !== args.name ||
+        metadata.name !== args.name ||
+        metadata.core_trusted_builtin !== true ||
+        typeof metadata.location !== "string" ||
+        !path.isAbsolute(metadata.location) ||
+        typeof content !== "string" ||
+        Buffer.byteLength(content) > maxActionBytes
+      ) {
+        output.message = "Skill load context is incomplete; human review required"
+        await settle("ask", "guard", ["unverified skill load context"])
+        return
+      }
+      skillLocation = metadata.location
+      // Unlike a command reference, an actual token in the returned skill
+      // content would be disclosed to the agent after this permission.
+      // `gcloud ... --secret=RESOURCE_NAME` names a resource; it is not a
+      // credential value. Keep the hard stop for recognizable embedded tokens.
+      skillContainsCredentialLiteral = recognizableSecretLiteral.test(content) || googleOAuthLiteral.test(content)
+      metadata.content_sha256 = createHash("sha256").update(content).digest("hex")
+      metadata.content_bytes = Buffer.byteLength(content)
+      delete metadata.content
+    }
     const matchedPaths = input.permission === "glob" ? metadata.matched_paths : undefined
     if (input.permission === "glob") {
       // The complete filename snapshot is for local gate checks only. Sending
@@ -1965,13 +2019,20 @@ const CommandApproval: Plugin = async ({ directory, serverUrl }) => {
     const result = await review(safeRaw, [], context, undefined, action)
     const reasons: string[] = []
     if (sanitized.kinds.length) reasons.push("sensitive literal in action")
-    if (requiresHuman(raw)) reasons.push("credential or secret access")
+    if (skillContainsCredentialLiteral) reasons.push("skill contains credential literal")
+    const policyRaw =
+      input.permission === "skill"
+        ? JSON.stringify({ permission: "skill", name: metadata.name, location: skillLocation })
+        : raw
+    if (requiresHuman(policyRaw)) reasons.push("credential or secret access")
     const fileTargets =
-      input.permission === "grep"
-        ? [metadata.requested_path, metadata.path, metadata.include].filter(
-            (value): value is string => typeof value === "string",
-          )
-        : patterns
+      input.permission === "skill"
+        ? [skillLocation!]
+        : input.permission === "grep"
+          ? [metadata.requested_path, metadata.path, metadata.include].filter(
+              (value): value is string => typeof value === "string",
+            )
+          : patterns
     if (new Set(["read", "grep", "glob", "edit", "skill"]).has(input.permission) && fileTargets.some(sensitiveFilename))
       reasons.push("sensitive file or search target")
     if (
@@ -1982,7 +2043,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl }) => {
     )
       reasons.push("human-only policy or data change may apply")
     const sessions = humanContext!.sessions
-    for (const scope of [gcpScopeReviewMessage(raw, sessions), awsScopeReviewMessage(raw, sessions)])
+    for (const scope of [gcpScopeReviewMessage(policyRaw, sessions), awsScopeReviewMessage(policyRaw, sessions)])
       if (scope) reasons.push(scope)
     const rawAnswers = result.raw
     const verdictAnswer = rawAnswers?.verdict

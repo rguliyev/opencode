@@ -47,8 +47,13 @@ context, model failures, and read-only reviewer restrictions still block
 automatic approval. Task evidence must match a trusted foreground built-in call; a
 verified glob snapshot must stay in the workdir and contain no sensitive
 filenames. Only the match count—not discovered filenames—is sent to Jev or
-Luna. These local checks are not proof that every auth, security, production,
-or regulated-data change is safe; Luna must ask on such changes. Only
+Luna. A verified built-in skill load sends its name, location, description,
+content size, and digest—not its instruction body. Commands quoted in that
+body are not treated as commands being run now; actual later commands are
+reviewed separately. Recognizable embedded tokens and sensitive skill paths
+still require human review. These local checks are not proof that every auth,
+security, production, or regulated-data change is safe; Luna must ask on such
+changes. Only
 sanitized review copies leave the
 process; executed arguments are not modified. The gate requires matching
 OpenCode permission hooks and a local configuration with the expected hard-deny

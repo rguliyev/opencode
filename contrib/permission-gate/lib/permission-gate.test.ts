@@ -18,6 +18,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value)
 }
 
+function reviewActionMetadata(value: unknown): Record<string, unknown> | undefined {
+  if (!isRecord(value) || !isRecord(value.state) || !isRecord(value.state.action)) return undefined
+  return isRecord(value.state.action.metadata) ? value.state.action.metadata : undefined
+}
+
 async function gateForTest(directory: string, agent: string) {
   const hooks = await (CommandApproval as any)({ directory, serverUrl: new URL("http://gate.test") })
   const ask = hooks["permission.ask"]
@@ -127,7 +132,12 @@ test("Jev receives a scrubbed command and context, while the local gate asks", a
     )
     expect(skillOutput.status).toBe("ask")
     expect(JSON.stringify(sent)).not.toContain(token)
-    expect(JSON.stringify(sent)).toContain("[REDACTED:CREDENTIAL]")
+    expect(JSON.stringify(sent)).not.toContain("Use api_key=")
+    const skillMetadata = reviewActionMetadata(sent)
+    expect(skillMetadata?.content).toBeUndefined()
+    expect(skillMetadata?.content_sha256).toBe(
+      createHash("sha256").update(`Use api_key=${token} to authenticate.`).digest("hex"),
+    )
   } finally {
     globalThis.fetch = previousFetch
     if (previousStateHome === undefined) delete process.env.XDG_STATE_HOME
@@ -393,6 +403,57 @@ test("Jev classifies non-Bash actions with redacted context", async () => {
     )
     expect(searchOutput.status).toBe("allow")
     expect(order.at(-1)).toBe("luna")
+
+    // A skill load must not inherit the effects of commands quoted inside
+    // its instructions. Those commands receive their own later gate checks.
+    order.length = 0
+    const skillContent = "Run gcloud secrets versions access latest --secret='grafana-token-name' later."
+    await hooks["tool.execute.before"](
+      { tool: "skill", sessionID: "ses_all_actions_test", callID: "call_skill_instructions" },
+      { args: { name: "grafana-cloud-auth" } },
+    )
+    const skillOutput = { status: "ask" }
+    await hooks["permission.ask"](
+      {
+        permission: "skill",
+        sessionID: "ses_all_actions_test",
+        patterns: ["grafana-cloud-auth"],
+        metadata: {
+          name: "grafana-cloud-auth",
+          description: "Load Grafana Cloud authentication instructions.",
+          location: "/skills/grafana-cloud-auth/SKILL.md",
+          content: skillContent,
+          core_trusted_builtin: true,
+        },
+        tool: { callID: "call_skill_instructions" },
+      },
+      skillOutput,
+    )
+    expect(skillOutput).toEqual({ status: "allow", message: undefined })
+    expect(order).toEqual(["kev", "jev", "luna"])
+    const skillMetadata = reviewActionMetadata(seen.at(-1))
+    expect(skillMetadata?.content).toBeUndefined()
+    expect(skillMetadata?.content_sha256).toBe(createHash("sha256").update(skillContent).digest("hex"))
+    expect(JSON.stringify(seen.at(-1))).not.toContain(skillContent)
+    expect(JSON.stringify(kevRequests.at(-1))).not.toContain(skillContent)
+
+    const sensitiveSkill = { status: "ask" }
+    await hooks["permission.ask"](
+      {
+        permission: "skill",
+        sessionID: "ses_all_actions_test",
+        patterns: ["grafana-cloud-auth"],
+        metadata: {
+          name: "grafana-cloud-auth",
+          location: "/skills/secrets/SKILL.md",
+          content: skillContent,
+          core_trusted_builtin: true,
+        },
+        tool: { callID: "call_skill_instructions" },
+      },
+      sensitiveSkill,
+    )
+    expect(sensitiveSkill.status).toBe("ask")
   } finally {
     await new Promise<void>((resolve) => kev.close(() => resolve()))
     rmSync(socketDir, { recursive: true, force: true })
