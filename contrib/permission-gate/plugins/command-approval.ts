@@ -2081,6 +2081,21 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
       await settle("allow", "luna", [], details)
       return
     }
+    // Name the local condition that overrode Luna's allow; attributing it to
+    // Jev or a generic "safety rule" hid the actual blocker.
+    const localVeto =
+      lunaNeeded && reasons.length === 0 && luna.status === "score" && luna.choice === "allow"
+        ? reviewer
+          ? "Luna allows, but read-only agent actions are not auto-approved"
+          : input.permission === "task"
+            ? "Luna allows, but this task request shape is not eligible for automatic approval"
+            : "Luna allows, but this request shape is not eligible for automatic approval"
+        : undefined
+    if (localVeto) {
+      output.message = localVeto
+      await settle("ask", "local_veto", [], details)
+      return
+    }
     if (!result.allow || reasons.length || (lunaNeeded && !lunaAllow)) {
       const message = [reasons.join("; "), result.explanation, lunaAdvisory(luna)].filter(Boolean).join(" — ")
       const safeMessage = sanitizeReviewText(message)

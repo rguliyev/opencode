@@ -57,7 +57,8 @@ reply grants permission only after strict model identity, shape, and reason
 validation; errors or malformed replies never grant permission.
 Configured denials, concrete local human-only rules, unreviewable or unsafe
 context, model failures, and read-only reviewer restrictions still block
-automatic approval. Task evidence must match a trusted foreground built-in call; a
+automatic approval. When a local eligibility check overrides Luna's `allow`,
+the prompt names that condition and the audit record uses engine `local_veto`. Task evidence must match a trusted foreground built-in call; a
 verified glob snapshot must stay in the workdir and contain no sensitive
 filenames. Only the match count—not discovered filenames—is sent to Jev or
 Luna. A verified built-in skill load sends its name, location, description,

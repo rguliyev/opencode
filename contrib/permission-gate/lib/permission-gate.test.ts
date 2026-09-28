@@ -1164,7 +1164,7 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
     throw new Error(`Unexpected fetch: ${url}`)
   }
   try {
-    const hooks = await gateForTest(directory, "solo", async (input) => {
+    const lunaReview = async (input: { system: string; state: string; signal?: AbortSignal }) => {
       seen.push("luna")
       lunaSignals.push(input.signal)
       lunaState = JSON.parse(input.state)
@@ -1180,7 +1180,8 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
         return { status: "invalid_response", diagnostic: "json_content" }
       }
       return { model: lunaModelResponse, ...JSON.parse(lunaContent) }
-    })
+    }
+    const hooks = await gateForTest(directory, "solo", lunaReview)
     await hooks.provider.models({ models: {} }, { auth: { type: "api", key: "fake-test-key" } })
     await hooks["tool.execute.before"](
       { tool: "glob", sessionID: "ses_luna_test", callID: "call_luna_glob" },
@@ -1254,12 +1255,15 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
       ...earlierUpdates,
       latestHumanText,
     ])
-    const backgroundTask = { status: "allow" }
+    const backgroundTask = { status: "allow", message: "" }
     await hooks["permission.ask"](
       { ...taskRequest, metadata: { ...taskRequest.metadata, background: true } },
       backgroundTask,
     )
     expect(backgroundTask.status).toBe("ask")
+    expect(backgroundTask.message).toBe(
+      "Luna allows, but this task request shape is not eligible for automatic approval",
+    )
     earlierUpdates = []
     latestHumanText = "Stop; do not inspect src/main.ts."
     lunaContent = JSON.stringify({ choice: "ask", reason: "The latest human message revokes this inspection." })
@@ -1633,6 +1637,19 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
     expect(seen).toHaveLength(beforeSensitive + 1)
     expect(seen.at(-1)).toBe("luna")
     expect(JSON.stringify(lunaState)).not.toContain("patient-123-45-6789.ts")
+
+    const researcher = await gateForTest(directory, "researcher", lunaReview)
+    await researcher.provider.models({ models: {} }, { auth: { type: "api", key: "fake-test-key" } })
+    await researcher["tool.execute.before"](
+      { tool: "glob", sessionID: "ses_luna_test", callID: "call_luna_glob" },
+      { args: { pattern: "src/main.ts" } },
+    )
+    const beforeResearcher = seen.length
+    const researcherGlob = { status: "allow", message: "" }
+    await researcher["permission.ask"](request, researcherGlob)
+    expect(researcherGlob.status).toBe("ask")
+    expect(seen.slice(beforeResearcher)).toEqual(["jev", "luna"])
+    expect(researcherGlob.message).toBe("Luna allows, but read-only agent actions are not auto-approved")
   } finally {
     globalThis.fetch = previousFetch
     if (previousStateHome === undefined) delete process.env.XDG_STATE_HOME
