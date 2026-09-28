@@ -51,7 +51,8 @@ test sandbox as part of an ongoing authorized test, including ordinary use of
 the task's existing environment credentials. A different sandbox, materially
 unknown remote effects, credential disclosure, or live/shared-state changes
 still require human review; local human-only rules remain binding.
-Luna makes at most one provider request within an eight-second deadline. A
+Luna gets an eight-second deadline per request. A timeout or malformed reply is
+retried once with a fresh deadline; a second failure asks the human. A
 reply grants permission only after strict model identity, shape, and reason
 validation; errors or malformed replies never grant permission.
 Configured denials, concrete local human-only rules, unreviewable or unsafe

@@ -1039,6 +1039,7 @@ type LunaResult = {
   choice?: "allow" | "ask"
   reason?: string
   latency_ms?: number
+  attempts?: number
   diagnostic?:
     | "envelope"
     | "model"
@@ -1061,6 +1062,7 @@ function lunaAudit(result: LunaResult) {
       ? { reason: safeReason.value }
       : {}),
     ...(result.latency_ms !== undefined ? { latency_ms: result.latency_ms } : {}),
+    ...(result.attempts ? { attempts: result.attempts } : {}),
     ...(result.diagnostic ? { diagnostic: result.diagnostic } : {}),
   }
 }
@@ -1696,6 +1698,15 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
       "Ask if the sandbox identity is not corroborated by direct human messages, the remote program\'s effects are materially unknown, credentials could be printed, logged, or exported outside the authorized sandbox and services, or the action changes live Grafana, Slack, IAM, secrets, security controls, production systems, or unrelated shared resources. Existing credentials do not authorize unrelated use.",
       "For an edit/apply_patch request, newly written references to process.env.NAME, Sandbox.create, or commands.run do not themselves perform those operations, but formatter execution and policy-changing edits are present effects. Ask if the formatter\'s effects are unknown, or for embedded literal credentials, backdoor/exfiltration code, security-policy edits, or edits outside the human request.",
     ].join(" ")
+    // A transient timeout or malformed reply is retried once with a fresh
+    // deadline; a second failure still asks the human.
+    const first = await lunaAttempt(system, safeState)
+    if (first.status !== "timeout" && first.status !== "invalid_response") return first
+    const second = await lunaAttempt(system, safeState)
+    return { ...second, attempts: 2 }
+  }
+
+  async function lunaAttempt(system: string, safeState: unknown): Promise<LunaResult> {
     const started = Date.now()
     const signal = AbortSignal.timeout(lunaTimeoutMs)
     try {

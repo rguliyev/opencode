@@ -1114,6 +1114,7 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
   let lunaContent = JSON.stringify({ choice: "allow", reason: "The requested local file listing is in scope." })
   let lunaModelResponse = "openai/gpt-6-luna"
   let lunaInvalidResponse = false
+  let lunaInvalidOnce = false
   let lunaDelayMs = 0
   let jevRisk = 0.01
   let jevConfidence = 0.24
@@ -1174,6 +1175,10 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
       expect(input.system).toContain("the remote program's effects are materially unknown")
       if (lunaDelayMs) await new Promise((resolve) => setTimeout(resolve, lunaDelayMs))
       if (lunaInvalidResponse) return { status: "invalid_response", diagnostic: "json_content" }
+      if (lunaInvalidOnce) {
+        lunaInvalidOnce = false
+        return { status: "invalid_response", diagnostic: "json_content" }
+      }
       return { model: lunaModelResponse, ...JSON.parse(lunaContent) }
     })
     await hooks.provider.models({ models: {} }, { auth: { type: "api", key: "fake-test-key" } })
@@ -1314,10 +1319,19 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
     lunaModelResponse = "openai/gpt-6-luna"
 
     lunaInvalidResponse = true
+    const beforeMalformedOutput = seen.length
     const malformedOutput = { status: "allow" }
     await hooks["permission.ask"](request, malformedOutput)
     expect(malformedOutput.status).toBe("ask")
+    expect(seen.slice(beforeMalformedOutput)).toEqual(["jev", "luna", "luna"])
     lunaInvalidResponse = false
+
+    lunaInvalidOnce = true
+    const beforeRetry = seen.length
+    const retried = { status: "ask" }
+    await hooks["permission.ask"](request, retried)
+    expect(retried.status).toBe("allow")
+    expect(seen.slice(beforeRetry)).toEqual(["jev", "luna", "luna"])
 
     const originalTimeout = AbortSignal.timeout
     const deadline = new AbortController()
