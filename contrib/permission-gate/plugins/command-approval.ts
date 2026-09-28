@@ -1517,7 +1517,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
       messages.at(-1)?.withheld === "command_template" ||
       messages.at(-1)?.withheld === "plugin_transformed" ||
       messages.at(-1)?.withheld === "oversized_message" ||
-      messages.at(-1)?.text.includes("[REDACTED:") ||
+      /\[REDACTED:(?!PERSONAL_IDENTIFIER\])/.test(messages.at(-1)?.text ?? "") ||
       messages.at(-1)?.text === "[non-text attachment withheld]"
     )
       return undefined
@@ -1550,18 +1550,14 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
     const text = safeContextText(value, 6_000)
     if (!text) return undefined
     // A task message can be agent-authored and contain arbitrary user data.
-    // Withhold obvious personal/regulated identifiers rather than exporting
-    // them as permission-review context. This is deliberately conservative.
-    if (
-      /\b\d{3}-\d{2}-\d{4}\b/.test(text) ||
-      /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i.test(text) ||
-      /(?:\+\d{1,3}[-. ]?)?\(?\d{3}\)?[-. ]\d{3}[-. ]\d{4}\b/.test(text) ||
-      /\b(?:patient|medical record|health record|social security|passport|date of birth|dob|pii|phi|hipaa)\b/i.test(
-        text,
-      )
-    )
-      return undefined
+    // Mask concrete personal identifiers in place rather than exporting them
+    // as permission-review context. Words such as "PII" or "patient" are not
+    // identifiers; withholding the whole message for them left every later
+    // action without task context and forced a human prompt.
     return text
+      .replace(/\b\d{3}-\d{2}-\d{4}\b/g, "[REDACTED:PERSONAL_IDENTIFIER]")
+      .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[REDACTED:PERSONAL_IDENTIFIER]")
+      .replace(/(?:\+\d{1,3}[-. ]?)?\(?\d{3}\)?[-. ]\d{3}[-. ]\d{4}\b/g, "[REDACTED:PERSONAL_IDENTIFIER]")
   }
 
   async function review(

@@ -526,7 +526,7 @@ test("Jev receives paginated root human context and a distinct subagent task", a
                     : "msg_child_task",
                 "user",
                 childTaskContainsPII
-                  ? "Inspect patient alice@example.test's local fixture."
+                  ? "Inspect patient alice@example.test's local fixture. Do not read PII."
                   : childTaskRedacted
                     ? "Inspect the local fixture. INCIDENT_GRAFANA_TOKEN_URL=https://example.test/mcp/oauth/token"
                     : "Inspect the local fixture and report its status.",
@@ -659,8 +659,13 @@ test("Jev receives paginated root human context and a distinct subagent task", a
       },
       piiTask,
     )
-    expect(piiTask.status).toBe("ask")
-    expect(reviewCount()).toBe(2)
+    // Regulated-data vocabulary is not itself an identifier. Mask the concrete
+    // identifier and keep the rest of the task reviewable.
+    expect(piiTask.status).toBe("allow")
+    expect(reviewCount()).toBe(3)
+    expect(jevContext?.delegated_task).toBe(
+      "Inspect patient [REDACTED:PERSONAL_IDENTIFIER]'s local fixture. Do not read PII.",
+    )
     expect(JSON.stringify(jevContext)).not.toContain("alice@example.test")
 
     childTaskContainsPII = false
@@ -677,7 +682,7 @@ test("Jev receives paginated root human context and a distinct subagent task", a
       withheldTask,
     )
     expect(withheldTask.status).toBe("ask")
-    expect(reviewCount()).toBe(2)
+    expect(reviewCount()).toBe(3)
   } finally {
     globalThis.fetch = previousFetch
     if (previousStateHome === undefined) delete process.env.XDG_STATE_HOME
@@ -1264,10 +1269,24 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
     const priorUnsafeHistoryReviews = seen.length
     const unsafeHistory = { status: "allow" }
     await hooks["permission.ask"](request, unsafeHistory)
+    // Luna still asks here (the revocation reply is active), but the history is
+    // reviewable: the identifier is masked instead of discarding all context.
     expect(unsafeHistory.status).toBe("ask")
-    expect(seen).toHaveLength(priorUnsafeHistoryReviews + 1)
+    expect(seen.slice(priorUnsafeHistoryReviews)).toEqual(["jev", "luna"])
+    expect((lunaState?.context as { human_messages?: { text: string }[] })?.human_messages?.at(-2)?.text).toBe(
+      "Inspect patient [REDACTED:PERSONAL_IDENTIFIER]'s record.",
+    )
     expect(JSON.stringify(lunaState)).not.toContain("alice@example.test")
     earlierUpdates = []
+    latestHumanText = "Check whether src/main.ts exists; reply to bob@example.test."
+    lunaContent = JSON.stringify({ choice: "allow", reason: "The local file check is in scope." })
+    const identifierInLatest = { status: "ask" }
+    await hooks["permission.ask"](request, identifierInLatest)
+    expect(identifierInLatest.status).toBe("allow")
+    expect((lunaState?.context as { human_request?: string })?.human_request).toBe(
+      "Check whether src/main.ts exists; reply to [REDACTED:PERSONAL_IDENTIFIER].",
+    )
+    expect(JSON.stringify(lunaState)).not.toContain("bob@example.test")
     latestHumanText = undefined
 
     lunaContent = 'Prose before JSON: {"choice":"allow","reason":"Looks fine"}'
