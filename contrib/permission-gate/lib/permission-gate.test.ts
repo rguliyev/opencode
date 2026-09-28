@@ -2,7 +2,7 @@ import { expect, test } from "bun:test"
 import { createHash } from "node:crypto"
 import { mkdtempSync, rmSync, symlinkSync } from "node:fs"
 import { createServer } from "node:net"
-import { tmpdir } from "node:os"
+import { homedir, tmpdir } from "node:os"
 import path from "node:path"
 import { Database as SQLiteDatabase } from "bun:sqlite"
 import CommandApproval from "../plugins/command-approval"
@@ -1157,6 +1157,32 @@ test("configured external-directory allow does not follow a symlink outside the 
       output,
     )
     expect(output.status).toBe("ask")
+
+    // OpenCode core's own allow for its tool-output files is preserved; a
+    // neighbouring data directory is not.
+    const dataDir = path.join(process.env.XDG_DATA_HOME || path.join(homedir(), ".local", "share"), "opencode")
+    const toolOutput = { status: "allow" }
+    await hooks["permission.ask"](
+      {
+        permission: "external_directory",
+        sessionID: "ses_symlink_test",
+        patterns: [path.join(dataDir, "tool-output", "*")],
+        metadata: { filepath: path.join(dataDir, "tool-output", "tool_example") },
+      },
+      toolOutput,
+    )
+    expect(toolOutput.status).toBe("allow")
+    const dataSibling = { status: "allow" }
+    await hooks["permission.ask"](
+      {
+        permission: "external_directory",
+        sessionID: "ses_symlink_test",
+        patterns: [path.join(dataDir, "*")],
+        metadata: { filepath: path.join(dataDir, "opencode.db") },
+      },
+      dataSibling,
+    )
+    expect(dataSibling.status).toBe("ask")
   } finally {
     globalThis.fetch = previousFetch
     if (previousStateHome === undefined) delete process.env.XDG_STATE_HOME
@@ -1330,6 +1356,44 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
     expect(backgroundTask.status).toBe("ask")
     expect(backgroundTask.message).toBe(
       "Luna allows, but this task request shape is not eligible for automatic approval",
+    )
+
+    // Background delegation, a prompt up to the 6 KB task-context limit, and
+    // prose that merely mentions GCP projects are ordinary task requests.
+    const taskWith = async (callID: string, args: Record<string, unknown>) => {
+      await hooks["tool.execute.before"]({ tool: "task", sessionID: "ses_luna_test", callID }, { args })
+      const output = { status: "ask", message: "" }
+      await hooks["permission.ask"]({ ...taskRequest, tool: { callID } }, output)
+      return output
+    }
+    const baseTask = {
+      description: "Build local webhook fixture",
+      prompt: "Build an isolated mock webhook fixture in the existing sandbox.",
+      subagent_type: "deep-implementer",
+    }
+    expect((await taskWith("call_luna_task_bg", { ...baseTask, background: true })).status).toBe("allow")
+    expect((await taskWith("call_luna_task_5k", { ...baseTask, prompt: "Build the fixture. ".repeat(270) })).status).toBe(
+      "allow",
+    )
+    expect((await taskWith("call_luna_task_6k", { ...baseTask, prompt: "x".repeat(6_001) })).status).toBe("ask")
+    const gcpProse = await taskWith("call_luna_task_gcp", {
+      ...baseTask,
+      prompt: "Earlier gcloud logging read timestamp>=last24h showed 12 projects produced recent entries; build the fixture.",
+    })
+    expect(gcpProse.status).toBe("allow")
+    expect(gcpProse.message ?? "").not.toContain("GCP project")
+
+    const orchestrator = await gateForTest(directory, "orchestrator", lunaReview)
+    await orchestrator.provider.models({ models: {} }, { auth: { type: "api", key: "fake-test-key" } })
+    await orchestrator["tool.execute.before"](
+      { tool: "task", sessionID: "ses_luna_test", callID: "call_orchestrator_task" },
+      { args: { ...baseTask, background: true } },
+    )
+    const orchestratorTask = { status: "ask" }
+    await orchestrator["permission.ask"]({ ...taskRequest, tool: { callID: "call_orchestrator_task" } }, orchestratorTask)
+    expect(orchestratorTask.status).toBe("allow")
+    expect((lunaState?.context as { role_policy?: string })?.role_policy).toContain(
+      "Delegating the human's current task to known subagents",
     )
     earlierUpdates = []
     latestHumanText = "Stop; do not inspect src/main.ts."

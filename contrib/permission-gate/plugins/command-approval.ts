@@ -127,6 +127,8 @@ const localGitAgents = new Set(["orchestrator", "solo", "implementer", "deep-imp
 // it does not waive human gates for the underlying change or publication.
 const localGitRolePolicy =
   "For assigned development work, this role may fetch, create branches and dedicated worktrees under /data/rguliyev/tmp/opencode/worktrees, edit files there, stage, commit, and rebase unpushed branches without a separate human permission. These are ordinary local development actions, not shared-state rewrites. Pushing, PR creation/update, merging, and rewriting pushed history require human authorization; Terraform/Atlantis apply and other human gates still apply."
+const orchestratorDelegationPolicy =
+  "Delegating the human's current task to known subagents (explore, researcher, reviewer, deep-reviewer, implementer, deep-implementer), including in the background, is this role's ordinary work and needs no separate human instruction; each subagent's later tool actions receive separate permission checks."
 const requiredBashDenies = new Set([
   "*command-approval.ts*",
   "*opencode.jsonc*",
@@ -134,6 +136,13 @@ const requiredBashDenies = new Set([
   "*/.config/opencode/lib/*",
 ])
 const configuredExternalRoot = "/data/rguliyev/tmp/opencode"
+// OpenCode core allows its own truncated tool-output files for every agent;
+// they are this session's already-reviewed outputs, not new external data.
+const toolOutputRoot = path.join(
+  process.env.XDG_DATA_HOME || path.join(homedir(), ".local", "share"),
+  "opencode",
+  "tool-output",
+)
 const goalPackageDigest = "daf6520e862d601adc423f44249ec913661769401e508c78ccb92ea0259c9da4"
 const goalPackageManifestDigest = "57d32040eb0e0ab2300ca50730719456ae12835b8caf2a03c88a4b97dd2cac94"
 const goalSourceFiles = [
@@ -208,16 +217,17 @@ async function verifiedGoalEffect(
 async function configuredExternalPatternAllowed(pattern: unknown) {
   if (
     typeof pattern !== "string" ||
-    !pattern.startsWith(configuredExternalRoot + path.sep) ||
     path.posix.basename(pattern) !== "*" ||
     pattern.includes("\\") ||
     path.posix.normalize(pattern) !== pattern
   )
     return false
+  const configured = [configuredExternalRoot, toolOutputRoot].find((root) => pattern.startsWith(root + path.sep))
+  if (!configured) return false
   try {
-    const [root, parent] = await Promise.all([realpath(configuredExternalRoot), realpath(path.dirname(pattern))])
+    const [root, parent] = await Promise.all([realpath(configured), realpath(path.dirname(pattern))])
     // A symlinked root or parent must not silently widen this configured allow.
-    return root === configuredExternalRoot && (parent === root || parent.startsWith(root + path.sep))
+    return root === configured && (parent === root || parent.startsWith(root + path.sep))
   } catch {
     return false
   }
@@ -943,11 +953,10 @@ function lunaMayAutoAllowTask(action: ActionEvidence) {
     return false
   if (Object.keys(args).some((key) => !["description", "prompt", "subagent_type", "background"].includes(key)))
     return false
-  if (args.background === true) return false
   if (
     typeof args.prompt !== "string" ||
     !args.prompt.trim() ||
-    Buffer.byteLength(args.prompt) > 4_000 ||
+    Buffer.byteLength(args.prompt) > 6_000 ||
     args.prompt.includes("[REDACTED:") ||
     typeof args.description !== "string" ||
     !args.description.trim() ||
@@ -2003,7 +2012,10 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
             role_policy: "Read-only inspection only; no edits, builds, tests, downloads, delegation, or state changes",
           }
         : localGitAgents.has(agent)
-          ? { role_policy: localGitRolePolicy }
+          ? {
+              role_policy:
+                agent === "orchestrator" ? `${localGitRolePolicy} ${orchestratorDelegationPolicy}` : localGitRolePolicy,
+            }
           : {}),
       workdir: safeWorkdir,
       command_index: 0,
@@ -2048,8 +2060,12 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
     )
       reasons.push("human-only policy or data change may apply")
     const sessions = humanContext!.sessions
-    for (const scope of [gcpScopeReviewMessage(policyRaw, sessions), awsScopeReviewMessage(policyRaw, sessions)])
-      if (scope) reasons.push(scope)
+    // A task prompt is prose handed to a subagent; it runs nothing. Parsing it
+    // as a shell command mistook "projects produced recent entries" for a GCP
+    // project named "recent". The subagent's actual commands are still scoped.
+    if (input.permission !== "task")
+      for (const scope of [gcpScopeReviewMessage(policyRaw, sessions), awsScopeReviewMessage(policyRaw, sessions)])
+        if (scope) reasons.push(scope)
     const rawAnswers = result.raw
     const verdictAnswer = rawAnswers?.verdict
     // Custom dispatch calls have no later built-in permission check, so Luna
@@ -2257,7 +2273,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
           call: input.tool?.callID ?? null,
           decision: "allow",
           engine: "configured_allow",
-          reasons: ["OpenCode allowed external_directory under /data/rguliyev/tmp/opencode"],
+          reasons: ["OpenCode allowed external_directory under a configured root"],
         })
         return
       }

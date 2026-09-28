@@ -62,7 +62,13 @@ including dual-use shell tools such as git, read-only is judged per request,
 not by agent name: Luna's `allow` asserts that it independently judged the
 exact action read-only, and Jev's separate `reviewer_mutation` score must stay
 below 0.25. If either model sees a possible mutation, the human is asked. When a local eligibility check overrides Luna's `allow`,
-the prompt names that condition and the audit record uses engine `local_veto`. Task evidence must match a trusted foreground built-in call; a
+the prompt names that condition and the audit record uses engine `local_veto`. Task evidence must match a trusted built-in call
+(foreground or background) with a prompt of at most 6 KB. A task prompt is
+prose, so the GCP/AWS project-scope rules are not applied to it; the
+subagent's actual commands are still scoped. The orchestrator's role policy
+states that delegating the current task to known subagents is its ordinary
+work. OpenCode core's allow for its own tool-output files is preserved, like
+the configured `/data/rguliyev/tmp/opencode` root. A
 verified glob snapshot must stay in the workdir and contain no sensitive
 filenames. Only the match count—not discovered filenames—is sent to Jev or
 Luna. A verified built-in skill load sends its name, location, description,
