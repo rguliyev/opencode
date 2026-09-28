@@ -1073,6 +1073,67 @@ test("executing read-only agent remains restricted after the session default cha
   }
 })
 
+test("a read-only agent's dual-use shell command needs both Luna and Jev to judge it read-only", async () => {
+  const directory = path.resolve(import.meta.dir, "..")
+  const previousFetch = globalThis.fetch
+  const previousStateHome = process.env.XDG_STATE_HOME
+  const previousKevSocket = process.env.OPENCODE_KEV_SOCKET
+  const mutation: Record<string, number> = { "git status --short": 0.05, "git push fork HEAD": 0.9 }
+  let lunaChoice = "allow"
+  process.env.XDG_STATE_HOME = "/dev/null"
+  process.env.OPENCODE_KEV_SOCKET = "/dev/null/no-kev-socket"
+  globalThis.fetch = async (input, init) => {
+    const url = String(input)
+    if (url.includes("/session/ses_reviewer_shell/message?"))
+      return Response.json([message("msg_reviewer_shell", "user", "Review the current branch.")])
+    if (url.startsWith("http://gate.test/session/"))
+      return Response.json({ id: "ses_reviewer_shell", directory, agent: "deep-reviewer", title: "Review branch" })
+    if (url === "https://openrouter.ai/api/alpha/decisions") {
+      const payload = JSON.parse(String(init?.body))
+      const answers: Record<string, unknown> = {
+        verdict: { type: "choice", choice: "deny", confidence: 0.2, probabilities: { allow: 0.4, deny: 0.6 } },
+      }
+      for (const id of Object.keys(payload.questions))
+        if (id !== "verdict")
+          answers[id] = { type: "noul", noul: id === "reviewer_mutation" ? mutation[payload.state.command] : 0.01 }
+      return Response.json({ model: "typesafe/jev-1.13", answers })
+    }
+    throw new Error(`Unexpected fetch: ${url}`)
+  }
+  const ask = async (hooks: Awaited<ReturnType<typeof gateForTest>>, command: string) => {
+    const output = { status: lunaChoice === "allow" ? "ask" : "allow" }
+    await hooks["permission.ask"](
+      {
+        permission: "bash",
+        sessionID: "ses_reviewer_shell",
+        patterns: [command],
+        metadata: { command, purpose: "Inspect the branch under review" },
+      },
+      output,
+    )
+    return output.status
+  }
+  try {
+    const hooks = await gateForTest(directory, "deep-reviewer", async () => ({
+      model: "openai/gpt-6-luna",
+      choice: lunaChoice,
+      reason: "Judged against the read-only role policy.",
+    }))
+    await hooks.provider.models({ models: {} }, { auth: { type: "api", key: "fake-test-key" } })
+    expect(await ask(hooks, "git status --short")).toBe("allow")
+    // Luna allowing is not enough when Jev independently sees a mutation.
+    expect(await ask(hooks, "git push fork HEAD")).toBe("ask")
+    lunaChoice = "ask"
+    expect(await ask(hooks, "git status --short")).toBe("ask")
+  } finally {
+    globalThis.fetch = previousFetch
+    if (previousStateHome === undefined) delete process.env.XDG_STATE_HOME
+    else process.env.XDG_STATE_HOME = previousStateHome
+    if (previousKevSocket === undefined) delete process.env.OPENCODE_KEV_SOCKET
+    else process.env.OPENCODE_KEV_SOCKET = previousKevSocket
+  }
+})
+
 test("configured external-directory allow does not follow a symlink outside the allowlist", async () => {
   const directory = path.resolve(import.meta.dir, "..")
   const previousFetch = globalThis.fetch
@@ -1117,6 +1178,7 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
   let lunaInvalidOnce = false
   let lunaDelayMs = 0
   let jevRisk = 0.01
+  let jevMutation = 0.01
   let jevConfidence = 0.24
   let latestHumanText: string | undefined
   let earlierUpdates: string[] = []
@@ -1158,7 +1220,11 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
         },
       }
       for (const id of Object.keys(payload.questions))
-        if (id !== "verdict") answers[id] = { type: "noul", noul: id === "secrets" ? jevRisk : 0.01 }
+        if (id !== "verdict")
+          answers[id] = {
+            type: "noul",
+            noul: id === "secrets" ? jevRisk : id === "reviewer_mutation" ? jevMutation : 0.01,
+          }
       return Response.json({ model: "typesafe/jev-1.13", answers })
     }
     throw new Error(`Unexpected fetch: ${url}`)
@@ -1173,6 +1239,7 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
       expect(input.system).toContain("Do not require a new one-off instruction solely because this routine test action is remote")
       expect(input.system).toContain("Ask if the sandbox identity is not corroborated by direct human messages")
       expect(input.system).toContain("the remote program's effects are materially unknown")
+      expect(input.system).toContain("independently judged this exact action or command to be read-only in effect")
       if (lunaDelayMs) await new Promise((resolve) => setTimeout(resolve, lunaDelayMs))
       if (lunaInvalidResponse) return { status: "invalid_response", diagnostic: "json_content" }
       if (lunaInvalidOnce) {
@@ -1644,12 +1711,42 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
       { tool: "glob", sessionID: "ses_luna_test", callID: "call_luna_glob" },
       { args: { pattern: "src/main.ts" } },
     )
+    // Read-only is judged per action: Luna's read-only allow plus Jev's
+    // independent low mutation score lets a researcher proceed, even though
+    // Jev's overall verdict is an uncertain deny.
     const beforeResearcher = seen.length
-    const researcherGlob = { status: "allow", message: "" }
+    const researcherGlob = { status: "ask", message: "" }
     await researcher["permission.ask"](request, researcherGlob)
-    expect(researcherGlob.status).toBe("ask")
+    expect(researcherGlob.status).toBe("allow")
     expect(seen.slice(beforeResearcher)).toEqual(["jev", "luna"])
-    expect(researcherGlob.message).toBe("Luna allows, but read-only agent actions are not auto-approved")
+    expect((lunaState?.context as { role_policy?: string })?.role_policy).toContain("Read-only inspection only")
+
+    jevMutation = 0.4
+    const researcherMutation = { status: "allow", message: "" }
+    await researcher["permission.ask"](request, researcherMutation)
+    expect(researcherMutation.status).toBe("ask")
+    expect(researcherMutation.message).toBe(
+      "Luna allows, but Jev did not judge this read-only agent's action free of mutation",
+    )
+    jevMutation = 0.01
+
+    lunaContent = JSON.stringify({ choice: "ask", reason: "This could change the worktree." })
+    const researcherLunaAsk = { status: "allow" }
+    await researcher["permission.ask"](request, researcherLunaAsk)
+    expect(researcherLunaAsk.status).toBe("ask")
+    lunaContent = JSON.stringify({ choice: "allow", reason: "The local request is in scope." })
+
+    const researcherEdit = { status: "allow" }
+    await researcher["permission.ask"](
+      {
+        permission: "edit",
+        sessionID: "ses_luna_test",
+        patterns: ["README.md"],
+        metadata: { filepath: "README.md", diff: "+note" },
+      },
+      researcherEdit,
+    )
+    expect(researcherEdit.status).toBe("deny")
   } finally {
     globalThis.fetch = previousFetch
     if (previousStateHome === undefined) delete process.env.XDG_STATE_HOME

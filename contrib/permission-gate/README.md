@@ -56,8 +56,12 @@ retried once with a fresh deadline; a second failure asks the human. A
 reply grants permission only after strict model identity, shape, and reason
 validation; errors or malformed replies never grant permission.
 Configured denials, concrete local human-only rules, unreviewable or unsafe
-context, model failures, and read-only reviewer restrictions still block
-automatic approval. When a local eligibility check overrides Luna's `allow`,
+context, and model failures still block automatic approval. Read-only agents
+are denied every non-read action outright. For their remaining requests,
+including dual-use shell tools such as git, read-only is judged per request,
+not by agent name: Luna's `allow` asserts that it independently judged the
+exact action read-only, and Jev's separate `reviewer_mutation` score must stay
+below 0.25. If either model sees a possible mutation, the human is asked. When a local eligibility check overrides Luna's `allow`,
 the prompt names that condition and the audit record uses engine `local_veto`. Task evidence must match a trusted foreground built-in call; a
 verified glob snapshot must stay in the workdir and contain no sensitive
 filenames. Only the match count—not discovered filenames—is sent to Jev or
