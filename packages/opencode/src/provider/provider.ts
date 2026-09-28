@@ -2069,7 +2069,7 @@ const layer = Layer.effect(
           ),
           messages: [{ role: "user" as const, content: input.state }],
           abortSignal: input.signal,
-          maxOutputTokens: 512,
+          // The ChatGPT Codex OAuth endpoint rejects max_output_tokens.
           maxRetries: 0,
           providerOptions: ProviderTransform.providerOptions(model, {
             instructions: input.system,
