@@ -46,6 +46,11 @@ the action or task context cannot be shared safely, Luna receives only a
 minimal withheld-evidence notice and must ask; raw sensitive evidence is not
 sent. Luna's `allow` resolves ordinary Bash and non-Bash escalations; its
 `ask` prompts the human. Jev scores are signals, not a veto on Luna.
+Luna may treat a worker restart in an existing, directly human-identified E2B
+test sandbox as part of an ongoing authorized test, including ordinary use of
+the task's existing environment credentials. A different sandbox, materially
+unknown remote effects, credential disclosure, or live/shared-state changes
+still require human review; local human-only rules remain binding.
 Luna makes at most one provider request within an eight-second deadline. A
 reply grants permission only after strict model identity, shape, and reason
 validation; errors or malformed replies never grant permission.

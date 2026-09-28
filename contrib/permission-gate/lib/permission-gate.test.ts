@@ -1128,6 +1128,10 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
       lunaSignals.push(input.signal)
       lunaState = JSON.parse(input.state)
       expect(input.system).toContain("last automatic reviewer")
+      expect(input.system).toContain("An existing E2B sandbox explicitly identified by direct human messages")
+      expect(input.system).toContain("Do not require a new one-off instruction solely because this routine test action is remote")
+      expect(input.system).toContain("Ask if the sandbox identity is not corroborated by direct human messages")
+      expect(input.system).toContain("the remote program's effects are materially unknown")
       if (lunaDelayMs) await new Promise((resolve) => setTimeout(resolve, lunaDelayMs))
       if (lunaInvalidResponse) return { status: "invalid_response", diagnostic: "json_content" }
       return { model: lunaModelResponse, ...JSON.parse(lunaContent) }
