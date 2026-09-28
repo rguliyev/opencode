@@ -720,9 +720,13 @@ test("a long live-style session yields bounded user history without hydrating gi
         const text =
           index === 259
             ? "Inspect the local fixture without network access."
-            : index === 40
-              ? `Use the local fixture; api_key=${token}`
-              : `Keep fixture ${index} local and do not publish it.`
+            : index === 39
+              ? "Oversized direct note " + "x".repeat(6_100)
+              : index === 43
+                ? "Very long direct note " + "y".repeat(9_000)
+                : index === 40
+                  ? `Use the local fixture; api_key=${token}`
+                  : `Keep fixture ${index} local and do not publish it.`
         insertPart.run(`part_user_${index}`, userID, JSON.stringify({ type: "text", text, ...(index >= 260 ? { synthetic: true } : {}) }))
         if (index === 42)
           insertPart.run(
@@ -794,10 +798,16 @@ test("a long live-style session yields bounded user history without hydrating gi
     expect(context.human_request).toBe("Inspect the local fixture without network access.")
     const secretMessage = context.human_messages[40] as unknown
     const attachmentMessage = context.human_messages[41] as unknown
+    const oversizedMessage = context.human_messages[39] as unknown
+    const metadataOnlyMessage = context.human_messages[43] as unknown
     expect(isRecord(secretMessage) ? secretMessage.withheld : undefined).toBe("redacted_literal")
     expect(isRecord(attachmentMessage) ? attachmentMessage.withheld : undefined).toBe("non_text_attachment")
+    expect(isRecord(oversizedMessage) ? oversizedMessage.withheld : undefined).toBe("oversized_message")
+    expect(isRecord(metadataOnlyMessage) ? metadataOnlyMessage.withheld : undefined).toBe("oversized_message")
     expect(JSON.stringify(state)).not.toContain(token)
     expect(JSON.stringify(state)).not.toContain("A".repeat(100))
+    expect(JSON.stringify(state)).not.toContain("x".repeat(100))
+    expect(JSON.stringify(state)).not.toContain("y".repeat(100))
 
     // An older human constraint can change without the latest message ID
     // changing. The next permission review must not reuse stale context.
@@ -821,6 +831,31 @@ test("a long live-style session yields bounded user history without hydrating gi
     if (!isRecord(updated) || !Array.isArray(updated.human_messages)) throw new Error("Missing updated human context")
     const older = updated.human_messages[1] as unknown
     expect(isRecord(older) ? older.text : undefined).toBe("Never upload this fixture.")
+
+    // An oversized latest message cannot be treated as authorization, even
+    // though older direct human messages remain available to the reviewer.
+    db.query("UPDATE part SET data = ? WHERE id = ?").run(
+      JSON.stringify({ type: "text", text: "Latest large note " + "z".repeat(6_100) }),
+      "part_user_259",
+    )
+    const latestOversized = { status: "allow" }
+    await hooks["permission.ask"](
+      {
+        permission: "read",
+        sessionID: "ses_long_context",
+        patterns: ["fixture.txt"],
+        metadata: { filepath: "fixture.txt" },
+        tool: { callID: "call_long_read" },
+      },
+      latestOversized,
+    )
+    expect(latestOversized.status).toBe("ask")
+    expect(jevCalls).toBe(2)
+    expect(lunaCalls).toBe(1)
+    db.query("UPDATE part SET data = ? WHERE id = ?").run(
+      JSON.stringify({ type: "text", text: "Inspect the local fixture without network access." }),
+      "part_user_259",
+    )
 
     // The local-DB path must preserve the synthetic provenance marker, not
     // skip it and mistakenly reuse the preceding direct human task.
@@ -853,7 +888,7 @@ test("a long live-style session yields bounded user history without hydrating gi
     )
     expect(withheld.status).toBe("ask")
     expect(jevCalls).toBe(2)
-    expect(lunaCalls).toBe(1)
+    expect(lunaCalls).toBe(2)
   } finally {
     db.close()
     rmSync(root, { recursive: true, force: true })
