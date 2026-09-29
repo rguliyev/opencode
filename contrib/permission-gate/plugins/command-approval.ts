@@ -473,8 +473,10 @@ function containsCredentialLiteralBase(command: string) {
   )
 }
 
-function loadsAnotherShellFile(file: string, content: string) {
-  if (!/\.(?:ba|da|k|z)?sh$/i.test(file) && !/^#![^\n]*\b(?:ba|da|k|z)?sh\b/m.test(content)) return false
+// Returns the targets of `source`/`.` commands in a shell script (empty when
+// it loads nothing, or when the file is not a shell script).
+function shellSources(file: string, content: string): string[] {
+  if (!/\.(?:ba|da|k|z)?sh$/i.test(file) && !/^#![^\n]*\b(?:ba|da|k|z)?sh\b/m.test(content)) return []
   // Single-quoted shell strings are literal. A jq/yq program containing
   // ". as $item" is not the shell's `. file` command. Preserve double-quoted
   // text because it can contain executable command substitutions.
@@ -515,7 +517,7 @@ function loadsAnotherShellFile(file: string, content: string) {
     }
     if (character === "'" && quote !== '"') quote = "'"
   }
-  return /(?:^|[\s;&|(){}])(?:source|\.)\s+\S/m.test(shell)
+  return [...shell.matchAll(/(?:^|[\s;&|(){}])(?:source|\.)\s+(\S+)/gm)].map((match) => match[1])
 }
 
 function requiresHuman(command: string) {
@@ -923,11 +925,18 @@ async function inspectScripts(command: string, cwd: string) {
         }
       }
       const content = contentBytes.toString("utf8")
-      if (loadsAnotherShellFile(item.shown, content)) {
-        return {
-          error: "referenced shell script loads another file",
-          scripts: [] as ScriptEvidence[],
-        }
+      // A literal absolute source target is inspected like the script itself;
+      // anything dynamic or relative could load unseen code and still stops.
+      for (const sourced of shellSources(item.shown, content)) {
+        const target = sourced.replace(/^(["'])(.*)\1$/, "$2")
+        if (!path.isAbsolute(target) || /[$`*?[\]{}~"']/.test(target) || path.normalize(target) !== target)
+          return {
+            error: "referenced shell script loads another file",
+            scripts: [] as ScriptEvidence[],
+          }
+        if (!paths.some((known) => known.absolute === target)) paths.push({ shown: target, absolute: target })
+        if (paths.length > maxScripts)
+          return { error: "too many scripts to inspect", scripts: [] as ScriptEvidence[] }
       }
       const safePath = sanitizeReviewText(item.shown)
       const safeContent = sanitizeReviewText(content)

@@ -1212,6 +1212,12 @@ test("shell segments get module evidence and self-contained segments are judged 
     "#!/usr/bin/env bash\n# (update-schemas.sh). -strict rejects unknown fields\n# and the source of truth is upstream\necho ok\n",
   )
   writeFileSync(path.join(directory, "loads.sh"), "#!/usr/bin/env bash\nsource ./lib.sh\necho ok\n")
+  // A literal absolute source target is inspected; a secret in it or a dynamic target still stops.
+  writeFileSync(path.join(directory, "env.sh"), "export WORKDIR=/data/rguliyev/tmp/opencode/validation\n")
+  writeFileSync(path.join(directory, "run.sh"), `#!/usr/bin/env bash\nsource ${path.join(directory, "env.sh")}\necho ok\n`)
+  writeFileSync(path.join(directory, "secret-env.sh"), `export GH_TOKEN=ghp_${"R".repeat(36)}\n`)
+  writeFileSync(path.join(directory, "run-secret.sh"), `#!/usr/bin/env bash\nsource ${path.join(directory, "secret-env.sh")}\n`)
+  writeFileSync(path.join(directory, "run-dynamic.sh"), '#!/usr/bin/env bash\nsource "$ENV_FILE"\n')
   const previousFetch = globalThis.fetch
   const previousStateHome = process.env.XDG_STATE_HOME
   const previousKevSocket = process.env.OPENCODE_KEV_SOCKET
@@ -1278,6 +1284,18 @@ test("shell segments get module evidence and self-contained segments are judged 
       sourcing,
     )
     expect(sourcing.status).toBe("ask")
+    const runScript = async (script: string) => {
+      const output = { status: "ask" }
+      const command = `bash ${path.join(directory, script)}`
+      await hooks["permission.ask"](
+        { permission: "bash", sessionID: "ses_go_module", patterns: [command], metadata: { command } },
+        output,
+      )
+      return output.status
+    }
+    expect(await runScript("run.sh")).toBe("allow")
+    expect(await runScript("run-secret.sh")).toBe("ask")
+    expect(await runScript("run-dynamic.sh")).toBe("ask")
   } finally {
     globalThis.fetch = previousFetch
     if (previousStateHome === undefined) delete process.env.XDG_STATE_HOME
