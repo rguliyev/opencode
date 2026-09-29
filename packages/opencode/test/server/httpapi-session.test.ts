@@ -1017,6 +1017,79 @@ describe("session HttpApi", () => {
     { git: true, config: { formatter: false, lsp: false } },
   )
 
+  it.live("deletes a queued prompt without interrupting the active response", () => {
+    const hold = Promise.withResolvers<void>()
+    return Effect.gen(function* () {
+      const llm = yield* TestLLMServer
+      yield* llm.hold("finished", hold.promise)
+      const directory = yield* tmpdirScoped({ git: true, config: testProviderConfig(llm.url) })
+      const headers = { "x-opencode-directory": directory, "content-type": "application/json" }
+      const created = yield* createSession({ title: "queued undo" }).pipe(provideInstanceEffect(directory))
+      const path = pathFor(SessionPaths.promptAsync, { sessionID: created.id })
+      const messagesPath = pathFor(SessionPaths.messages, { sessionID: created.id })
+      const send = (text: string) =>
+        request(path, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            agent: "build",
+            model: { providerID: "test", modelID: "test-model" },
+            parts: [{ type: "text", text }],
+          }),
+        })
+
+      expect((yield* send("active")).status).toBe(204)
+      yield* llm.wait(1)
+      expect((yield* send("queued")).status).toBe(204)
+
+      const messages = yield* pollWithTimeout(
+        requestJson<SessionV1.WithParts[]>(messagesPath, { headers }).pipe(
+          Effect.map((items) =>
+            items.some((item) => item.parts.some((part) => part.type === "text" && part.text === "queued"))
+              ? items
+              : undefined,
+          ),
+        ),
+        "queued prompt did not appear",
+      )
+      const active = messages.find((item) => item.parts.some((part) => part.type === "text" && part.text === "active"))
+      const queued = messages.find((item) => item.parts.some((part) => part.type === "text" && part.text === "queued"))
+      expect(active?.info.role).toBe("user")
+      expect(queued?.info.role).toBe("user")
+      if (!active || !queued) return
+
+      const before = yield* requestJson<Record<string, { type: string }>>(SessionPaths.status, { headers })
+      expect(before[created.id]?.type).toBe("busy")
+      const assistant = messages.find((item) => item.info.role === "assistant")?.info
+      expect(assistant?.role === "assistant" ? assistant.time.completed : undefined).toBeUndefined()
+
+      const deletePath = (messageID: MessageID) =>
+        pathFor(SessionPaths.deleteMessage, { sessionID: created.id, messageID })
+      expect((yield* request(deletePath(active.info.id), { method: "DELETE", headers })).status).toBe(409)
+      expect((yield* request(deletePath(queued.info.id), { method: "DELETE", headers })).status).toBe(200)
+
+      const status = yield* requestJson<Record<string, { type: string }>>(SessionPaths.status, { headers })
+      expect(status[created.id]?.type).toBe("busy")
+      const remaining = yield* requestJson<SessionV1.WithParts[]>(messagesPath, { headers })
+      expect(remaining.some((item) => item.info.id === queued.info.id)).toBe(false)
+      hold.resolve()
+      yield* pollWithTimeout(
+        requestJson<Record<string, { type: string }>>(SessionPaths.status, { headers }).pipe(
+          Effect.map((value) => (!value[created.id] || value[created.id]?.type === "idle" ? true : undefined)),
+        ),
+        "active response did not finish",
+        "10 seconds",
+      )
+      const finished = yield* requestJson<SessionV1.WithParts[]>(messagesPath, { headers })
+      expect(finished.some((item) => item.info.id === active.info.id)).toBe(true)
+      expect(finished.some((item) => item.info.id === queued.info.id)).toBe(false)
+    }).pipe(
+      Effect.ensuring(Effect.sync(() => hold.resolve())),
+      Effect.provide(TestLLMServer.layer),
+      Effect.provide(AppNodeBuilder.build(CrossSpawnSpawner.node)),
+    )
+  })
+
   it.instance(
     "rejects part updates whose path and body ids disagree",
     () =>

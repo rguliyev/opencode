@@ -57,6 +57,7 @@ import { usePromptWorkspace } from "./workspace"
 import { usePromptMove } from "./move"
 import { readLocalAttachment } from "./local-attachment"
 import { useLocation } from "../../context/location"
+import { latestQueuedPrompt } from "../../util/session"
 
 registerOpencodeSpinner()
 
@@ -161,6 +162,8 @@ export function Prompt(props: PromptProps) {
   const dialog = useDialog()
   const toast = useToast()
   const status = createMemo(() => sync.data.session_status?.[props.sessionID ?? ""] ?? { type: "idle" })
+  const removedQueuedPrompts = new Set<string>()
+  let undoingQueuedPrompt = false
   const history = usePromptHistory()
   const stash = usePromptStash()
   const keymap = useOpencodeKeymap()
@@ -395,7 +398,7 @@ export function Prompt(props: PromptProps) {
         category: "Session",
         hidden: true,
         enabled: status().type !== "idle",
-        run: () => {
+        run: async () => {
           if (auto()?.visible) return
           if (!input.focused) return
           // TODO: this should be its own command
@@ -404,6 +407,58 @@ export function Prompt(props: PromptProps) {
             return
           }
           if (!props.sessionID) return
+
+          if (undoingQueuedPrompt) return
+          const sessionID = props.sessionID
+          const messages = sync.data.message[sessionID] ?? []
+          for (const id of removedQueuedPrompts) {
+            if (!messages.some((message) => message.id === id)) removedQueuedPrompts.delete(id)
+          }
+          const queued = latestQueuedPrompt(messages.filter((message) => !removedQueuedPrompts.has(message.id)))
+          if (queued) {
+            undoingQueuedPrompt = true
+            removedQueuedPrompts.add(queued.id)
+            setStore("interrupt", 0)
+            try {
+              const response = await sdk.client.session.message(
+                { sessionID, messageID: queued.id },
+                { throwOnError: true },
+              )
+              const parts = response.data.parts
+              await sdk.client.session.deleteMessage({ sessionID, messageID: queued.id }, { throwOnError: true })
+              if (!store.prompt.input && store.prompt.parts.length === 0) {
+                const restored = parts.reduce(
+                  (draft, part) => {
+                    if (part.type === "text" && !part.synthetic) {
+                      draft.input += (draft.input ? "\n\n" : "") + part.text
+                    }
+                    if (part.type === "file" || part.type === "agent") draft.parts.push(part)
+                    return draft
+                  },
+                  { input: "", parts: [] as PromptInfo["parts"] },
+                )
+                ref.set(restored)
+                toast.show({ message: "Queued prompt restored for editing", variant: "success" })
+              } else {
+                toast.show({ message: "Queued prompt removed; current draft kept", variant: "success" })
+              }
+              dialog.clear()
+            } catch (error) {
+              removedQueuedPrompts.delete(queued.id)
+              toast.show({
+                title: "Could not undo queued prompt",
+                message: errorMessage(error),
+                variant: "error",
+              })
+            } finally {
+              undoingQueuedPrompt = false
+            }
+            return
+          }
+
+          // The removal event may arrive after the HTTP response. Do not turn
+          // a second Esc into an abort while the removed prompt is still shown.
+          if (latestQueuedPrompt(messages)) return
 
           setStore("interrupt", store.interrupt + 1)
 
