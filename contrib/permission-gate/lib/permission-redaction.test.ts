@@ -110,3 +110,10 @@ test("container image digests are not URL passwords", () => {
     "[REDACTED:PASSWORD]",
   )
 })
+
+test("mapping literals with service accounts are not URL passwords", () => {
+  const mapping =
+    '"https://stg.grafana.example":("grp-logs-stg","grafana-logs-r@stg-project.iam.gserviceaccount.com"),'
+  expect(sanitizeReviewText(mapping).value).toBe(mapping)
+  expect(sanitizeReviewText("https://admin:" + "S3cretValue9@db.example.invalid").value).toContain("[REDACTED:PASSWORD]")
+})

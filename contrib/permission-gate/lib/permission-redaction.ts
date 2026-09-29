@@ -46,7 +46,10 @@ function sanitizeText(input: string): RedactionResult<string> {
   replaceValue(
     // Container references such as python:3.13-slim@sha256:<digest> have the
     // same name:tag@host shape; a digest after @ is not a host.
-    /((?:https?:\/\/)?[^\s/:@]{1,256}:)([^\s/@]{1,256})(?=@(?!sha(?:256|384|512):)[^\s/]+)/gi,
+    // Quotes, parentheses, and commas cannot appear unencoded in URL userinfo;
+    // excluding them keeps "https://host": ("name", "sa@project...") from
+    // reading as user:password@host.
+    /((?:https?:\/\/)?[^\s/:@"'(),]{1,256}:)([^\s/@"'(),]{1,256})(?=@(?!sha(?:256|384|512):)[^\s/]+)/gi,
     "PASSWORD",
     (prefix) =>
       /^https?:\/\//i.test(prefix) ||
