@@ -1484,7 +1484,7 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
       expect(input.system).toContain("A skill load only reads that skill's instructions")
       expect(input.system).toContain("Standing human policy: editing files inside dedicated worktrees")
       expect(input.system).toContain("re-reads the agent's own earlier tool results")
-      expect(input.system).toContain("adjacent versions, and related files is ordinary context gathering")
+      expect(input.system).toContain("For a review or research task, read-only inspection of history")
       if (lunaDelayMs) await new Promise((resolve) => setTimeout(resolve, lunaDelayMs))
       if (lunaInvalidResponse) return { status: "invalid_response", diagnostic: "json_content" }
       if (lunaInvalidOnce) {
