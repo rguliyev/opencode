@@ -1266,6 +1266,8 @@ async function editTargetsInWorktrees(patterns: string[], filepath: unknown) {
 // A glob lists filenames. A directory such as go/secret-manager/ names a
 // service, not a secret; sensitive words count only in the file's own name,
 // while identity patterns and .env components are checked on the full path.
+const sourceCodeExtension = /\.(?:go|ts|tsx|js|jsx|mjs|cjs|py|rs|java|kt|rb|c|cc|cpp|h|hpp|cs|swift|scala|php)$/i
+
 function sensitiveMatchedPath(file: string) {
   // Listing a name like access_token.tftest.hcl leaks nothing; reading such a
   // file is still gated by the read rule. Only personal-data words and
@@ -2598,7 +2600,19 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
               (value): value is string => typeof value === "string",
             )
           : patterns
-    if (new Set(["read", "grep", "glob", "edit", "skill"]).has(input.permission) && fileTargets.some(sensitiveFilename))
+    // A source file named for what it handles (inject_tokens.go) is code,
+    // not a secret store, once the local scan finds no credential literal.
+    // Personal-data names, .env files, and config files still stop.
+    const scannedClean = action.local_evidence?.literal_scan === "none_found"
+    const cleanSourceFile = (target: string) =>
+      scannedClean &&
+      sourceCodeExtension.test(target) &&
+      !sensitiveMatchedPath(target) &&
+      !/(?:^|[/])\.env(?:$|[.*?/])/i.test(target)
+    if (
+      new Set(["read", "grep", "glob", "edit", "skill"]).has(input.permission) &&
+      fileTargets.some((target) => sensitiveFilename(target) && !cleanSourceFile(target))
+    )
       reasons.push("sensitive file or search target")
     if (
       input.permission === "edit" &&

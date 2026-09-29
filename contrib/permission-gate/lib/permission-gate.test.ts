@@ -2544,3 +2544,63 @@ test("a large script with a long human history still fits core's review budget",
     rmSync(directory, { recursive: true, force: true })
   }
 })
+
+test("source files named for tokens are readable once the scan finds no literal", async () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "permission-token-source-"))
+  writeFileSync(path.join(directory, "inject_tokens.go"), "package egressproxy\n\nfunc injectTokens() {}\n")
+  writeFileSync(path.join(directory, "leaky_tokens.go"), `package egressproxy\n\nconst t = "ghp_${"R".repeat(36)}"\n`)
+  writeFileSync(path.join(directory, "secrets.yaml"), "name: example\n")
+  const previousFetch = globalThis.fetch
+  const previousStateHome = process.env.XDG_STATE_HOME
+  const previousKevSocket = process.env.OPENCODE_KEV_SOCKET
+  process.env.XDG_STATE_HOME = "/dev/null"
+  process.env.OPENCODE_KEV_SOCKET = "/dev/null/no-kev-socket"
+  globalThis.fetch = async (input) => {
+    const url = String(input)
+    if (url.includes("/session/ses_token_source/message?"))
+      return Response.json([message("msg_token_source", "user", "Assess how the egress proxy injects tokens.")])
+    if (url.startsWith("http://gate.test/session/"))
+      return Response.json({ id: "ses_token_source", directory, agent: "researcher", title: "Egress proxy" })
+    if (url === "https://openrouter.ai/api/alpha/decisions") {
+      const answers: Record<string, unknown> = {
+        verdict: { type: "choice", choice: "deny", confidence: 0.5, probabilities: { allow: 0.4, deny: 0.6 } },
+      }
+      for (const id of ["secrets", "remote_code", "security_control", "offensive", "shared_state", "system_state"])
+        answers[id] = { type: "noul", noul: 0.01 }
+      return Response.json({ model: "typesafe/jev-1.13", answers })
+    }
+    throw new Error(`Unexpected fetch: ${url}`)
+  }
+  try {
+    const hooks = await gateForTest(directory, "researcher", async () => ({
+      model: "google/gemini-3.8-flash",
+      choice: "allow",
+      reason: "Reading source for the research task.",
+    }))
+    await hooks.provider.models({ models: {} }, { auth: { type: "api", key: "fake-test-key" } })
+    const read = async (file: string) => {
+      const filepath = path.join(directory, file)
+      const output = { status: "ask" }
+      await hooks["permission.ask"](
+        {
+          permission: "read",
+          sessionID: "ses_token_source",
+          patterns: [filepath],
+          metadata: { filepath, core_trusted_builtin: true },
+        },
+        output,
+      )
+      return output.status
+    }
+    expect(await read("inject_tokens.go")).toBe("allow")
+    expect(await read("leaky_tokens.go")).toBe("ask")
+    expect(await read("secrets.yaml")).toBe("ask")
+  } finally {
+    globalThis.fetch = previousFetch
+    if (previousStateHome === undefined) delete process.env.XDG_STATE_HOME
+    else process.env.XDG_STATE_HOME = previousStateHome
+    if (previousKevSocket === undefined) delete process.env.OPENCODE_KEV_SOCKET
+    else process.env.OPENCODE_KEV_SOCKET = previousKevSocket
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
