@@ -85,3 +85,20 @@ test("strips invisible control characters from review copies", () => {
   expect(safe.value).toBe("git status")
   expect(safe.kinds).toContain("INVISIBLE_CONTROL")
 })
+
+test("redaction stays fast on long unbroken runs", () => {
+  // Unbounded identifier quantifiers once took ~5 s on 23 KB of letters,
+  // blocking every permission review behind a long human message.
+  for (const text of ["a".repeat(50_000), "token_" + "b".repeat(50_000) + "=value", "x:".repeat(25_000)]) {
+    const started = performance.now()
+    sanitizeReviewText(text)
+    expect(performance.now() - started).toBeLessThan(500)
+  }
+})
+
+test("IAM member strings are not URL passwords", () => {
+  const member = 'members = ["serviceAccount:logs-writer@example.invalid", "user:alice@example.invalid"]'
+  expect(sanitizeReviewText(member).value).toBe(member)
+  expect(sanitizeReviewText("https://admin:hunter2secret@db.example.invalid/x").value).toContain("[REDACTED:PASSWORD]")
+  expect(sanitizeReviewText("postgres://app:" + "s3cretvalue@db.internal/app").value).toContain("[REDACTED:PASSWORD]")
+})

@@ -36,7 +36,17 @@ function sanitizeText(input: string): RedactionResult<string> {
   }
 
   replaceFull(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g, "PRIVATE_KEY")
-  replaceValue(/((?:https?:\/\/)?[^\s/:@]+:)([^\s/@]+)(?=@[^\s/]+)/gi, "PASSWORD")
+  // Quantifiers are bounded: unbounded runs backtrack quadratically, and a
+  // 23 KB run of letters took seconds, blocking every permission review.
+  // IAM member strings such as "serviceAccount:name@project.iam..." have the
+  // same user:secret@host shape; without a URL scheme they are not passwords.
+  replaceValue(
+    /((?:https?:\/\/)?[^\s/:@]{1,256}:)([^\s/@]{1,256})(?=@[^\s/]+)/gi,
+    "PASSWORD",
+    (prefix) =>
+      /^https?:\/\//i.test(prefix) ||
+      !/(?:^|["'\s=,[(])(?:serviceAccount|user|group|domain|principal|principalSet|deleted):$/i.test(prefix),
+  )
   replaceValue(
     /(https:\/\/(?:hooks\.slack\.com\/services|(?:discord(?:app)?\.com)\/api\/webhooks)\/)([^\s'";|]{12,})/gi,
     "WEBHOOK",
@@ -79,17 +89,17 @@ function sanitizeText(input: string): RedactionResult<string> {
   replaceValue(/(\bredis-cli[^\n;|&]*\s-a\s+["']?)([^\s'";|]+)/gi, "PASSWORD")
   replaceValue(/(\b(?:mysql|mariadb)[^\n;|&]*\s-p)([^\s'";|]+)/gi, "PASSWORD")
   replaceValue(
-    /((?:["']?(?:[A-Za-z_][A-Za-z0-9_.-]*)?(?:api[_-]?key|access[_-]?key|token|secret|password|passwd|credential|private[_-]?key)[A-Za-z0-9_.-]*["']?)\s*(?:=|:)\s*")((?:\\.|[^"\\])*)/gi,
+    /((?:["']?(?:[A-Za-z_][A-Za-z0-9_.-]{0,63})?(?:api[_-]?key|access[_-]?key|token|secret|password|passwd|credential|private[_-]?key)[A-Za-z0-9_.-]{0,63}["']?)\s*(?:=|:)\s*")((?:\\.|[^"\\])*)/gi,
     "CREDENTIAL",
   )
   replaceValue(
-    /((?:["']?(?:[A-Za-z_][A-Za-z0-9_.-]*)?(?:api[_-]?key|access[_-]?key|token|secret|password|passwd|credential|private[_-]?key)[A-Za-z0-9_.-]*["']?)\s*(?:=|:)\s*')((?:\\.|[^'\\])*)/gi,
+    /((?:["']?(?:[A-Za-z_][A-Za-z0-9_.-]{0,63})?(?:api[_-]?key|access[_-]?key|token|secret|password|passwd|credential|private[_-]?key)[A-Za-z0-9_.-]{0,63}["']?)\s*(?:=|:)\s*')((?:\\.|[^'\\])*)/gi,
     "CREDENTIAL",
   )
   // YAML plain scalars can contain spaces. Mask the whole value, not just its
   // first word, while leaving ordinary type annotations untouched.
   replaceValue(
-    /(^[ \t]*(?:["']?(?:[A-Za-z_][A-Za-z0-9_.-]*)?(?:api[_-]?key|access[_-]?key|token|secret|password|passwd|credential|private[_-]?key)[A-Za-z0-9_.-]*["']?)[ \t]*:[ \t]*)([^\n#]+)/gim,
+    /(^[ \t]*(?:["']?(?:[A-Za-z_][A-Za-z0-9_.-]{0,63})?(?:api[_-]?key|access[_-]?key|token|secret|password|passwd|credential|private[_-]?key)[A-Za-z0-9_.-]{0,63}["']?)[ \t]*:[ \t]*)([^\n#]+)/gim,
     "CREDENTIAL",
     (_prefix, secret) =>
       !/^(?:string|number|boolean|int|float|str|bool|bytes|any|unknown|object|none|null|undefined|true|false)\s*[;,}]?$/i.test(
@@ -97,7 +107,7 @@ function sanitizeText(input: string): RedactionResult<string> {
       ),
   )
   replaceValue(
-    /((?:["']?(?:[A-Za-z_][A-Za-z0-9_.-]*)?(?:api[_-]?key|access[_-]?key|token|secret|password|passwd|credential|private[_-]?key)[A-Za-z0-9_.-]*["']?)\s*(?:=|:)\s*["']?)([^\s'"`;|&,}]+)/gi,
+    /((?:["']?(?:[A-Za-z_][A-Za-z0-9_.-]{0,63})?(?:api[_-]?key|access[_-]?key|token|secret|password|passwd|credential|private[_-]?key)[A-Za-z0-9_.-]{0,63}["']?)\s*(?:=|:)\s*["']?)([^\s'"`;|&,}]+)/gi,
     "CREDENTIAL",
     (prefix, secret) =>
       !/(?:count|length|size|max|min|timeout|ttl)["']?\s*(?:=|:)/i.test(prefix) &&
