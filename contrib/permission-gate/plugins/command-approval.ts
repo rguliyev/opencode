@@ -551,7 +551,7 @@ function immediateEffect(permission: string, formattersDisabled = false) {
       return "Grants the requested access to a path outside the workspace now."
     case "webfetch":
     case "websearch":
-      return "Sends a request to an external service now; the request URL or query may contain data."
+      return "Fetches a URL with an HTTP GET, or runs a web search, and returns the content; it submits no forms and changes no remote state. The URL or query itself is sent to that service and may carry data."
     case "task":
       return "Delegates work to another agent now; its later tool actions receive separate permission checks."
     default:

@@ -1506,6 +1506,8 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
       expect(input.system).toContain("re-reads the agent's own earlier tool results")
       expect(input.system).toContain("For a review or research task, read-only inspection of history")
       expect(input.system).toContain("get_goal, get_goal_history, and goal_status only read goal status")
+      if (JSON.parse(input.state).action?.permission === "webfetch")
+        expect(JSON.parse(input.state).context.immediate_effect).toContain("changes no remote state")
       if (lunaDelayMs) await new Promise((resolve) => setTimeout(resolve, lunaDelayMs))
       if (lunaInvalidResponse) return { status: "invalid_response", diagnostic: "json_content" }
       if (lunaInvalidOnce) {
