@@ -207,6 +207,7 @@ it.effect("preserves running tool start time across metadata updates", () =>
       {
         permission: "tool_call",
         patterns: ["timing"],
+        always: ["timing"],
         tool: { callID },
         metadata: { core_trusted_builtin: true, core_execution_agent: "build" },
       },
@@ -237,6 +238,7 @@ it.effect("preserves running tool start time across metadata updates", () =>
     expect(asked.slice(-2)).toMatchObject([
       {
         permission: "tool_call",
+        always: ["custom_probe"],
         metadata: {
           trusted_builtin: false,
           core_trusted_builtin: false,

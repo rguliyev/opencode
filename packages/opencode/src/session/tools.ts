@@ -131,7 +131,9 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
             yield* ctx.ask({
               permission: "tool_call",
               patterns: [item.id],
-              always: [],
+              // "Always" remembers this tool; with no pattern the answer was
+              // silently dropped and the same tool asked again next call.
+              always: [item.id],
               metadata: {
                 tool: item.id,
                 trusted_builtin: item.trustedBuiltin === true,
