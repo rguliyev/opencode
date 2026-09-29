@@ -2919,6 +2919,21 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
             cmd_withheld: !safe,
           }
 
+          // A segment that only prints literal text has no effect to review;
+          // Jev and Luna misjudged `echo "=== DIFF A ==="` as an unknown shell
+          // action. Variables other than $? could print secrets, so they still
+          // go through review.
+          if (commands.length > 1 && safe && isSelfContainedSegment(command) && !/\$(?!\?)/.test(command))
+            return {
+              ...id,
+              kev: { status: "not_needed" },
+              luna: lunaAudit({ status: "not_needed" }),
+              ask: false,
+              reasons: [],
+              jev: null,
+              explanation: "self-contained output-only segment; no effect to review",
+              checks: [],
+            }
           const inspection = await inspectScripts(command, workdir)
           // Local inspection precedes the model chain. Kev's shell score is
           // advisory, but it finishes before Jev; original arguments are untouched.

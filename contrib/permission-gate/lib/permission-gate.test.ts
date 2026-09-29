@@ -1146,6 +1146,25 @@ test("a read-only agent's dual-use shell command needs both Luna and Jev to judg
     }))
     await hooks.provider.models({ models: {} }, { auth: { type: "api", key: "fake-test-key" } })
     expect(await ask(hooks, "git status --short")).toBe("allow")
+    // A literal echo between reviewed commands needs no model at all, even
+    // when Luna would ask; a variable echo is still reviewed.
+    lunaChoice = "ask"
+    const batched = async (commands: string[]) => {
+      const output = { status: "ask" }
+      await hooks["permission.ask"](
+        {
+          permission: "bash",
+          sessionID: "ses_reviewer_shell",
+          patterns: commands,
+          metadata: { command: commands.join("; "), purpose: "Inspect the branch under review" },
+        },
+        output,
+      )
+      return output.status
+    }
+    expect(await batched(['echo "=== DIFF A ==="', 'echo "=== DIFF B ==="'])).toBe("allow")
+    expect(await batched(['echo "=== DIFF A ==="', 'echo "$GRAFANA_TOKEN"'])).toBe("ask")
+    lunaChoice = "allow"
     // Luna allowing is not enough when Jev independently sees a mutation.
     expect(await ask(hooks, "git push fork HEAD")).toBe("ask")
     // A stdin-to-stdout json.tool is inspectable; file arguments are not.
@@ -1217,8 +1236,8 @@ test("shell segments get module evidence and self-contained segments are judged 
     expect(contexts[commands[0]].module_evidence).toContain("go.sum checksum")
     expect(contexts[commands[1]].module_evidence).toContain("not required")
     expect(contexts[commands[2]].module_evidence).toContain("differs from the go.mod pin v3.24.1")
-    expect(contexts[commands[3]].full_command).toBeUndefined()
-    expect(contexts[commands[3]].module_evidence).toBeUndefined()
+    // A literal echo ($? only) is allowed locally and never sent to Jev.
+    expect(contexts[commands[3]]).toBeUndefined()
     expect(contexts[commands[0]].full_command).toBe(commands.join("; "))
 
     const commented = { status: "ask" }
