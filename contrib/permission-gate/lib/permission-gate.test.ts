@@ -1142,6 +1142,68 @@ test("a read-only agent's dual-use shell command needs both Luna and Jev to judg
   }
 })
 
+test("shell segments get module evidence and self-contained segments are judged alone", async () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "permission-go-module-"))
+  writeFileSync(
+    path.join(directory, "go.mod"),
+    "module example.invalid/app\n\ngo 1.24\n\nrequire (\n\tgithub.com/pressly/goose/v3 v3.24.1\n)\n",
+  )
+  writeFileSync(path.join(directory, "go.sum"), "github.com/pressly/goose/v3 v3.24.1 h1:abc=\n")
+  const previousFetch = globalThis.fetch
+  const previousStateHome = process.env.XDG_STATE_HOME
+  const previousKevSocket = process.env.OPENCODE_KEV_SOCKET
+  const contexts: Record<string, Record<string, unknown>> = {}
+  process.env.XDG_STATE_HOME = "/dev/null"
+  process.env.OPENCODE_KEV_SOCKET = "/dev/null/no-kev-socket"
+  globalThis.fetch = async (input, init) => {
+    const url = String(input)
+    if (url.includes("/session/ses_go_module/message?"))
+      return Response.json([message("msg_go_module", "user", "Validate the goose migrations locally.")])
+    if (url.startsWith("http://gate.test/session/"))
+      return Response.json({ id: "ses_go_module", directory, agent: "implementer", title: "Validate migrations" })
+    if (url === "https://openrouter.ai/api/alpha/decisions") {
+      const payload = JSON.parse(String(init?.body))
+      contexts[payload.state.command] = payload.state.context
+      const answers: Record<string, unknown> = {
+        verdict: { type: "choice", choice: "allow", confidence: 0.99, probabilities: { allow: 0.99, deny: 0.01 } },
+      }
+      for (const id of Object.keys(payload.questions)) if (id !== "verdict") answers[id] = { type: "noul", noul: 0.01 }
+      return Response.json({ model: "typesafe/jev-1.13", answers })
+    }
+    throw new Error(`Unexpected fetch: ${url}`)
+  }
+  try {
+    const hooks = await gateForTest(directory, "implementer")
+    await hooks.provider.models({ models: {} }, { auth: { type: "api", key: "fake-test-key" } })
+    const commands = [
+      "go run github.com/pressly/goose/v3/cmd/goose -h",
+      "go run github.com/other/tool@v1.0.0",
+      "go run github.com/pressly/goose/v3/cmd/goose@v3.9.0 -h",
+      'echo "EXIT_CODE: $?"',
+    ]
+    const output = { status: "ask" }
+    await hooks["permission.ask"](
+      { permission: "bash", sessionID: "ses_go_module", patterns: commands, metadata: { command: commands.join("; ") } },
+      output,
+    )
+    expect(output.status).toBe("allow")
+    expect(contexts[commands[0]].module_evidence).toContain("pinned in")
+    expect(contexts[commands[0]].module_evidence).toContain("go.sum checksum")
+    expect(contexts[commands[1]].module_evidence).toContain("not required")
+    expect(contexts[commands[2]].module_evidence).toContain("differs from the go.mod pin v3.24.1")
+    expect(contexts[commands[3]].full_command).toBeUndefined()
+    expect(contexts[commands[3]].module_evidence).toBeUndefined()
+    expect(contexts[commands[0]].full_command).toBe(commands.join("; "))
+  } finally {
+    globalThis.fetch = previousFetch
+    if (previousStateHome === undefined) delete process.env.XDG_STATE_HOME
+    else process.env.XDG_STATE_HOME = previousStateHome
+    if (previousKevSocket === undefined) delete process.env.OPENCODE_KEV_SOCKET
+    else process.env.OPENCODE_KEV_SOCKET = previousKevSocket
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
 test("configured external-directory allow does not follow a symlink outside the allowlist", async () => {
   const directory = path.resolve(import.meta.dir, "..")
   const previousFetch = globalThis.fetch
