@@ -1787,6 +1787,26 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
       literalEdit,
     )
     expect(literalEdit.status).toBe("ask")
+    const placeholderEdit = { status: "ask" }
+    await hooks["permission.ask"](
+      {
+        ...editRequest,
+        patterns: ["test_syncer.py"],
+        metadata: { filepath: "test_syncer.py", diff: '+    result = {"access_token": "fake-test-access-token"}' },
+      },
+      placeholderEdit,
+    )
+    expect(placeholderEdit.status).toBe("allow")
+    const realJsonEdit = { status: "allow" }
+    await hooks["permission.ask"](
+      {
+        ...editRequest,
+        patterns: ["config.json"],
+        metadata: { filepath: "config.json", diff: '+  "access_token": "Zq8x2Lk9Wm4Pn7Rt"' },
+      },
+      realJsonEdit,
+    )
+    expect(realJsonEdit.status).toBe("ask")
     expect(literalEdit.message).toContain("sensitive literal in action")
 
     const policyEdit = { status: "allow" }

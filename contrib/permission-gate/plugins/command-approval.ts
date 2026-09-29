@@ -445,7 +445,9 @@ function containsCredentialLiteralBase(command: string) {
     /[?&](?:api_?key|access_?token|auth_?token|password|passwd|secret|client_?secret|private_?key)=[^\s&'";|]{8,}/i.test(
       command,
     ) ||
-    /["'](?:api_?key|access_?token|auth_?token|password|passwd|secret|client_?secret|private_?key)["']\s*:\s*["'][^"']{8,}["']/i.test(
+    // Lowercase word placeholders such as "fake-test-access-token" in test
+    // fixtures are not secrets; real tokens carry digits or mixed case.
+    /["'](?:api_?key|access_?token|auth_?token|password|passwd|secret|client_?secret|private_?key)["']\s*:\s*["'](?!(?:[a-z]+[-_])*(?:fake|test|dummy|example|placeholder|sample|mock|changeme)(?:[-_][a-z]+)*["'])[^"']{8,}["']/i.test(
       command,
     ) ||
     /--(?:api[-_]?key|access[-_]?token|auth[-_]?token|oauth2[-_]?bearer|password|passwd|secret|client[-_]?secret|private[-_]?key|user|userpwd)(?:=|\s+)["']?[^\s'";|]{8,}/i.test(
@@ -1201,6 +1203,12 @@ function lunaMayAutoAllowTask(action: ActionEvidence, continuation: TaskContinua
     metadata.subagent_type === args.subagent_type &&
     metadata.description === args.description
   )
+}
+
+function stringLeaves(value: unknown, depth = 0): string[] {
+  if (typeof value === "string") return [value]
+  if (depth > 8 || !value || typeof value !== "object") return []
+  return Object.values(value).flatMap((item) => stringLeaves(item, depth + 1))
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -2376,10 +2384,18 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
     // keys, JWTs, URL passwords, auth headers, and credential flags. A broad
     // `secret = "..."` assignment is still hidden from reviewers, but Terraform
     // naming or referencing a secret is ordinary and Luna judges it.
+    // Check each string value unescaped: in the serialized action a diff's
+    // quotes appear as \", which the quoted-literal detectors cannot match.
+    const actionStrings = stringLeaves(action)
     if (
       sanitized.kinds.some((kind) => ["TOKEN", "PRIVATE_KEY", "JWT", "PASSWORD", "WEBHOOK"].includes(kind)) ||
-      containsCredentialLiteral(raw) ||
-      /(?:authorization|proxy-authorization|x-api-key|api-key|x-auth-token|cookie)\s*:\s*(?:(?:Bearer|Basic|Token)\s+)?[^\s'";|\\]{8,}/i.test(raw)
+      actionStrings.some(
+        (value) =>
+          containsCredentialLiteral(value) ||
+          /(?:authorization|proxy-authorization|x-api-key|api-key|x-auth-token|cookie)\s*:\s*(?:(?:Bearer|Basic|Token)\s+)?[^\s'";|\\]{8,}/i.test(
+            value,
+          ),
+      )
     )
       reasons.push("sensitive literal in action")
     if (skillContainsCredentialLiteral) reasons.push("skill contains credential literal")
