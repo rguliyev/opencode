@@ -1291,6 +1291,28 @@ test("shell segments get module evidence and self-contained segments are judged 
     expect(contexts[commands[3]]).toBeUndefined()
     expect(contexts[commands[0]].full_command).toBe(commands.join("; "))
 
+    // Read-only output saved to a scratch file is reported as such; a
+    // worktree, subdirectory, or dynamic target is not scratch.
+    const redirectEvidence = async (command: string) => {
+      await hooks["permission.ask"](
+        { permission: "bash", sessionID: "ses_go_module", patterns: [command], metadata: { command } },
+        { status: "ask" },
+      )
+      return contexts[command]?.redirect_evidence
+    }
+    expect(await redirectEvidence("git show abc123 > /data/rguliyev/tmp/opencode/review-a.diff 2>&1")).toContain(
+      "scratch file(s) /data/rguliyev/tmp/opencode/review-a.diff",
+    )
+    expect(await redirectEvidence("helm template x charts/x >/dev/null 2>/tmp/render-err.txt")).toContain("/tmp/render-err.txt")
+    for (const command of [
+      "git show abc123 > /data/rguliyev/tmp/opencode/worktrees/charts/x/values.yaml",
+      "git show abc123 > /data/rguliyev/tmp/opencode/sub/review.diff",
+      'git show abc123 > "$OUT"',
+      "git show abc123 > ../review.diff",
+      "git show abc123 2>&1",
+    ])
+      expect(await redirectEvidence(command)).toBeUndefined()
+
     const commented = { status: "ask" }
     await hooks["permission.ask"](
       { permission: "bash", sessionID: "ses_go_module", patterns: ["./check.sh"], metadata: { command: "./check.sh" } },
