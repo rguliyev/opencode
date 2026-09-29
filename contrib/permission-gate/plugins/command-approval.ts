@@ -557,6 +557,34 @@ function lunaMayApprovePublish(command: string) {
   )
 }
 
+const googleTokenHeader = /-H\s+(["'])Authorization: Bearer \$\(gcloud auth print-access-token\)\1/g
+
+// A read-only Google API call that uses the existing gcloud login, e.g.
+// curl -H "Authorization: Bearer $(gcloud auth print-access-token)" "https://monitoring.googleapis.com/...".
+// Every use of the token in the whole call must be that header on a curl GET
+// to *.googleapis.com with no body and no output file. Returns the segment
+// with the token header removed, so the remaining text is still checked by
+// the hard credential and scope rules; undefined when the pattern does not
+// hold.
+function readOnlyGoogleApiTokenCall(command: string, fullCommand: unknown) {
+  if (typeof fullCommand !== "string" || !fullCommand.includes("gcloud auth print-access-token")) return undefined
+  const users = splitSegments(fullCommand).filter((segment) => segment.includes("gcloud auth print-access-token"))
+  const valid = users.every((segment) => {
+    if (segment.trim() === "gcloud auth print-access-token") return true
+    const headers = segment.match(googleTokenHeader)?.length ?? 0
+    const uses = segment.match(/gcloud auth print-access-token/g)?.length ?? 0
+    if (!/^\s*curl\s/.test(segment) || !headers || headers !== uses) return false
+    if (/\s(?:-X|--request)(?:\s+|=)(?!GET\b)\S+/.test(segment)) return false
+    if (/\s(?:-d|--data\S*|-F|--form\S*|-T|--upload-file|--json)(?:\s|=|$)/.test(segment)) return false
+    if (/\s(?:-o|--output)(?:\s+|=)(?!\/dev\/null\b)\S+/.test(segment)) return false
+    const urls = [...segment.matchAll(/https?:\/\/[^\s"']+/g)].map((match) => match[0])
+    return urls.length > 0 && urls.every((url) => /^https:\/\/[a-z0-9.-]+\.googleapis\.com\//.test(url))
+  })
+  if (!valid || !users.length) return undefined
+  if (command.trim() === "gcloud auth print-access-token") return ""
+  return command.includes("gcloud auth print-access-token") ? command.replace(googleTokenHeader, "") : undefined
+}
+
 function requiresHumanOperation(command: string) {
   return /(?:^|[\n;|&(){}])\s*(?:(?:sudo|env)\s+)?(?:git\s+push|gh\s+pr\s+(?:create|edit|merge|close)|terraform\s+(?:apply|destroy)|terragrunt\s+(?:apply|destroy)|atlantis\s+apply|kubectl\s+(?:apply|delete|patch|replace|scale|rollout|set)|gcloud\s+(?:projects\s+add-iam-policy-binding|iam\s+|secrets\s+(?:create|delete|update|versions\s+(?:add|destroy|disable)))|aws\s+(?:iam\s+|secretsmanager\s+(?:create|delete|update|put|rotate))|tailscale\s+(?:set|up)\b[^\n;|&]*--exit-node|(?:rm\s+-rf|mkfs|wipefs)\b)/i.test(
     command,
@@ -2129,6 +2157,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
       "Standing human policy: editing files inside dedicated worktrees under /data/rguliyev/tmp/opencode/worktrees is allowed, including configuration, Terraform, and IAM files, whenever it serves the human's task. Such edits change nothing live; push, PR changes, apply, and deploy are separately gated. Do not read an instruction not to change configuration as forbidding worktree file edits. Still ask for embedded credential literals, backdoor or exfiltration code, or edits outside worktrees.",
       "The attested goal-plugin tools get_goal, get_goal_history, and goal_status only read goal status and keep local bookkeeping (a persistence lease and state snapshot); they are within any task. goal_resume and goal_block change autonomous work and still need a direct human request.",
       "A git push of a named feature branch, or gh pr create/edit/ready/comment, may be allowed only when the direct human messages explicitly ask to push or open or update a PR for this work; otherwise ask. Pushes to shared branches, force pushes, and merges are never yours to allow.",
+      "A curl that sends $(gcloud auth print-access-token) only as a Bearer header in a read-only GET to *.googleapis.com uses the human's existing login; allow it when the call serves the human's task and prints no token. Any other token handling must be asked.",
       "Return allow ONLY when this exact action is clearly within the applicable direct human task and role policy, with no credential disclosure, regulated-data exposure, destructive effect, security-control change, production or unrelated shared-state mutation, opaque side effect, or human-only gate. Otherwise ask.",
       "An existing E2B sandbox explicitly identified by direct human messages for the current isolated test is a task-local environment, not automatically production or unrelated shared state. Existing credentials from the task\'s environment may be used solely inside that same sandbox for the authorized test; ordinary use is not credential disclosure.",
       "Starting or restarting the test worker inside that same sandbox after a status report, such as a closed callback port, can be within an ongoing explicit instruction to continue testing. Do not require a new one-off instruction solely because this routine test action is remote or starts a background process. This does not authorize a new sandbox, a different service, or expansion of the test.",
@@ -3092,12 +3121,18 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
             reasons.push("credential-like literal in command")
           if (inspection.scripts.some((script) => script.redactions?.length))
             reasons.push("credential-like literal in inspected script")
-          if (requiresHuman(command)) reasons.push("credential or secret access")
+          // A read-only Google API call with the existing login is Luna's to
+          // confirm; the rest of the segment still faces the hard rules.
+          const tokenRead = readOnlyGoogleApiTokenCall(command, fullCommand)
+          const hardChecked = tokenRead ?? command
+          if (tokenRead !== undefined)
+            reasons.push("token-read: Luna must confirm a read-only Google API call with the existing login")
+          if (requiresHuman(hardChecked)) reasons.push("credential or secret access")
           if (requiresHumanOperation(command))
             reasons.push(
               lunaMayApprovePublish(command) ? "publish: needs Luna to confirm an explicit human request" : "human-only operation",
             )
-          const scopes = [gcpScopeReviewMessage(command, sessions), awsScopeReviewMessage(command, sessions)]
+          const scopes = [gcpScopeReviewMessage(hardChecked, sessions), awsScopeReviewMessage(hardChecked, sessions)]
           for (const script of inspection.scripts) {
             if (requiresHuman(script.content)) reasons.push("script credential or secret access")
             if (requiresHumanOperation(script.content)) reasons.push("script human-only operation")
@@ -3110,7 +3145,8 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
           if (inspection.error) reasons.push(`no script evidence: ${inspection.error}`)
 
           // "no script evidence" and "publish:" reasons are the ones Luna may resolve.
-          const soft = (reason: string) => reason.startsWith("no script evidence") || reason.startsWith("publish:")
+          const soft = (reason: string) =>
+            reason.startsWith("no script evidence") || reason.startsWith("publish:") || reason.startsWith("token-read:")
           const lunaNeeded = !result.allow || reasons.some((reason) => !reason.startsWith("no script evidence"))
           const luna = lunaNeeded
             ? await reviewLuna(command, inspection.scripts, context, inspection.error ?? undefined)
@@ -3129,7 +3165,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
             ask:
               (!result.allow && !lunaAllow) ||
               reasons.some((r) => !soft(r)) ||
-              (reasons.some((r) => r.startsWith("publish:")) && !lunaAllow),
+              (reasons.some((r) => r.startsWith("publish:") || r.startsWith("token-read:")) && !lunaAllow),
             reasons,
             jev,
             explanation: result.explanation,
