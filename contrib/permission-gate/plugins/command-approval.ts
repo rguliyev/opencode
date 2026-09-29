@@ -249,8 +249,14 @@ async function configuredExternalPatternAllowed(pattern: unknown) {
     return false
   const configured = [configuredExternalRoot, toolOutputRoot].find((root) => pattern.startsWith(root + path.sep))
   if (!configured) return false
+  // An agent creating a new directory asks for it before it exists. Resolve
+  // the nearest existing ancestor; components that do not exist yet cannot
+  // be symlinks, and the pattern is already normalized with no "..".
+  let existing = path.dirname(pattern)
+  while (existing !== configured && !(await lstat(existing).then(() => true).catch(() => false)))
+    existing = path.dirname(existing)
   try {
-    const [root, parent] = await Promise.all([realpath(configured), realpath(path.dirname(pattern))])
+    const [root, parent] = await Promise.all([realpath(configured), realpath(existing)])
     // A symlinked root or parent must not silently widen this configured allow.
     return root === configured && (parent === root || parent.startsWith(root + path.sep))
   } catch {

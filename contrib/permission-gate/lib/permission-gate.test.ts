@@ -1247,6 +1247,31 @@ test("configured external-directory allow does not follow a symlink outside the 
     )
     expect(output.status).toBe("ask")
 
+    // A directory the agent is about to create is still inside the root.
+    const created = { status: "allow" }
+    await hooks["permission.ask"](
+      {
+        permission: "external_directory",
+        sessionID: "ses_symlink_test",
+        patterns: [path.join(inside, "new", "nested", "*")],
+        metadata: { filepath: path.join(inside, "new", "nested", "main.tf") },
+      },
+      created,
+    )
+    expect(created.status).toBe("allow")
+    // A new directory beneath an escaping symlink is not.
+    const escaped = { status: "allow" }
+    await hooks["permission.ask"](
+      {
+        permission: "external_directory",
+        sessionID: "ses_symlink_test",
+        patterns: [path.join(link, "new", "*")],
+        metadata: { filepath: path.join(link, "new", "main.tf") },
+      },
+      escaped,
+    )
+    expect(escaped.status).toBe("ask")
+
     // OpenCode core's own allow for its tool-output files is preserved; a
     // neighbouring data directory is not.
     const dataDir = path.join(process.env.XDG_DATA_HOME || path.join(homedir(), ".local", "share"), "opencode")
