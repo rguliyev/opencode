@@ -101,7 +101,9 @@ root session's user rows from OpenCode's local SQLite database in read-only
 mode. This avoids hydrating thousands of assistant replies and oversized tool
 results through the message API; bounded API paging remains a fallback if the
 session is not in a local database. At most 512 user messages and 96 KiB of
-sanitized timeline are sent, with message IDs and times. Non-text attachments
+sanitized timeline are sent, with message IDs and times. A single human
+message may be up to 24 KB; over the timeline budget, the oldest messages are
+replaced by markers and the latest is always kept. Non-text attachments
 are never sent; redacted literals and omitted attachments are marked and
 cannot themselves authorize an action. A short "continue" can refer to the
 still-applicable original task, while later constraints or revocations remain

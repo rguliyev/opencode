@@ -726,9 +726,9 @@ test("a long live-style session yields bounded user history without hydrating gi
           index === 259
             ? "Inspect the local fixture without network access."
             : index === 39
-              ? "Oversized direct note " + "x".repeat(6_100)
+              ? "Oversized direct note " + "x".repeat(24_100)
               : index === 43
-                ? "Very long direct note " + "y".repeat(9_000)
+                ? "Very long direct note " + "y".repeat(50_000)
                 : index === 40
                   ? `Use the local fixture; api_key=${token}`
                   : `Keep fixture ${index} local and do not publish it.`
@@ -840,7 +840,7 @@ test("a long live-style session yields bounded user history without hydrating gi
     // An oversized latest message cannot be treated as authorization, even
     // though older direct human messages remain available to the reviewer.
     db.query("UPDATE part SET data = ? WHERE id = ?").run(
-      JSON.stringify({ type: "text", text: "Latest large note " + "z".repeat(6_100) }),
+      JSON.stringify({ type: "text", text: "Latest large note " + "z".repeat(24_100) }),
       "part_user_259",
     )
     const latestOversized = { status: "allow" }
@@ -1499,7 +1499,7 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
     expect(seen.slice(-2)).toEqual(["jev", "luna"])
 
     jevConfidence = 0.24
-    latestHumanText = "x".repeat(6_001)
+    latestHumanText = "x".repeat(24_001)
     const priorUnsafeReviews = seen.length
     const unsafeContext = { status: "allow" }
     await hooks["permission.ask"](request, unsafeContext)

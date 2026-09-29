@@ -968,6 +968,10 @@ function sensitiveFilename(value: string) {
 }
 
 const maxScanBytes = 2 * 1024 * 1024
+// Long human instructions are ordinary; a 7 KB message used to be withheld,
+// which left every later action without an authorizing request.
+const maxHumanMessageBytes = 24_000
+const maxHumanHistoryBytes = 96_000
 
 // Scan a read target locally so reviewers judge evidence, not the mere chance
 // that a file holds a secret. Only high-precision literal detectors decide
@@ -1442,7 +1446,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
       } else attachment = true
     }
     const joined = texts.join("\n")
-    if (Buffer.byteLength(joined.trim()) > 6_000)
+    if (Buffer.byteLength(joined.trim()) > maxHumanMessageBytes)
       return { id, created, text: "[oversized human message withheld]", withheld: "oversized_message" }
     const safe = texts.length ? safeTaskText(joined) : undefined
     if (texts.length && !safe) return null
@@ -1518,7 +1522,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
               json_extract(part.data, '$.ignored') AS part_ignored,
               json_extract(part.data, '$.metadata.permissionContextOrigin') AS part_origin,
               length(CAST(part.data AS BLOB)) AS part_bytes,
-              CASE WHEN length(CAST(part.data AS BLOB)) <= 8192 THEN part.data ELSE NULL END AS part_data
+              CASE WHEN length(CAST(part.data AS BLOB)) <= 49152 THEN part.data ELSE NULL END AS part_data
             FROM users LEFT JOIN part ON part.message_id = users.id
             ORDER BY users.time_created, users.id, part.id LIMIT 2049`,
           )
@@ -1626,10 +1630,16 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
     return undefined
   }
 
+  // Over the history budget, replace the oldest messages with markers rather
+  // than dropping the whole timeline; the latest message is always kept.
   function storeHumanMessages(messages: HumanMessage[]) {
-    if (!messages.length || messages.length > 512 || Buffer.byteLength(JSON.stringify(messages)) > 96_000)
-      return undefined
-    return messages
+    if (!messages.length || messages.length > 512) return undefined
+    const kept = [...messages]
+    for (let index = 0; index < kept.length - 1; index++) {
+      if (Buffer.byteLength(JSON.stringify(kept)) <= maxHumanHistoryBytes) break
+      kept[index] = { id: kept[index].id, created: kept[index].created, text: "[older human message omitted for size]", withheld: "oversized_message" }
+    }
+    return Buffer.byteLength(JSON.stringify(kept)) <= maxHumanHistoryBytes ? kept : undefined
   }
 
   async function latestHumanContext(sessionID: string | undefined) {
@@ -1673,7 +1683,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
   }
 
   function safeTaskText(value: unknown) {
-    const text = safeContextText(value, 6_000)
+    const text = safeContextText(value, maxHumanMessageBytes)
     if (!text) return undefined
     // A task message can be agent-authored and contain arbitrary user data.
     // Mask concrete personal identifiers in place rather than exporting them
