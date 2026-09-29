@@ -586,6 +586,23 @@ function readOnlyGoogleApiTokenCall(command: string, fullCommand: unknown) {
   return command.includes("gcloud auth print-access-token") ? command.replace(googleTokenHeader, "") : undefined
 }
 
+// Search and print tools cannot run their arguments, so `grep "ext4\|mkfs"`
+// only searches for the text. Blank their quoted arguments before looking
+// for human-only operations; shells, sed, awk, find, xargs, and anything
+// else that can execute its input keep the full check.
+const textOnlyTools = new Set(["grep", "egrep", "fgrep", "rg", "ag", "echo", "printf", "jq", "yq", "wc", "head", "tail"])
+
+function segmentRequiresHumanOperation(segment: string) {
+  if (!textOnlyTools.has(executableName(commandParts(segment).verb))) return requiresHumanOperation(segment)
+  // Single-quoted text never expands; double-quoted text can hide $(...) or
+  // backticks, so only substitution-free double quotes are blanked.
+  return requiresHumanOperation(
+    segment.replace(/'[^']*'|"(?:\\.|[^"\\])*"/g, (quoted) =>
+      quoted.startsWith("'") || !/\$\(|`/.test(quoted) ? '""' : quoted,
+    ),
+  )
+}
+
 function requiresHumanOperation(command: string) {
   return /(?:^|[\n;|&(){}])\s*(?:(?:sudo|env)\s+)?(?:git\s+push|gh\s+pr\s+(?:create|edit|merge|close)|terraform\s+(?:apply|destroy)|terragrunt\s+(?:apply|destroy)|atlantis\s+apply|kubectl\s+(?:apply|delete|patch|replace|scale|rollout|set)|gcloud\s+(?:projects\s+add-iam-policy-binding|iam\s+|secrets\s+(?:create|delete|update|versions\s+(?:add|destroy|disable)))|aws\s+(?:iam\s+|secretsmanager\s+(?:create|delete|update|put|rotate))|tailscale\s+(?:set|up)\b[^\n;|&]*--exit-node|(?:rm\s+-rf|mkfs|wipefs)\b)/i.test(
     command,
@@ -3260,7 +3277,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
           if (tokenRead !== undefined)
             reasons.push("token-read: the final reviewer must confirm a read-only Google API call with the existing login")
           if (requiresHuman(hardChecked)) reasons.push("credential or secret access")
-          if (requiresHumanOperation(command))
+          if (segmentRequiresHumanOperation(command))
             reasons.push(
               finalReviewMayApprovePublish(command) ? "publish: needs the final reviewer to confirm an explicit human request" : "human-only operation",
             )

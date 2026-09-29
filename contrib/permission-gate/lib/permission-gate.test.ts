@@ -1320,6 +1320,20 @@ test("shell segments get module evidence and self-contained segments are judged 
     ])
       expect(await redirectEvidence(command)).toBeUndefined()
 
+    // Search text is not an operation; a command substitution still is.
+    const shellStatus = async (command: string) => {
+      const output = { status: "ask" }
+      await hooks["permission.ask"](
+        { permission: "bash", sessionID: "ses_go_module", patterns: [command], metadata: { command } },
+        output,
+      )
+      return output.status
+    }
+    expect(await shellStatus('grep -n -i "xfs\\|ext4\\|mkfs\\|btrfs" notes.txt')).toBe("allow")
+    expect(await shellStatus("rg 'git push|rm -rf' docs")).toBe("allow")
+    expect(await shellStatus('echo "$(mkfs.ext4 /dev/sdb)"')).toBe("ask")
+    expect(await shellStatus('bash -c "grep x f | mkfs.ext4 /dev/sdb"')).toBe("ask")
+
     // The pinned Grafana helper is reported as a token-safe read-only query;
     // a modified copy is unknown code.
     const helper = path.join(import.meta.dir, "../bin/grafana-query")
