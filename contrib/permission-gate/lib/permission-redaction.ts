@@ -7,7 +7,10 @@ export type RedactionResult<T> = {
 
 const marker = (kind: string) => `[REDACTED:${kind}]`
 const markerPattern = /\[REDACTED:[A-Z_]+\]/g
-const reference = /^(?:\$|process\.env\b|os\.environ\b|os\.getenv\b|getenv\(|env\(|\[REDACTED:)/i
+// Values that name where a secret comes from rather than containing it,
+// including Terraform references such as data.google_secret_manager_*.
+const reference =
+  /^(?:\$|process\.env\b|os\.environ\b|os\.getenv\b|getenv\(|env\(|\[REDACTED:|(?:data|var|local|module|dependency|include|each|self)\.[A-Za-z_])/i
 
 // This is deliberately a bounded, local detector rather than a claim that
 // arbitrary passwords can be recognized. Unrecognized values remain a risk.

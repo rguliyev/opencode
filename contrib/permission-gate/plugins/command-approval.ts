@@ -2364,7 +2364,16 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
     const kev = await scoreKev("action", safeRaw, input.id ?? callID ?? digest, 0, digest, context, [])
     const result = await review(safeRaw, [], context, undefined, action)
     const reasons: string[] = []
-    if (sanitized.kinds.length) reasons.push("sensitive literal in action")
+    // Only high-precision detections force a human: known token formats,
+    // keys, JWTs, URL passwords, auth headers, and credential flags. A broad
+    // `secret = "..."` assignment is still hidden from reviewers, but Terraform
+    // naming or referencing a secret is ordinary and Luna judges it.
+    if (
+      sanitized.kinds.some((kind) => ["TOKEN", "PRIVATE_KEY", "JWT", "PASSWORD", "WEBHOOK"].includes(kind)) ||
+      containsCredentialLiteral(raw) ||
+      /(?:authorization|proxy-authorization|x-api-key|api-key|x-auth-token|cookie)\s*:\s*(?:(?:Bearer|Basic|Token)\s+)?[^\s'";|\\]{8,}/i.test(raw)
+    )
+      reasons.push("sensitive literal in action")
     if (skillContainsCredentialLiteral) reasons.push("skill contains credential literal")
     const policyRaw =
       input.permission === "skill"

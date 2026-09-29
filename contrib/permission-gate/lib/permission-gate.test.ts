@@ -1742,6 +1742,36 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
     expect(terraformEdit.status).toBe("allow")
     expect(terraformEdit.message ?? "").not.toContain("GCP project")
 
+    // Terraform that names or references a secret is not a literal secret.
+    const secretRefEdit = { status: "ask", message: "" }
+    await hooks["permission.ask"](
+      {
+        ...editRequest,
+        patterns: ["plugins.tf"],
+        metadata: {
+          filepath: "plugins.tf",
+          diff:
+            '+  secret = "grafana-logs-reader"\n+  token_name = "Grafana Logs Reader Token"\n' +
+            "+  cloud_access_policy_token = data.google_secret_manager_secret_version.grafana_api_key.secret_data\n",
+        },
+      },
+      secretRefEdit,
+    )
+    expect(secretRefEdit.status).toBe("allow")
+    expect(JSON.stringify(lunaState)).toContain("data.google_secret_manager_secret_version.grafana_api_key.secret_data")
+    expect(JSON.stringify(lunaState)).not.toContain("grafana-logs-reader")
+    const literalEdit = { status: "allow", message: "" }
+    await hooks["permission.ask"](
+      {
+        ...editRequest,
+        patterns: ["plugins.tf"],
+        metadata: { filepath: "plugins.tf", diff: '+  token = "ghp_' + "Q".repeat(36) + '"' },
+      },
+      literalEdit,
+    )
+    expect(literalEdit.status).toBe("ask")
+    expect(literalEdit.message).toContain("sensitive literal in action")
+
     const policyEdit = { status: "allow" }
     await hooks["permission.ask"](
       {
@@ -2087,7 +2117,8 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
       await hooks["permission.ask"](readRequest(cleanFile, "call_scan_clean"), clean)
       expect(clean.status).toBe("allow")
       expect(lunaState?.action).toMatchObject({
-        local_evidence: { literal_scan: "none_found", assignment_like_keys: true },
+        // `token = var.x` is a reference, not an assigned value.
+        local_evidence: { literal_scan: "none_found", assignment_like_keys: false },
       })
       expect(JSON.stringify(lunaState)).not.toContain("grafana_data_source")
       expect(JSON.stringify(jevQuestions)).toContain("Is there concrete evidence")
