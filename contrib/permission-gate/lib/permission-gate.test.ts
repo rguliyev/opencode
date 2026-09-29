@@ -2486,3 +2486,56 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
     else process.env.OPENCODE_KEV_SOCKET = previousKevSocket
   }
 })
+
+test("a large script with a long human history still fits core's review budget", async () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "permission-review-budget-"))
+  writeFileSync(path.join(directory, "render.sh"), "#!/usr/bin/env bash\n" + "echo rendering-chart-values\n".repeat(3_200))
+  const previousFetch = globalThis.fetch
+  const previousStateHome = process.env.XDG_STATE_HOME
+  const previousKevSocket = process.env.OPENCODE_KEV_SOCKET
+  process.env.XDG_STATE_HOME = "/dev/null"
+  process.env.OPENCODE_KEV_SOCKET = "/dev/null/no-kev-socket"
+  const history = [0, 1, 2, 3].map((index) =>
+    message(`msg_budget_${index}`, "user", `Render and test the chart, step ${index}. ` + "context ".repeat(2_500)),
+  )
+  let reviewed: Record<string, unknown> | undefined
+  globalThis.fetch = async (input) => {
+    const url = String(input)
+    if (url.includes("/session/ses_budget/message?")) return Response.json(history)
+    if (url.startsWith("http://gate.test/session/"))
+      return Response.json({ id: "ses_budget", directory, agent: "implementer", title: "Render chart" })
+    if (url === "https://openrouter.ai/api/alpha/decisions") {
+      const answers: Record<string, unknown> = {
+        verdict: { type: "choice", choice: "deny", confidence: 0.5, probabilities: { allow: 0.4, deny: 0.6 } },
+      }
+      for (const id of ["secrets", "remote_code", "security_control", "offensive", "shared_state", "system_state"])
+        answers[id] = { type: "noul", noul: 0.01 }
+      return Response.json({ model: "typesafe/jev-1.13", answers })
+    }
+    throw new Error(`Unexpected fetch: ${url}`)
+  }
+  try {
+    const hooks = await gateForTest(directory, "implementer", async (input) => {
+      reviewed = JSON.parse(input.state)
+      return { model: "google/gemini-3.8-flash", choice: "allow", reason: "Local chart render test for the task." }
+    })
+    await hooks.provider.models({ models: {} }, { auth: { type: "api", key: "fake-test-key" } })
+    const output = { status: "ask" }
+    await hooks["permission.ask"](
+      { permission: "bash", sessionID: "ses_budget", patterns: ["./render.sh"], metadata: { command: "./render.sh" } },
+      output,
+    )
+    expect(output.status).toBe("allow")
+    expect(JSON.stringify(reviewed).length).toBeLessThanOrEqual(128_000)
+    const context = (reviewed?.context ?? {}) as Record<string, unknown>
+    expect(String(context.human_messages_omitted)).toContain("oldest message(s) omitted")
+    expect(JSON.stringify(context.human_messages)).toContain("step 3")
+  } finally {
+    globalThis.fetch = previousFetch
+    if (previousStateHome === undefined) delete process.env.XDG_STATE_HOME
+    else process.env.XDG_STATE_HOME = previousStateHome
+    if (previousKevSocket === undefined) delete process.env.OPENCODE_KEV_SOCKET
+    else process.env.OPENCODE_KEV_SOCKET = previousKevSocket
+    rmSync(directory, { recursive: true, force: true })
+  }
+})

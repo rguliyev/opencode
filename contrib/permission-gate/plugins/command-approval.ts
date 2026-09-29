@@ -1342,6 +1342,33 @@ function stringLeaves(value: unknown, depth = 0): string[] {
   return Object.values(value).flatMap((item) => stringLeaves(item, depth + 1))
 }
 
+// Core rejects review state over 128,000 characters before calling the
+// model, which surfaced as an instant "unavailable" and a human prompt when
+// a 75 KB script met a long human history. Drop the oldest human messages
+// first, then the largest script bodies, and mark what was left out so the
+// reviewer knows the evidence is incomplete.
+const maxReviewStateChars = 120_000
+
+function fitReviewState(state: unknown): unknown {
+  const size = (value: unknown) => JSON.stringify(value).length
+  if (!isRecord(state) || size(state) <= maxReviewStateChars) return state
+  const fitted = structuredClone(state)
+  const context = isRecord(fitted.context) ? fitted.context : undefined
+  const messages = context && Array.isArray(context.human_messages) ? context.human_messages : undefined
+  let dropped = 0
+  while (messages && messages.length > 1 && size(fitted) > maxReviewStateChars) {
+    messages.shift()
+    dropped++
+  }
+  if (context && dropped) context.human_messages_omitted = `${dropped} oldest message(s) omitted to fit the review budget`
+  const scripts = Array.isArray(fitted.scripts) ? fitted.scripts.filter(isRecord) : []
+  for (const script of scripts.toSorted((a, b) => String(b.content ?? "").length - String(a.content ?? "").length)) {
+    if (size(fitted) <= maxReviewStateChars) break
+    script.content = `[omitted: ${String(script.content ?? "").length} characters exceed the review budget]`
+  }
+  return size(fitted) <= maxReviewStateChars ? fitted : { evidence_status: "withheld_by_size_budget" }
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value)
 }
@@ -2176,9 +2203,10 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
     ].join(" ")
     // A transient timeout or malformed reply is retried once with a fresh
     // deadline; a second failure still asks the human.
-    const first = await lunaAttempt(system, safeState)
+    const fittedState = fitReviewState(safeState)
+    const first = await lunaAttempt(system, fittedState)
     if (first.status !== "timeout" && first.status !== "invalid_response") return first
-    const second = await lunaAttempt(system, safeState)
+    const second = await lunaAttempt(system, fittedState)
     return { ...second, attempts: 2 }
   }
 
