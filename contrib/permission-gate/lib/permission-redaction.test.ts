@@ -123,3 +123,8 @@ test("punctuation after a secret-like key is not a credential", () => {
   expect(sanitizeReviewText(label).value).toBe(label)
   expect(sanitizeReviewText("API_KEY=" + "abc123def456").value).toContain("[REDACTED:CREDENTIAL]")
 })
+
+test("shell default-value expansions in sed templates are not URL passwords", () => {
+  const line = 'sed -i -e "s@{{ cpurequest }}@${KUBE_PROXY_CPU_REQUEST:-100m}@g" "${src_file}"'
+  expect(sanitizeReviewText(line).value).toBe(line)
+})
