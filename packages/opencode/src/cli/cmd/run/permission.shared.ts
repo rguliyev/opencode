@@ -3,7 +3,7 @@
 // Lives outside the JSX component so it can be tested independently. The
 // machine has three stages:
 //
-//   permission → initial view with Allow once / Always / Reject options
+//   permission → initial view with Allow once / Always / Do differently / Reject options
 //   always     → confirmation step (Confirm / Cancel)
 //   reject     → text input for rejection message
 //
@@ -79,7 +79,7 @@ export function createPermissionBodyState(requestID: string): PermissionBodyStat
 
 export function permissionOptions(stage: PermissionStage): PermissionOption[] {
   if (stage === "permission") {
-    return ["once", "always", "reject", "correct"]
+    return ["once", "always", "correct", "reject"]
   }
 
   if (stage === "always") {

@@ -3,7 +3,7 @@
 // Renders inside the footer when the reducer pushes a FooterView of type
 // "permission". Uses a three-stage state machine (permission.shared.ts):
 //
-//   permission → shows the request with Allow once / Always / Reject buttons
+//   permission → shows the request with Allow once / Always / Do differently / Reject buttons
 //   always     → confirmation step before granting permanent access
 //   reject     → text field for the rejection message
 //

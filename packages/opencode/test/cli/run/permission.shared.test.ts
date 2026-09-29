@@ -24,6 +24,10 @@ function req(input: Partial<PermissionRequest> = {}): PermissionRequest {
 }
 
 describe("run permission shared", () => {
+  test("keeps Reject last in the permission menu", () => {
+    expect(permissionOptions("permission")).toEqual(["once", "always", "correct", "reject"])
+  })
+
   test("replies immediately for allow once", () => {
     const out = permissionRun(createPermissionBodyState("perm-1"), "perm-1", "once")
 
