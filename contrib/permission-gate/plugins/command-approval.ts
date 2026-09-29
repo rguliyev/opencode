@@ -932,6 +932,21 @@ function ghApiEvidence(command: string) {
   const explicit = method?.replace(/^--method=/, "").toUpperCase()
   const body = args.some((argument) => /^(?:-f|-F|--field|--raw-field|--input)(?:=|$)/.test(argument))
   if ((!explicit || explicit === "GET") && !body) return "gh api: GET request (read-only)"
+  // `gh api -X PATCH repos/o/r/pulls/12 -f title=... -f body=...` is the same
+  // change as gh pr edit; any other field or endpoint is not.
+  if (explicit === "PATCH" && !args.some((argument) => /^--input(?:=|$)/.test(argument))) {
+    const endpoint = args.find(
+      (argument, index) => !argument.startsWith("-") && !/^(?:-X|--method|-f|-F|--field|--raw-field|-H|--header|-q|--jq)$/.test(args[index - 1] ?? ""),
+    )
+    const fields = args.flatMap((argument, index) => {
+      if (/^(?:-f|-F|--field|--raw-field)$/.test(args[index - 1] ?? "")) return [argument]
+      const inline = argument.match(/^--(?:field|raw-field)=(.*)$/)
+      return inline ? [inline[1]] : []
+    })
+    const pull = endpoint?.match(/^\/?repos\/[^/\s]+\/[^/\s]+\/pulls\/(\d+)$/)
+    if (pull && fields.length && fields.every((field) => /^(?:title|body)=/.test(field)))
+      return `gh api: edits pull request #${pull[1]} title/body only, the same change as gh pr edit`
+  }
   return `gh api: ${explicit ?? "POST"} request with ${body ? "a request body" : "no body"}; it may modify remote state`
 }
 
@@ -2330,7 +2345,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
       "When a shell segment's context has no full_command, the gate judged it self-contained (it only prints or filters stdin): judge that segment alone. context.module_evidence reports whether a go run module is pinned by go.sum; a pinned module is a verified dependency. context.command_evidence is the gate's local reading of the command's flags, such as a read-only gh api GET or a validator that writes nothing. A read-only remote query (a GET, gh pr view/diff/list, gh run view) is read-only inspection for a read-only role. For review or research, read-only inspection of history, changelogs, adjacent versions, sibling repositories, and related files is within the task; ask only when the target is clearly unrelated.",
       "Standing human policy: editing files inside dedicated worktrees under /data/rguliyev/tmp/opencode/worktrees is allowed, including configuration, Terraform, and IAM files, whenever it serves the human's task. Such edits change nothing live; push, PR changes, apply, and deploy are separately gated. Do not read an instruction not to change configuration as forbidding worktree file edits. Still ask for embedded credential literals, backdoor or exfiltration code, or edits outside worktrees.",
       "The attested goal-plugin tools get_goal, get_goal_history, and goal_status only read goal status and keep local bookkeeping (a persistence lease and state snapshot); they are within any task. goal_resume and goal_block change autonomous work and still need a direct human request.",
-      "A git push of a named feature branch, or gh pr create/edit/ready/comment, may be allowed only when the direct human messages explicitly ask to push or open or update a PR for this work, at any point and not since revoked, or context.session_decisions shows the human approved pushing the same branch; otherwise ask. Pushes to shared branches, force pushes, and merges are never yours to allow.",
+      "A git push of a named feature branch, or gh pr create/edit/ready/comment (or a gh api PR title/body edit per command_evidence), may be allowed only when the direct human messages explicitly ask to push or open or update a PR for this work, at any point and not since revoked (asking for more changes does not revoke it; pushing the revised branch continues the request), or context.session_decisions shows the human approved pushing the same branch; otherwise ask. Pushes to shared branches, force pushes, and merges are never yours to allow.",
       "A curl that sends $(gcloud auth print-access-token) only as a Bearer header in a read-only GET to *.googleapis.com uses the human's existing login; allow it when the call serves the human's task and prints no token. Any other token handling must be asked.",
       "Return allow ONLY when this exact action is clearly within the applicable direct human task and role policy, with no credential disclosure, regulated-data exposure, destructive effect, security-control change, production or unrelated shared-state mutation, opaque side effect, or human-only gate. Otherwise ask.",
       "An existing E2B sandbox identified by direct human messages for the current isolated test is task-local, not production or unrelated shared state; existing task credentials may be used only inside that sandbox for the authorized test, and starting or restarting its test worker after a status report (such as a closed callback port) continues the explicit testing instruction. This covers no new sandbox, service, or test expansion.",

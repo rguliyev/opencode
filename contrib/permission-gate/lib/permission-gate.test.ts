@@ -1288,6 +1288,8 @@ test("shell segments get module evidence and self-contained segments are judged 
       "shellcheck --shell=bash charts/node-init/files/local-ssd-swap.sh",
       "helm unittest charts/node-init",
       "helm unittest -u charts/node-init",
+      "gh api -X PATCH repos/e2b-dev/charts/pulls/476 -f title=Simplify -F body=@/tmp/body.md",
+      "gh api -X PATCH repos/e2b-dev/charts/pulls/476 -f state=closed",
     ]
     const output = { status: "ask" }
     await hooks["permission.ask"](
@@ -1306,6 +1308,8 @@ test("shell segments get module evidence and self-contained segments are judged 
     expect(contexts[commands[8]].command_evidence).toBe("shellcheck: static analysis; reads files and writes nothing")
     expect(contexts[commands[9]].command_evidence).toBe("helm unittest: validates the chart; reads files and writes nothing")
     expect(contexts[commands[10]].command_evidence).toContain("it writes files")
+    expect(contexts[commands[11]].command_evidence).toContain("edits pull request #476 title/body only")
+    expect(contexts[commands[12]].command_evidence).toContain("it may modify remote state")
     // A literal echo ($? only) is allowed locally and never sent to Jev.
     expect(contexts[commands[3]]).toBeUndefined()
     expect(contexts[commands[0]].full_command).toBe(commands.join("; "))
