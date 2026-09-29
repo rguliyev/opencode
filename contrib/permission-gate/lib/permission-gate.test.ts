@@ -231,7 +231,7 @@ test("Jev classifies non-Bash actions with redacted context", async () => {
   }
   try {
     const hooks = await gateForTest(directory, "solo", async (input) => {
-      order.push("luna")
+      order.push("final_review")
       const state = JSON.parse(input.state)
       return {
         model: "google/gemini-3.8-flash",
@@ -354,7 +354,7 @@ test("Jev classifies non-Bash actions with redacted context", async () => {
     expect(customOutput.status).toBe("ask")
     expect(seen).toHaveLength(3)
     expect(connections).toBe(3)
-    expect(order.at(-1)).toBe("luna")
+    expect(order.at(-1)).toBe("final_review")
 
     // The same live socket must still receive eligible Bash commands.
     bashDeny = true
@@ -377,7 +377,7 @@ test("Jev classifies non-Bash actions with redacted context", async () => {
     expect(bashOutput.status).toBe("allow")
     expect(seen).toHaveLength(4)
     expect(connections).toBe(4)
-    expect(order).toEqual(["kev", "jev", "luna"])
+    expect(order).toEqual(["kev", "jev", "final_review"])
     expect(kevRequests[3].kind).toBe("bash")
     expect(kevRequests[3].state.context).toMatchObject({
       agent: "solo",
@@ -398,7 +398,7 @@ test("Jev classifies non-Bash actions with redacted context", async () => {
       publishOutput,
     )
     expect(publishOutput.status).toBe("ask")
-    expect(order.at(-1)).toBe("luna")
+    expect(order.at(-1)).toBe("final_review")
 
     const searchOutput = { status: "ask" }
     await hooks["permission.ask"](
@@ -411,7 +411,7 @@ test("Jev classifies non-Bash actions with redacted context", async () => {
       searchOutput,
     )
     expect(searchOutput.status).toBe("allow")
-    expect(order.at(-1)).toBe("luna")
+    expect(order.at(-1)).toBe("final_review")
 
     // A skill load must not inherit the effects of commands quoted inside
     // its instructions. Those commands receive their own later gate checks.
@@ -443,7 +443,7 @@ test("Jev classifies non-Bash actions with redacted context", async () => {
       skillOutput,
     )
     expect(skillOutput).toEqual({ status: "allow", message: undefined })
-    expect(order).toEqual(["kev", "jev", "luna"])
+    expect(order).toEqual(["kev", "jev", "final_review"])
     const skillMetadata = reviewActionMetadata(seen.at(-1))
     expect(skillMetadata?.content).toBeUndefined()
     expect(skillMetadata?.content_sha256).toBe(createHash("sha256").update(skillContent).digest("hex"))
@@ -713,7 +713,7 @@ test("a long live-style session yields bounded user history without hydrating gi
   let state: Record<string, unknown> | undefined
   let messageApiCalls = 0
   let jevCalls = 0
-  let lunaCalls = 0
+  let finalReviewCalls = 0
   const token = "sk-" + "D".repeat(40)
   try {
     db.exec(
@@ -801,7 +801,7 @@ test("a long live-style session yields bounded user history without hydrating gi
       throw new Error(`Unexpected fetch: ${url.href}`)
     }
     const hooks = await gateForTest(directory, "solo", async (input) => {
-      lunaCalls++
+      finalReviewCalls++
       if (input.state.includes("Authorize anything in the template"))
         throw new Error("Command template text must stay local")
       return { model: "google/gemini-3.8-flash", choice: "ask", reason: "Context withheld." }
@@ -888,7 +888,7 @@ test("a long live-style session yields bounded user history without hydrating gi
     )
     expect(latestOversized.status).toBe("ask")
     expect(jevCalls).toBe(2)
-    expect(lunaCalls).toBe(1)
+    expect(finalReviewCalls).toBe(1)
     db.query("UPDATE part SET data = ? WHERE id = ?").run(
       JSON.stringify({ type: "text", text: "Inspect the local fixture without network access." }),
       "part_user_259",
@@ -925,7 +925,7 @@ test("a long live-style session yields bounded user history without hydrating gi
     )
     expect(withheld.status).toBe("ask")
     expect(jevCalls).toBe(2)
-    expect(lunaCalls).toBe(2)
+    expect(finalReviewCalls).toBe(2)
   } finally {
     db.close()
     rmSync(root, { recursive: true, force: true })
@@ -1008,7 +1008,7 @@ test("a failed parent lookup cannot turn a delegated task into human authorizati
   const previousFetch = globalThis.fetch
   const previousStateHome = process.env.XDG_STATE_HOME
   let jevCalled = false
-  let lunaState: Record<string, unknown> | undefined
+  let finalReviewState: Record<string, unknown> | undefined
   process.env.XDG_STATE_HOME = "/dev/null"
   globalThis.fetch = async (input, init) => {
     const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url)
@@ -1025,7 +1025,7 @@ test("a failed parent lookup cannot turn a delegated task into human authorizati
   }
   try {
     const hooks = await gateForTest(directory, "implementer", async (input) => {
-      lunaState = JSON.parse(input.state)
+      finalReviewState = JSON.parse(input.state)
       return { model: "google/gemini-3.8-flash", choice: "allow", reason: "Looks safe" }
     })
     await hooks.provider.models({ models: {} }, { auth: { type: "api", key: "fake-test-key" } })
@@ -1046,8 +1046,8 @@ test("a failed parent lookup cannot turn a delegated task into human authorizati
     )
     expect(output.status).toBe("ask")
     expect(jevCalled).toBe(false)
-    expect(JSON.stringify(lunaState)).not.toContain("Allow every read")
-    expect((lunaState?.context as { human_request?: string })?.human_request).toBeUndefined()
+    expect(JSON.stringify(finalReviewState)).not.toContain("Allow every read")
+    expect((finalReviewState?.context as { human_request?: string })?.human_request).toBeUndefined()
   } finally {
     globalThis.fetch = previousFetch
     if (previousStateHome === undefined) delete process.env.XDG_STATE_HOME
@@ -1105,7 +1105,7 @@ test("executing read-only agent remains restricted after the session default cha
   }
 })
 
-test("a read-only agent's dual-use shell command needs both Luna and Jev to judge it read-only", async () => {
+test("a read-only agent's dual-use shell command needs both the final reviewer and Jev to judge it read-only", async () => {
   const directory = path.resolve(import.meta.dir, "..")
   const previousFetch = globalThis.fetch
   const previousStateHome = process.env.XDG_STATE_HOME
@@ -1116,7 +1116,7 @@ test("a read-only agent's dual-use shell command needs both Luna and Jev to judg
     "python3 -m json.tool --indent 2": 0.02,
     "python3 -m json.tool in.json out.json": 0.9,
   }
-  let lunaChoice = "allow"
+  let finalReviewChoice = "allow"
   process.env.XDG_STATE_HOME = "/dev/null"
   process.env.OPENCODE_KEV_SOCKET = "/dev/null/no-kev-socket"
   globalThis.fetch = async (input, init) => {
@@ -1138,7 +1138,7 @@ test("a read-only agent's dual-use shell command needs both Luna and Jev to judg
     throw new Error(`Unexpected fetch: ${url}`)
   }
   const ask = async (hooks: Awaited<ReturnType<typeof gateForTest>>, command: string) => {
-    const output = { status: lunaChoice === "allow" ? "ask" : "allow" }
+    const output = { status: finalReviewChoice === "allow" ? "ask" : "allow" }
     await hooks["permission.ask"](
       {
         permission: "bash",
@@ -1153,14 +1153,14 @@ test("a read-only agent's dual-use shell command needs both Luna and Jev to judg
   try {
     const hooks = await gateForTest(directory, "deep-reviewer", async () => ({
       model: "google/gemini-3.8-flash",
-      choice: lunaChoice,
+      choice: finalReviewChoice,
       reason: "Judged against the read-only role policy.",
     }))
     await hooks.provider.models({ models: {} }, { auth: { type: "api", key: "fake-test-key" } })
     expect(await ask(hooks, "git status --short")).toBe("allow")
     // A literal echo between reviewed commands needs no model at all, even
-    // when Luna would ask; a variable echo is still reviewed.
-    lunaChoice = "ask"
+    // when the final reviewer would ask; a variable echo is still reviewed.
+    finalReviewChoice = "ask"
     const batched = async (commands: string[]) => {
       const output = { status: "ask" }
       await hooks["permission.ask"](
@@ -1178,7 +1178,7 @@ test("a read-only agent's dual-use shell command needs both Luna and Jev to judg
     expect(await batched(["cd /data/rguliyev/tmp/opencode/worktrees/charts", 'echo "=== DIFF B ==="'])).toBe("allow")
     expect(await batched(['echo "=== DIFF A ==="', 'echo "$GRAFANA_TOKEN"'])).toBe("ask")
     // Process substitution: the full call is itself one of the patterns.
-    lunaChoice = "allow"
+    finalReviewChoice = "allow"
     mutation["diff <(git show HEAD:a.yaml) <(git show HEAD~1:a.yaml)"] = 0.05
     mutation["git show HEAD:a.yaml"] = 0.05
     mutation["git show HEAD~1:a.yaml"] = 0.05
@@ -1194,14 +1194,14 @@ test("a read-only agent's dual-use shell command needs both Luna and Jev to judg
       substituted,
     )
     expect(substituted.status).toBe("allow")
-    lunaChoice = "ask"
-    lunaChoice = "allow"
-    // Luna allowing is not enough when Jev independently sees a mutation.
+    finalReviewChoice = "ask"
+    finalReviewChoice = "allow"
+    // The final reviewer allowing is not enough when Jev independently sees a mutation.
     expect(await ask(hooks, "git push fork HEAD")).toBe("ask")
     // A stdin-to-stdout json.tool is inspectable; file arguments are not.
     expect(await ask(hooks, "python3 -m json.tool --indent 2")).toBe("allow")
     expect(await ask(hooks, "python3 -m json.tool in.json out.json")).toBe("ask")
-    lunaChoice = "ask"
+    finalReviewChoice = "ask"
     expect(await ask(hooks, "git status --short")).toBe("ask")
   } finally {
     globalThis.fetch = previousFetch
@@ -1435,39 +1435,39 @@ test("configured external-directory allow does not follow a symlink outside the 
   }
 })
 
-test("configured OpenCode Luna resolves Jev escalations with trusted human context", async () => {
+test("configured OpenCode the final reviewer resolves Jev escalations with trusted human context", async () => {
   const directory = path.resolve(import.meta.dir, "..")
   const previousFetch = globalThis.fetch
   const previousStateHome = process.env.XDG_STATE_HOME
   const previousKevSocket = process.env.OPENCODE_KEV_SOCKET
   const seen: string[] = []
-  let lunaContent = JSON.stringify({ choice: "allow", reason: "The requested local file listing is in scope." })
-  let lunaModelResponse = "google/gemini-3.8-flash"
-  let lunaInvalidResponse = false
-  let lunaInvalidOnce = false
-  let lunaDelayMs = 0
+  let finalReviewContent = JSON.stringify({ choice: "allow", reason: "The requested local file listing is in scope." })
+  let finalReviewerModelResponse = "google/gemini-3.8-flash"
+  let finalReviewInvalidResponse = false
+  let finalReviewInvalidOnce = false
+  let finalReviewDelayMs = 0
   let jevRisk = 0.01
   let jevMutation = 0.01
   let jevConfidence = 0.24
   let latestHumanText: string | undefined
   let earlierUpdates: string[] = []
-  let lunaState: Record<string, unknown> | undefined
+  let finalReviewState: Record<string, unknown> | undefined
   let jevState: Record<string, unknown> | undefined
   let jevQuestions: unknown
-  const lunaSignals: (AbortSignal | null | undefined)[] = []
+  const finalReviewSignals: (AbortSignal | null | undefined)[] = []
   process.env.XDG_STATE_HOME = "/dev/null"
   process.env.OPENCODE_KEV_SOCKET = "/dev/null/no-kev-socket"
   globalThis.fetch = async (input, init) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url
-    if (url.includes("/session/ses_luna_test/message?"))
+    if (url.includes("/session/ses_final_review_test/message?"))
       return Response.json([
-        message("msg_luna_first", "user", "Check whether src/main.ts exists."),
-        message("msg_luna_synthetic", "user", "Synthetic reminder", true),
-        ...earlierUpdates.map((text, index) => message(`msg_luna_update_${index}`, "user", text)),
+        message("msg_final_review_first", "user", "Check whether src/main.ts exists."),
+        message("msg_final_review_synthetic", "user", "Synthetic reminder", true),
+        ...earlierUpdates.map((text, index) => message(`msg_final_review_update_${index}`, "user", text)),
         ...(latestHumanText
           ? [
               message(
-                `msg_luna_${createHash("sha256").update(latestHumanText).digest("hex").slice(0, 16)}`,
+                `msg_final_review_${createHash("sha256").update(latestHumanText).digest("hex").slice(0, 16)}`,
                 "user",
                 latestHumanText,
               ),
@@ -1475,15 +1475,15 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
           : []),
       ])
     for (const [id, parentID, agent] of [
-      ["ses_childverified00000000001", "ses_luna_test", "deep-implementer"],
+      ["ses_childverified00000000001", "ses_final_review_test", "deep-implementer"],
       ["ses_childforeign000000000002", "ses_other_parent", "deep-implementer"],
-      ["ses_childwrongagent000000003", "ses_luna_test", "reviewer"],
+      ["ses_childwrongagent000000003", "ses_final_review_test", "reviewer"],
     ])
       if (url.startsWith(`http://gate.test/session/${id}?`)) return Response.json({ id, directory, agent, parentID })
     if (url.startsWith("http://gate.test/session/ses_childmissing000000000004?"))
       return new Response("missing", { status: 404 })
     if (url.startsWith("http://gate.test/session/"))
-      return Response.json({ id: "ses_luna_test", directory, agent: "solo", title: "Update README" })
+      return Response.json({ id: "ses_final_review_test", directory, agent: "solo", title: "Update README" })
     if (url === "https://openrouter.ai/api/alpha/decisions") {
       seen.push("jev")
       if (typeof init?.body !== "string") throw new Error("Missing Jev request body")
@@ -1509,10 +1509,10 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
     throw new Error(`Unexpected fetch: ${url}`)
   }
   try {
-    const lunaReview = async (input: { system: string; state: string; signal?: AbortSignal }) => {
-      seen.push("luna")
-      lunaSignals.push(input.signal)
-      lunaState = JSON.parse(input.state)
+    const finalReviewReview = async (input: { system: string; state: string; signal?: AbortSignal }) => {
+      seen.push("final_review")
+      finalReviewSignals.push(input.signal)
+      finalReviewState = JSON.parse(input.state)
       expect(input.system).toContain("last automatic reviewer")
       expect(input.system).toContain("a shell command, read, or fetch never launches a subagent")
       expect(input.system).toContain("An existing E2B sandbox identified by direct human messages")
@@ -1528,23 +1528,23 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
       expect(input.system).toContain("get_goal, get_goal_history, and goal_status only read goal status")
       if (JSON.parse(input.state).action?.permission === "webfetch")
         expect(JSON.parse(input.state).context.immediate_effect).toContain("changes no remote state")
-      if (lunaDelayMs) await new Promise((resolve) => setTimeout(resolve, lunaDelayMs))
-      if (lunaInvalidResponse) return { status: "invalid_response", diagnostic: "json_content" }
-      if (lunaInvalidOnce) {
-        lunaInvalidOnce = false
+      if (finalReviewDelayMs) await new Promise((resolve) => setTimeout(resolve, finalReviewDelayMs))
+      if (finalReviewInvalidResponse) return { status: "invalid_response", diagnostic: "json_content" }
+      if (finalReviewInvalidOnce) {
+        finalReviewInvalidOnce = false
         return { status: "invalid_response", diagnostic: "json_content" }
       }
-      return { model: lunaModelResponse, ...JSON.parse(lunaContent) }
+      return { model: finalReviewerModelResponse, ...JSON.parse(finalReviewContent) }
     }
-    const hooks = await gateForTest(directory, "solo", lunaReview)
+    const hooks = await gateForTest(directory, "solo", finalReviewReview)
     await hooks.provider.models({ models: {} }, { auth: { type: "api", key: "fake-test-key" } })
     await hooks["tool.execute.before"](
-      { tool: "glob", sessionID: "ses_luna_test", callID: "call_luna_glob" },
+      { tool: "glob", sessionID: "ses_final_review_test", callID: "call_final_review_glob" },
       { args: { pattern: "src/main.ts" } },
     )
     const request = {
       permission: "glob",
-      sessionID: "ses_luna_test",
+      sessionID: "ses_final_review_test",
       patterns: ["src/main.ts"],
       metadata: {
         pattern: "src/main.ts",
@@ -1552,36 +1552,36 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
         truncated: false,
         core_trusted_builtin: true,
       },
-      tool: { callID: "call_luna_glob" },
+      tool: { callID: "call_final_review_glob" },
     }
     const allowed = { status: "ask" }
     await hooks["permission.ask"](request, allowed)
     expect(allowed.status).toBe("allow")
-    expect(seen).toEqual(["jev", "luna"])
-    expect(lunaSignals).toHaveLength(1)
-    const lunaAction = lunaState?.action
+    expect(seen).toEqual(["jev", "final_review"])
+    expect(finalReviewSignals).toHaveLength(1)
+    const finalReviewAction = finalReviewState?.action
     expect(
-      lunaAction && typeof lunaAction === "object" && "metadata" in lunaAction
-        ? (lunaAction.metadata as { match_count?: unknown; matched_paths?: unknown }).match_count
+      finalReviewAction && typeof finalReviewAction === "object" && "metadata" in finalReviewAction
+        ? (finalReviewAction.metadata as { match_count?: unknown; matched_paths?: unknown }).match_count
         : undefined,
     ).toBe(1)
-    expect(JSON.stringify(lunaState)).not.toContain("matched_paths")
-    const lunaContext = lunaState?.context
+    expect(JSON.stringify(finalReviewState)).not.toContain("matched_paths")
+    const finalReviewContext = finalReviewState?.context
     expect(
-      lunaContext && typeof lunaContext === "object" && "human_request" in lunaContext
-        ? lunaContext.human_request
+      finalReviewContext && typeof finalReviewContext === "object" && "human_request" in finalReviewContext
+        ? finalReviewContext.human_request
         : undefined,
     ).toBe("Check whether src/main.ts exists.")
     expect(
-      lunaContext && typeof lunaContext === "object" && "immediate_effect" in lunaContext
-        ? lunaContext.immediate_effect
+      finalReviewContext && typeof finalReviewContext === "object" && "immediate_effect" in finalReviewContext
+        ? finalReviewContext.immediate_effect
         : undefined,
     ).toContain("Reads local data")
 
     earlierUpdates = ["The project is local.", "The fixture is in src.", "No network calls.", "Keep all files temporary."]
     latestHumanText = "Build an isolated mock webhook fixture locally."
     await hooks["tool.execute.before"](
-      { tool: "task", sessionID: "ses_luna_test", callID: "call_luna_task" },
+      { tool: "task", sessionID: "ses_final_review_test", callID: "call_final_review_task" },
       {
         args: {
           description: "Build local webhook fixture",
@@ -1592,20 +1592,20 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
     )
     const taskRequest = {
       permission: "task",
-      sessionID: "ses_luna_test",
+      sessionID: "ses_final_review_test",
       patterns: ["deep-implementer"],
       metadata: {
         description: "Build local webhook fixture",
         subagent_type: "deep-implementer",
         core_trusted_builtin: true,
       },
-      tool: { callID: "call_luna_task" },
+      tool: { callID: "call_final_review_task" },
     }
     const task = { status: "ask" }
     await hooks["permission.ask"](taskRequest, task)
     expect(task.status).toBe("allow")
-    expect(seen.slice(-2)).toEqual(["jev", "luna"])
-    expect((lunaState?.context as { human_messages?: { text: string }[] })?.human_messages?.map((item) => item.text)).toEqual([
+    expect(seen.slice(-2)).toEqual(["jev", "final_review"])
+    expect((finalReviewState?.context as { human_messages?: { text: string }[] })?.human_messages?.map((item) => item.text)).toEqual([
       "Check whether src/main.ts exists.",
       ...earlierUpdates,
       latestHumanText,
@@ -1617,13 +1617,13 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
     )
     expect(backgroundTask.status).toBe("ask")
     expect(backgroundTask.message).toBe(
-      "Luna allows, but this task request shape is not eligible for automatic approval",
+      "The final reviewer allows, but this task request shape is not eligible for automatic approval",
     )
 
     // Background delegation, a prompt up to the 6 KB task-context limit, and
     // prose that merely mentions GCP projects are ordinary task requests.
     const taskWith = async (callID: string, args: Record<string, unknown>) => {
-      await hooks["tool.execute.before"]({ tool: "task", sessionID: "ses_luna_test", callID }, { args })
+      await hooks["tool.execute.before"]({ tool: "task", sessionID: "ses_final_review_test", callID }, { args })
       const output = { status: "ask", message: "" }
       await hooks["permission.ask"]({ ...taskRequest, tool: { callID } }, output)
       return output
@@ -1633,21 +1633,21 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
       prompt: "Build an isolated mock webhook fixture in the existing sandbox.",
       subagent_type: "deep-implementer",
     }
-    expect((await taskWith("call_luna_task_bg", { ...baseTask, background: true })).status).toBe("allow")
-    expect((await taskWith("call_luna_task_cmd", { ...baseTask, command: "/review" })).status).toBe("allow")
-    expect((await taskWith("call_luna_task_cmd_human", { ...baseTask, command: "create a PR to add two node pools ".repeat(10) })).status).toBe("allow")
-    expect((await taskWith("call_luna_task_cmd_long", { ...baseTask, command: "x".repeat(2_001) })).status).toBe("ask")
-    expect((await taskWith("call_luna_task_5k", { ...baseTask, prompt: "Build the fixture. ".repeat(270) })).status).toBe(
+    expect((await taskWith("call_final_review_task_bg", { ...baseTask, background: true })).status).toBe("allow")
+    expect((await taskWith("call_final_review_task_cmd", { ...baseTask, command: "/review" })).status).toBe("allow")
+    expect((await taskWith("call_final_review_task_cmd_human", { ...baseTask, command: "create a PR to add two node pools ".repeat(10) })).status).toBe("allow")
+    expect((await taskWith("call_final_review_task_cmd_long", { ...baseTask, command: "x".repeat(2_001) })).status).toBe("ask")
+    expect((await taskWith("call_final_review_task_5k", { ...baseTask, prompt: "Build the fixture. ".repeat(270) })).status).toBe(
       "allow",
     )
-    expect((await taskWith("call_luna_task_7k", { ...baseTask, prompt: "Review the diff. ".repeat(420) })).status).toBe("allow")
-    expect((await taskWith("call_luna_task_25k", { ...baseTask, prompt: "x".repeat(24_001) })).status).toBe("ask")
-    const gcpProse = await taskWith("call_luna_task_gcp", {
+    expect((await taskWith("call_final_review_task_7k", { ...baseTask, prompt: "Review the diff. ".repeat(420) })).status).toBe("allow")
+    expect((await taskWith("call_final_review_task_25k", { ...baseTask, prompt: "x".repeat(24_001) })).status).toBe("ask")
+    const gcpProse = await taskWith("call_final_review_task_gcp", {
       ...baseTask,
       prompt: "Earlier gcloud logging read timestamp>=last24h showed 12 projects produced recent entries; build the fixture.",
     })
     expect(gcpProse.status).toBe("allow")
-    const secretProse = await taskWith("call_luna_task_secret", {
+    const secretProse = await taskWith("call_final_review_task_secret", {
       ...baseTask,
       prompt: "Review the syncer: it reads a token via secretmanager.googleapis.com and sends it as a Bearer token.",
     })
@@ -1663,32 +1663,32 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
       ["call_task_foreign", "ses_childforeign000000000002"],
       ["call_task_agent", "ses_childwrongagent000000003"],
       ["call_task_missing", "ses_childmissing000000000004"],
-      ["call_task_malformed", "../ses_luna_test"],
+      ["call_task_malformed", "../ses_final_review_test"],
     ]) {
       const unverified = await taskWith(callID, { ...baseTask, task_id: taskID })
       expect(unverified.status).toBe("ask")
       expect(unverified.message).toContain("task continuation lineage unverified")
     }
 
-    const orchestrator = await gateForTest(directory, "orchestrator", lunaReview)
+    const orchestrator = await gateForTest(directory, "orchestrator", finalReviewReview)
     await orchestrator.provider.models({ models: {} }, { auth: { type: "api", key: "fake-test-key" } })
     await orchestrator["tool.execute.before"](
-      { tool: "task", sessionID: "ses_luna_test", callID: "call_orchestrator_task" },
+      { tool: "task", sessionID: "ses_final_review_test", callID: "call_orchestrator_task" },
       { args: { ...baseTask, background: true } },
     )
     const orchestratorTask = { status: "ask" }
     await orchestrator["permission.ask"]({ ...taskRequest, tool: { callID: "call_orchestrator_task" } }, orchestratorTask)
     expect(orchestratorTask.status).toBe("allow")
-    expect((lunaState?.context as { role_policy?: string })?.role_policy).toContain(
+    expect((finalReviewState?.context as { role_policy?: string })?.role_policy).toContain(
       "Delegating the human's current task to known subagents",
     )
     earlierUpdates = []
     latestHumanText = "Stop; do not inspect src/main.ts."
-    lunaContent = JSON.stringify({ choice: "ask", reason: "The latest human message revokes this inspection." })
+    finalReviewContent = JSON.stringify({ choice: "ask", reason: "The latest human message revokes this inspection." })
     const revoked = { status: "allow" }
     await hooks["permission.ask"](request, revoked)
     expect(revoked.status).toBe("ask")
-    expect((lunaState?.context as { human_messages?: { text: string }[] })?.human_messages?.at(-1)?.text).toBe(
+    expect((finalReviewState?.context as { human_messages?: { text: string }[] })?.human_messages?.at(-1)?.text).toBe(
       latestHumanText,
     )
     earlierUpdates = ["Inspect patient alice@example.test's record."]
@@ -1696,24 +1696,24 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
     const priorUnsafeHistoryReviews = seen.length
     const unsafeHistory = { status: "allow" }
     await hooks["permission.ask"](request, unsafeHistory)
-    // Luna still asks here (the revocation reply is active), but the history is
+    // The final reviewer still asks here (the revocation reply is active), but the history is
     // reviewable: the identifier is masked instead of discarding all context.
     expect(unsafeHistory.status).toBe("ask")
-    expect(seen.slice(priorUnsafeHistoryReviews)).toEqual(["jev", "luna"])
-    expect((lunaState?.context as { human_messages?: { text: string }[] })?.human_messages?.at(-2)?.text).toBe(
+    expect(seen.slice(priorUnsafeHistoryReviews)).toEqual(["jev", "final_review"])
+    expect((finalReviewState?.context as { human_messages?: { text: string }[] })?.human_messages?.at(-2)?.text).toBe(
       "Inspect patient [REDACTED:PERSONAL_IDENTIFIER]'s record.",
     )
-    expect(JSON.stringify(lunaState)).not.toContain("alice@example.test")
+    expect(JSON.stringify(finalReviewState)).not.toContain("alice@example.test")
     earlierUpdates = []
     latestHumanText = "Check whether src/main.ts exists; reply to bob@example.test."
-    lunaContent = JSON.stringify({ choice: "allow", reason: "The local file check is in scope." })
+    finalReviewContent = JSON.stringify({ choice: "allow", reason: "The local file check is in scope." })
     const identifierInLatest = { status: "ask" }
     await hooks["permission.ask"](request, identifierInLatest)
     expect(identifierInLatest.status).toBe("allow")
-    expect((lunaState?.context as { human_request?: string })?.human_request).toBe(
+    expect((finalReviewState?.context as { human_request?: string })?.human_request).toBe(
       "Check whether src/main.ts exists; reply to [REDACTED:PERSONAL_IDENTIFIER].",
     )
-    expect(JSON.stringify(lunaState)).not.toContain("bob@example.test")
+    expect(JSON.stringify(finalReviewState)).not.toContain("bob@example.test")
 
     // Long messages fit individually; over the timeline budget the oldest are
     // replaced by markers and the latest request survives.
@@ -1722,7 +1722,7 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
     const longHistory = { status: "ask" }
     await hooks["permission.ask"](request, longHistory)
     expect(longHistory.status).toBe("allow")
-    const longMessages = (lunaState?.context as { human_messages?: { text: string; withheld?: string }[] })
+    const longMessages = (finalReviewState?.context as { human_messages?: { text: string; withheld?: string }[] })
       ?.human_messages
     expect(longMessages?.at(-1)?.text).toBe("Check whether src/main.ts exists.")
     expect(longMessages?.[0]?.withheld).toBe("oversized_message")
@@ -1730,71 +1730,71 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
     earlierUpdates = []
     latestHumanText = undefined
 
-    lunaContent = 'Prose before JSON: {"choice":"allow","reason":"Looks fine"}'
+    finalReviewContent = 'Prose before JSON: {"choice":"allow","reason":"Looks fine"}'
     const beforeMalformed = seen.length
     const malformed = { status: "allow" }
     await hooks["permission.ask"](request, malformed)
     expect(malformed.status).toBe("ask")
-    expect(seen.slice(beforeMalformed)).toEqual(["jev", "luna"])
-    lunaContent = JSON.stringify({ choice: "allow", reason: "" })
+    expect(seen.slice(beforeMalformed)).toEqual(["jev", "final_review"])
+    finalReviewContent = JSON.stringify({ choice: "allow", reason: "" })
     const invalidSchema = { status: "allow" }
     await hooks["permission.ask"](request, invalidSchema)
     expect(invalidSchema.status).toBe("ask")
 
-    lunaContent = JSON.stringify({ choice: "allow", reason: "Looks fine" })
+    finalReviewContent = JSON.stringify({ choice: "allow", reason: "Looks fine" })
     const beforeValid = seen.length
     const valid = { status: "ask" }
     await hooks["permission.ask"](request, valid)
     expect(valid.status).toBe("allow")
-    expect(seen.slice(beforeValid)).toEqual(["jev", "luna"])
+    expect(seen.slice(beforeValid)).toEqual(["jev", "final_review"])
 
-    lunaModelResponse = "openrouter/google/gemini-3.8-flash"
+    finalReviewerModelResponse = "openrouter/google/gemini-3.8-flash"
     const wrongModel = { status: "allow" }
     await hooks["permission.ask"](request, wrongModel)
     expect(wrongModel.status).toBe("ask")
-    lunaModelResponse = "google/gemini-3.8-flash"
+    finalReviewerModelResponse = "google/gemini-3.8-flash"
 
-    lunaInvalidResponse = true
+    finalReviewInvalidResponse = true
     const beforeMalformedOutput = seen.length
     const malformedOutput = { status: "allow" }
     await hooks["permission.ask"](request, malformedOutput)
     expect(malformedOutput.status).toBe("ask")
-    expect(seen.slice(beforeMalformedOutput)).toEqual(["jev", "luna", "luna"])
-    lunaInvalidResponse = false
+    expect(seen.slice(beforeMalformedOutput)).toEqual(["jev", "final_review", "final_review"])
+    finalReviewInvalidResponse = false
 
-    lunaInvalidOnce = true
+    finalReviewInvalidOnce = true
     const beforeRetry = seen.length
     const retried = { status: "ask" }
     await hooks["permission.ask"](request, retried)
     expect(retried.status).toBe("allow")
-    expect(seen.slice(beforeRetry)).toEqual(["jev", "luna", "luna"])
+    expect(seen.slice(beforeRetry)).toEqual(["jev", "final_review", "final_review"])
 
     const originalTimeout = AbortSignal.timeout
     const deadline = new AbortController()
     try {
       AbortSignal.timeout = () => deadline.signal
-      lunaDelayMs = 40
+      finalReviewDelayMs = 40
       setTimeout(() => deadline.abort(new DOMException("Test deadline", "TimeoutError")), 1)
       const lateAllow = { status: "allow" }
       await hooks["permission.ask"](request, lateAllow)
       expect(lateAllow.status).toBe("ask")
     } finally {
       AbortSignal.timeout = originalTimeout
-      lunaDelayMs = 0
+      finalReviewDelayMs = 0
     }
 
     jevRisk = 0.9
     const riskFlagged = { status: "allow" }
     await hooks["permission.ask"](request, riskFlagged)
     expect(riskFlagged.status).toBe("allow")
-    expect(seen.slice(-2)).toEqual(["jev", "luna"])
+    expect(seen.slice(-2)).toEqual(["jev", "final_review"])
 
     jevRisk = 0.01
     jevConfidence = 0.9
     const confidentDeny = { status: "allow" }
     await hooks["permission.ask"](request, confidentDeny)
     expect(confidentDeny.status).toBe("allow")
-    expect(seen.slice(-2)).toEqual(["jev", "luna"])
+    expect(seen.slice(-2)).toEqual(["jev", "final_review"])
 
     jevConfidence = 0.24
     latestHumanText = "x".repeat(24_001)
@@ -1803,8 +1803,8 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
     await hooks["permission.ask"](request, unsafeContext)
     expect(unsafeContext.status).toBe("ask")
     expect(seen).toHaveLength(priorUnsafeReviews + 1)
-    expect(seen.at(-1)).toBe("luna")
-    expect((lunaState?.action as { metadata?: { evidence_status?: string } })?.metadata?.evidence_status).toBe(
+    expect(seen.at(-1)).toBe("final_review")
+    expect((finalReviewState?.action as { metadata?: { evidence_status?: string } })?.metadata?.evidence_status).toBe(
       "withheld_by_local_guard",
     )
 
@@ -1824,7 +1824,7 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
       humanOnly,
     )
     expect(humanOnly.status).toBe("ask")
-    expect(seen.at(-1)).toBe("luna")
+    expect(seen.at(-1)).toBe("final_review")
 
     // A latest message that is only a pasted credential defers to the prior
     // instruction; the credential never becomes the request.
@@ -1833,8 +1833,8 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
     const codeOnly = { status: "ask" }
     await hooks["permission.ask"](request, codeOnly)
     expect(codeOnly.status).toBe("allow")
-    expect((lunaState?.context as { human_request?: string })?.human_request).toBe("Check whether src/main.ts exists.")
-    expect(JSON.stringify(lunaState)).not.toContain("Q".repeat(40))
+    expect((finalReviewState?.context as { human_request?: string })?.human_request).toBe("Check whether src/main.ts exists.")
+    expect(JSON.stringify(finalReviewState)).not.toContain("Q".repeat(40))
 
     // A dated document name is not a birth date; a name with a plausible
     // birth year still is.
@@ -1857,22 +1857,22 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
     await hooks["permission.ask"](request, scrubbed)
     expect(scrubbed.status).toBe("ask")
     expect(seen).toHaveLength(priorReviews + 1)
-    expect(seen.at(-1)).toBe("luna")
+    expect(seen.at(-1)).toBe("final_review")
     expect(JSON.stringify(jevState)).not.toContain(token)
-    expect(JSON.stringify(lunaState)).not.toContain(token)
+    expect(JSON.stringify(finalReviewState)).not.toContain(token)
 
     latestHumanText = undefined
     const editRequest = {
       permission: "edit",
-      sessionID: "ses_luna_test",
+      sessionID: "ses_final_review_test",
       patterns: ["README.md"],
       metadata: { filepath: "README.md", diff: "+Run npm start to launch locally." },
     }
     const edit = { status: "allow", message: "" }
     await hooks["permission.ask"](editRequest, edit)
     expect(edit.status).toBe("allow")
-    expect(seen.slice(-2)).toEqual(["jev", "luna"])
-    const editContext = lunaState?.context
+    expect(seen.slice(-2)).toEqual(["jev", "final_review"])
+    const editContext = finalReviewState?.context
     expect(
       editContext && typeof editContext === "object" && "immediate_effect" in editContext
         ? editContext.immediate_effect
@@ -1881,12 +1881,12 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
     await hooks.config({ agent: {} })
     const noFormatter = { status: "ask" }
     await hooks["permission.ask"](editRequest, noFormatter)
-    expect((lunaState?.context as { immediate_effect?: string })?.immediate_effect).toContain(
+    expect((finalReviewState?.context as { immediate_effect?: string })?.immediate_effect).toContain(
       "No formatter runs: formatters are disabled",
     )
     await hooks.config({ agent: {}, formatter: {} })
     await hooks["permission.ask"](editRequest, { status: "ask" })
-    expect((lunaState?.context as { immediate_effect?: string })?.immediate_effect).toContain(
+    expect((finalReviewState?.context as { immediate_effect?: string })?.immediate_effect).toContain(
       "can immediately run a project-configured formatter",
     )
 
@@ -1918,8 +1918,8 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
       secretRefEdit,
     )
     expect(secretRefEdit.status).toBe("allow")
-    expect(JSON.stringify(lunaState)).toContain("data.google_secret_manager_secret_version.grafana_api_key.secret_data")
-    expect(JSON.stringify(lunaState)).not.toContain("grafana-logs-reader")
+    expect(JSON.stringify(finalReviewState)).toContain("data.google_secret_manager_secret_version.grafana_api_key.secret_data")
+    expect(JSON.stringify(finalReviewState)).not.toContain("grafana-logs-reader")
     // Writing code that will fetch a token is not fetching one.
     const syncerEdit = { status: "ask", message: "" }
     await hooks["permission.ask"](
@@ -1994,7 +1994,7 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
         worktreeEdit,
       )
       expect(worktreeEdit.status).toBe("allow")
-      expect((lunaState?.context as { role_policy?: string })?.role_policy).toContain(
+      expect((finalReviewState?.context as { role_policy?: string })?.role_policy).toContain(
         "changing files inside dedicated worktrees",
       )
       const escapedFile = path.join(worktree, "escape", "iam", "main.tf")
@@ -2013,18 +2013,18 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
       rmSync(worktree, { recursive: true, force: true })
       rmSync(outsideTarget, { recursive: true, force: true })
     }
-    expect((lunaState?.context as { local_rules?: string[] })?.local_rules).toContain(
+    expect((finalReviewState?.context as { local_rules?: string[] })?.local_rules).toContain(
       "human-only policy or data change may apply",
     )
-    expect(seen.slice(-2)).toEqual(["jev", "luna"])
+    expect(seen.slice(-2)).toEqual(["jev", "final_review"])
 
     await hooks["tool.execute.before"](
-      { tool: "grep", sessionID: "ses_luna_test", callID: "call_luna_grep" },
+      { tool: "grep", sessionID: "ses_final_review_test", callID: "call_final_review_grep" },
       { args: { pattern: "main", path: "src" } },
     )
     const grepRequest = {
       permission: "grep",
-      sessionID: "ses_luna_test",
+      sessionID: "ses_final_review_test",
       patterns: ["main"],
       metadata: {
         pattern: "main",
@@ -2033,38 +2033,38 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
         path_resolution: "lexical; symlinks and matched files are not yet verified",
         core_trusted_builtin: true,
       },
-      tool: { callID: "call_luna_grep" },
+      tool: { callID: "call_final_review_grep" },
     }
     const grepAllowed = { status: "ask" }
     await hooks["permission.ask"](grepRequest, grepAllowed)
     expect(grepAllowed.status).toBe("allow")
-    expect((lunaState?.action as { search?: { requested_path?: string } })?.search?.requested_path).toBe(
+    expect((finalReviewState?.action as { search?: { requested_path?: string } })?.search?.requested_path).toBe(
       path.join(directory, "src"),
     )
     // A path the gate cannot resolve keeps core's unverified note.
-    expect((lunaState?.action as { search?: { resolution?: string } })?.search?.resolution).toBe(
+    expect((finalReviewState?.action as { search?: { resolution?: string } })?.search?.resolution).toBe(
       "lexical; symlinks and matched files are not yet verified",
     )
     await hooks["tool.execute.before"](
-      { tool: "grep", sessionID: "ses_luna_test", callID: "call_luna_grep_lib" },
+      { tool: "grep", sessionID: "ses_final_review_test", callID: "call_final_review_grep_lib" },
       { args: { pattern: "main", path: "lib" } },
     )
     await hooks["permission.ask"](
       {
         ...grepRequest,
         metadata: { ...grepRequest.metadata, path: "lib", requested_path: path.join(directory, "lib") },
-        tool: { callID: "call_luna_grep_lib" },
+        tool: { callID: "call_final_review_grep_lib" },
       },
       { status: "ask" },
     )
-    expect((lunaState?.action as { search?: { resolution?: string } })?.search?.resolution).toContain(
+    expect((finalReviewState?.action as { search?: { resolution?: string } })?.search?.resolution).toContain(
       "resolved locally by the gate",
     )
     await hooks["tool.execute.before"](
-      { tool: "grep", sessionID: "ses_luna_test", callID: "call_luna_grep_token" },
+      { tool: "grep", sessionID: "ses_final_review_test", callID: "call_final_review_grep_token" },
       { args: { pattern: "token", path: "src" } },
     )
-    const tokenQuery = { ...grepRequest, patterns: ["token"], metadata: { ...grepRequest.metadata, pattern: "token" }, tool: { callID: "call_luna_grep_token" } }
+    const tokenQuery = { ...grepRequest, patterns: ["token"], metadata: { ...grepRequest.metadata, pattern: "token" }, tool: { callID: "call_final_review_grep_token" } }
     const tokenQueryOutput = { status: "ask" }
     await hooks["permission.ask"](tokenQuery, tokenQueryOutput)
     expect(tokenQueryOutput.status).toBe("allow")
@@ -2074,38 +2074,38 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
       sensitiveTarget,
     )
     expect(sensitiveTarget.status).toBe("ask")
-    lunaContent = JSON.stringify({ choice: "ask", reason: "The search target is unclear." })
+    finalReviewContent = JSON.stringify({ choice: "ask", reason: "The search target is unclear." })
     const grepAsked = { status: "allow" }
     await hooks["permission.ask"](grepRequest, grepAsked)
     expect(grepAsked.status).toBe("ask")
-    lunaContent = JSON.stringify({ choice: "allow", reason: "The local request is in scope." })
+    finalReviewContent = JSON.stringify({ choice: "allow", reason: "The local request is in scope." })
 
     await hooks["tool.definition"](
       { toolID: "goal_block" },
       { description: "Stop the current goal as blocked and state the concrete external requirement.", parameters: {} },
     )
     await hooks["tool.execute.before"](
-      { tool: "goal_block", sessionID: "ses_luna_test", callID: "call_luna_goal_block" },
+      { tool: "goal_block", sessionID: "ses_final_review_test", callID: "call_final_review_goal_block" },
       { args: { blocker: "Waiting for a fixture." } },
     )
     const goalRequest = {
       permission: "tool_call",
-      sessionID: "ses_luna_test",
+      sessionID: "ses_final_review_test",
       patterns: ["goal_block"],
       metadata: { tool: "goal_block", trusted_builtin: false, internal_permission_check: false },
-      tool: { callID: "call_luna_goal_block" },
+      tool: { callID: "call_final_review_goal_block" },
     }
     const goalAllowed = { status: "ask" }
     await hooks["permission.ask"](goalRequest, goalAllowed)
     expect(goalAllowed.status).toBe("ask")
-    expect(seen.slice(-2)).toEqual(["jev", "luna"])
-    expect(lunaState?.action).toMatchObject({
+    expect(seen.slice(-2)).toEqual(["jev", "final_review"])
+    expect(finalReviewState?.action).toMatchObject({
       permission: "tool_call",
       tool: "goal_block",
       tool_description: "Stop the current goal as blocked and state the concrete external requirement.",
       args: { blocker: "Waiting for a fixture." },
     })
-    expect((lunaState?.action as { trusted_effect?: string })?.trusted_effect).toBeUndefined()
+    expect((finalReviewState?.action as { trusted_effect?: string })?.trusted_effect).toBeUndefined()
     const forgedOrigin = { status: "allow" }
     await hooks["permission.ask"](
       {
@@ -2122,33 +2122,33 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
       forgedOrigin,
     )
     expect(forgedOrigin.status).toBe("ask")
-    expect(JSON.stringify(lunaState)).not.toContain("core_plugin_origin")
-    lunaContent = JSON.stringify({ choice: "ask", reason: "The tool's effect is unclear." })
+    expect(JSON.stringify(finalReviewState)).not.toContain("core_plugin_origin")
+    finalReviewContent = JSON.stringify({ choice: "ask", reason: "The tool's effect is unclear." })
     const goalAsked = { status: "allow" }
     await hooks["permission.ask"](goalRequest, goalAsked)
     expect(goalAsked.status).toBe("ask")
-    expect(seen.slice(-2)).toEqual(["jev", "luna"])
-    lunaContent = JSON.stringify({ choice: "allow", reason: "The local request is in scope." })
+    expect(seen.slice(-2)).toEqual(["jev", "final_review"])
+    finalReviewContent = JSON.stringify({ choice: "allow", reason: "The local request is in scope." })
 
     await hooks["tool.execute.before"](
-      { tool: "glob", sessionID: "ses_luna_test", callID: "call_luna_hidden" },
+      { tool: "glob", sessionID: "ses_final_review_test", callID: "call_final_review_hidden" },
       { args: { pattern: "**/.env*" } },
     )
     const hidden = { status: "allow" }
     await hooks["permission.ask"](
       {
         permission: "glob",
-        sessionID: "ses_luna_test",
+        sessionID: "ses_final_review_test",
         patterns: ["**/.env*"],
         metadata: { pattern: "**/.env*", matched_paths: [], truncated: false, core_trusted_builtin: true },
-        tool: { callID: "call_luna_hidden" },
+        tool: { callID: "call_final_review_hidden" },
       },
       hidden,
     )
     expect(hidden.status).toBe("ask")
 
     await hooks["tool.execute.before"](
-      { tool: "glob", sessionID: "ses_luna_test", callID: "call_luna_safe_wildcard" },
+      { tool: "glob", sessionID: "ses_final_review_test", callID: "call_final_review_safe_wildcard" },
       { args: { pattern: "**/*.ts" } },
     )
     const safeWildcard = { status: "ask" }
@@ -2156,7 +2156,7 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
       {
         ...request,
         patterns: ["**/*.ts"],
-        tool: { callID: "call_luna_safe_wildcard" },
+        tool: { callID: "call_final_review_safe_wildcard" },
         metadata: {
           pattern: "**/*.ts",
           matched_paths: [path.join(directory, "src/main.ts")],
@@ -2169,14 +2169,14 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
     expect(safeWildcard.status).toBe("allow")
 
     await hooks["tool.execute.before"](
-      { tool: "glob", sessionID: "ses_luna_test", callID: "call_luna_wildcard" },
+      { tool: "glob", sessionID: "ses_final_review_test", callID: "call_final_review_wildcard" },
       { args: { pattern: "**/*.ts" } },
     )
     const wildcard = { status: "allow" }
     await hooks["permission.ask"](
       {
         permission: "glob",
-        sessionID: "ses_luna_test",
+        sessionID: "ses_final_review_test",
         patterns: ["**/*.ts"],
         metadata: {
           pattern: "**/*.ts",
@@ -2184,23 +2184,23 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
           truncated: false,
           core_trusted_builtin: true,
         },
-        tool: { callID: "call_luna_wildcard" },
+        tool: { callID: "call_final_review_wildcard" },
       },
       wildcard,
     )
     expect(wildcard.status).toBe("ask")
     expect(JSON.stringify(jevState)).not.toContain("Alice-1987-08-30")
-    expect(JSON.stringify(lunaState)).not.toContain("Alice-1987-08-30")
+    expect(JSON.stringify(finalReviewState)).not.toContain("Alice-1987-08-30")
 
     await hooks["tool.execute.before"](
-      { tool: "glob", sessionID: "ses_luna_test", callID: "call_luna_outside" },
+      { tool: "glob", sessionID: "ses_final_review_test", callID: "call_final_review_outside" },
       { args: { pattern: "**/*.ts", path: "/etc" } },
     )
     const outside = { status: "allow" }
     await hooks["permission.ask"](
       {
         permission: "glob",
-        sessionID: "ses_luna_test",
+        sessionID: "ses_final_review_test",
         patterns: ["**/*.ts"],
         metadata: {
           pattern: "**/*.ts",
@@ -2209,23 +2209,23 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
           truncated: false,
           core_trusted_builtin: true,
         },
-        tool: { callID: "call_luna_outside" },
+        tool: { callID: "call_final_review_outside" },
       },
       outside,
     )
     expect(outside.status).toBe("ask")
 
     // A glob with an explicit path under the workdir is eligible like one
-    // without a path; Luna's allow is honoured.
+    // without a path; the final reviewer's allow is honoured.
     await hooks["tool.execute.before"](
-      { tool: "glob", sessionID: "ses_luna_test", callID: "call_luna_glob_path" },
+      { tool: "glob", sessionID: "ses_final_review_test", callID: "call_final_review_glob_path" },
       { args: { pattern: "*.ts", path: "src" } },
     )
     const withPath = { status: "ask" }
     await hooks["permission.ask"](
       {
         permission: "glob",
-        sessionID: "ses_luna_test",
+        sessionID: "ses_final_review_test",
         patterns: ["*.ts"],
         metadata: {
           pattern: "*.ts",
@@ -2234,7 +2234,7 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
           truncated: false,
           core_trusted_builtin: true,
         },
-        tool: { callID: "call_luna_glob_path" },
+        tool: { callID: "call_final_review_glob_path" },
       },
       withPath,
     )
@@ -2242,14 +2242,14 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
 
     const globWithMatches = async (callID: string, file: string) => {
       await hooks["tool.execute.before"](
-        { tool: "glob", sessionID: "ses_luna_test", callID },
+        { tool: "glob", sessionID: "ses_final_review_test", callID },
         { args: { pattern: "**/*migration*" } },
       )
       const output = { status: "ask" }
       await hooks["permission.ask"](
         {
           permission: "glob",
-          sessionID: "ses_luna_test",
+          sessionID: "ses_final_review_test",
           patterns: ["**/*migration*"],
           metadata: {
             pattern: "**/*migration*",
@@ -2290,8 +2290,8 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
     )
     expect(sensitiveMatch.status).toBe("ask")
     expect(seen).toHaveLength(beforeSensitive + 1)
-    expect(seen.at(-1)).toBe("luna")
-    expect(JSON.stringify(lunaState)).not.toContain("patient-123-45-6789.ts")
+    expect(seen.at(-1)).toBe("final_review")
+    expect(JSON.stringify(finalReviewState)).not.toContain("patient-123-45-6789.ts")
 
     // Reads carry the gate's local scan, never the file content.
     const scanDir = mkdtempSync(path.join(tmpdir(), "permission-read-scan-"))
@@ -2303,70 +2303,70 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
       writeFileSync(secretFile, `deploy key ${tokenValue}\n`)
       const readRequest = (file: string, callID: string) => ({
         permission: "read",
-        sessionID: "ses_luna_test",
+        sessionID: "ses_final_review_test",
         patterns: [file],
         metadata: { filepath: file },
         tool: { callID },
       })
       await hooks["tool.execute.before"](
-        { tool: "read", sessionID: "ses_luna_test", callID: "call_scan_clean" },
+        { tool: "read", sessionID: "ses_final_review_test", callID: "call_scan_clean" },
         { args: { filePath: cleanFile } },
       )
       const clean = { status: "ask" }
       await hooks["permission.ask"](readRequest(cleanFile, "call_scan_clean"), clean)
       expect(clean.status).toBe("allow")
-      expect(lunaState?.action).toMatchObject({
+      expect(finalReviewState?.action).toMatchObject({
         // `token = var.x` is a reference, not an assigned value.
         local_evidence: { literal_scan: "none_found", assignment_like_keys: false },
       })
-      expect(JSON.stringify(lunaState)).not.toContain("grafana_data_source")
+      expect(JSON.stringify(finalReviewState)).not.toContain("grafana_data_source")
       expect(JSON.stringify(jevQuestions)).toContain("Is there concrete evidence")
       expect(JSON.stringify(jevQuestions)).toContain("Count only what this action does now")
       expect(JSON.stringify(jevQuestions)).toContain("concrete evidence that this action outputs, persists, copies, or transmits Google Cloud credentials")
       expect(JSON.stringify(jevState)).not.toContain("REDACTED")
-      expect((lunaState?.context as { immediate_effect?: string })?.immediate_effect).toContain(
+      expect((finalReviewState?.context as { immediate_effect?: string })?.immediate_effect).toContain(
         "nothing leaves this host",
       )
 
       await hooks["tool.execute.before"](
-        { tool: "read", sessionID: "ses_luna_test", callID: "call_scan_secret" },
+        { tool: "read", sessionID: "ses_final_review_test", callID: "call_scan_secret" },
         { args: { filePath: secretFile } },
       )
       const secret = { status: "allow", message: "" }
       await hooks["permission.ask"](readRequest(secretFile, "call_scan_secret"), secret)
       expect(secret.status).toBe("ask")
       expect(secret.message).toContain("credential-like literal in read target")
-      expect(JSON.stringify(lunaState)).not.toContain(tokenValue)
+      expect(JSON.stringify(finalReviewState)).not.toContain(tokenValue)
       expect(JSON.stringify(jevState)).not.toContain(tokenValue)
       // The human approves the asked read; the tool then executes.
       await hooks["tool.execute.after"](
-        { tool: "read", sessionID: "ses_luna_test", callID: "call_scan_secret", args: {} },
+        { tool: "read", sessionID: "ses_final_review_test", callID: "call_scan_secret", args: {} },
         { title: "", output: "", metadata: {} },
       )
 
       await hooks["tool.execute.before"](
-        { tool: "read", sessionID: "ses_luna_test", callID: "call_scan_dir" },
+        { tool: "read", sessionID: "ses_final_review_test", callID: "call_scan_dir" },
         { args: { filePath: scanDir } },
       )
       await hooks["permission.ask"](readRequest(scanDir, "call_scan_dir"), { status: "ask" })
-      expect(lunaState?.action).toMatchObject({
+      expect(finalReviewState?.action).toMatchObject({
         local_evidence: { literal_scan: "not_scanned", not_scanned_reason: "directory" },
       })
       // A root-relative pattern without a filepath still gets evidence.
       await hooks["tool.execute.before"](
-        { tool: "read", sessionID: "ses_luna_test", callID: "call_scan_relative" },
+        { tool: "read", sessionID: "ses_final_review_test", callID: "call_scan_relative" },
         { args: { filePath: cleanFile } },
       )
       await hooks["permission.ask"](
-        { permission: "read", sessionID: "ses_luna_test", patterns: [cleanFile.slice(1)], metadata: {}, tool: { callID: "call_scan_relative" } },
+        { permission: "read", sessionID: "ses_final_review_test", patterns: [cleanFile.slice(1)], metadata: {}, tool: { callID: "call_scan_relative" } },
         { status: "ask" },
       )
-      expect(lunaState?.action).toMatchObject({ local_evidence: { literal_scan: "none_found" } })
+      expect(finalReviewState?.action).toMatchObject({ local_evidence: { literal_scan: "none_found" } })
       await hooks["permission.ask"](readRequest(scanDir, "call_scan_dir"), { status: "ask" })
-      expect(lunaState?.action).toMatchObject({
+      expect(finalReviewState?.action).toMatchObject({
         local_evidence: { literal_scan: "not_scanned", not_scanned_reason: "directory" },
       })
-      const decisions = (lunaState?.context as { session_decisions?: Record<string, unknown>[] })?.session_decisions
+      const decisions = (finalReviewState?.context as { session_decisions?: Record<string, unknown>[] })?.session_decisions
       expect(decisions).toContainEqual({
         permission: "read",
         target: secretFile,
@@ -2374,22 +2374,22 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
         engine: "rule",
         human_approved: true,
       })
-      expect(decisions).toContainEqual({ permission: "read", target: cleanFile, decision: "allow", engine: "luna" })
+      expect(decisions).toContainEqual({ permission: "read", target: cleanFile, decision: "allow", engine: "final_review" })
     } finally {
       rmSync(scanDir, { recursive: true, force: true })
     }
 
-    // Luna may approve a requested feature-branch push or PR update; shared
+    // The final reviewer may approve a requested feature-branch push or PR update; shared
     // branches, force pushes, bare pushes, and merges stay human gates.
     const shell = async (command: string) => {
       const output = { status: "ask" }
       await hooks["permission.ask"](
-        { permission: "bash", sessionID: "ses_luna_test", patterns: [command], metadata: { command } },
+        { permission: "bash", sessionID: "ses_final_review_test", patterns: [command], metadata: { command } },
         output,
       )
       return output.status
     }
-    lunaContent = JSON.stringify({ choice: "allow", reason: "The human asked to push and open the PR." })
+    finalReviewContent = JSON.stringify({ choice: "allow", reason: "The human asked to push and open the PR." })
     expect(await shell("git push -u origin feature-x")).toBe("allow")
     expect(await shell("gh pr create --draft --title Fix --body Details")).toBe("allow")
     for (const command of [
@@ -2401,22 +2401,22 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
       "gh pr merge 12",
     ])
       expect(await shell(command)).toBe("ask")
-    lunaContent = JSON.stringify({ choice: "ask", reason: "No push was requested." })
+    finalReviewContent = JSON.stringify({ choice: "ask", reason: "No push was requested." })
     expect(await shell("git push -u origin feature-x")).toBe("ask")
-    lunaContent = JSON.stringify({ choice: "allow", reason: "The local request is in scope." })
+    finalReviewContent = JSON.stringify({ choice: "allow", reason: "The local request is in scope." })
 
-    // A read-only Google API GET with the existing login is Luna's to confirm;
+    // A read-only Google API GET with the existing login is the final reviewer's to confirm;
     // other token uses, writes, and non-Google hosts stay human gates.
     const tokenCall = async (full: string) => {
       const output = { status: "ask" }
       const patterns = [full, ...(full.includes("$(gcloud auth print-access-token)") ? ["gcloud auth print-access-token"] : [])]
       await hooks["permission.ask"](
-        { permission: "bash", sessionID: "ses_luna_test", patterns, metadata: { command: full } },
+        { permission: "bash", sessionID: "ses_final_review_test", patterns, metadata: { command: full } },
         output,
       )
       return output.status
     }
-    lunaContent = JSON.stringify({ choice: "allow", reason: "Read-only metrics query for the investigation." })
+    finalReviewContent = JSON.stringify({ choice: "allow", reason: "Read-only metrics query for the investigation." })
     const header = '-H "Authorization: Bearer $(gcloud auth print-access-token)"'
     expect(
       await tokenCall(`curl -fsS ${header} "https://monitoring.googleapis.com/v3/projects/e2b-staging/timeSeries?filter=x"`),
@@ -2429,49 +2429,54 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
       "echo $(gcloud auth print-access-token)",
     ])
       expect(await tokenCall(full)).toBe("ask")
-    lunaContent = JSON.stringify({ choice: "ask", reason: "Not needed for the task." })
+    finalReviewContent = JSON.stringify({ choice: "ask", reason: "Not needed for the task." })
     expect(
       await tokenCall(`curl -fsS ${header} "https://monitoring.googleapis.com/v3/projects/e2b-staging/timeSeries?filter=x"`),
     ).toBe("ask")
-    lunaContent = JSON.stringify({ choice: "allow", reason: "The local request is in scope." })
+    finalReviewContent = JSON.stringify({ choice: "allow", reason: "The local request is in scope." })
 
-    const researcher = await gateForTest(directory, "researcher", lunaReview)
+    const researcher = await gateForTest(directory, "researcher", finalReviewReview)
     await researcher.provider.models({ models: {} }, { auth: { type: "api", key: "fake-test-key" } })
     await researcher["tool.execute.before"](
-      { tool: "glob", sessionID: "ses_luna_test", callID: "call_luna_glob" },
+      { tool: "glob", sessionID: "ses_final_review_test", callID: "call_final_review_glob" },
       { args: { pattern: "src/main.ts" } },
     )
-    // Read-only is judged per action: Luna's read-only allow plus Jev's
+    // Read-only is judged per action: the final reviewer's read-only allow plus Jev's
     // independent low mutation score lets a researcher proceed, even though
     // Jev's overall verdict is an uncertain deny.
     const beforeResearcher = seen.length
     const researcherGlob = { status: "ask", message: "" }
     await researcher["permission.ask"](request, researcherGlob)
     expect(researcherGlob.status).toBe("allow")
-    expect(seen.slice(beforeResearcher)).toEqual(["jev", "luna"])
-    expect((lunaState?.context as { role_policy?: string })?.role_policy).toContain("Read-only inspection only")
-    expect((lunaState?.context as { role_policy?: string })?.role_policy).toContain("gh api GET calls, are allowed inspection")
+    expect(seen.slice(beforeResearcher)).toEqual(["jev", "final_review"])
+    expect((finalReviewState?.context as { role_policy?: string })?.role_policy).toContain("Read-only inspection only")
+    expect((finalReviewState?.context as { role_policy?: string })?.role_policy).toContain("gh api GET calls, are allowed inspection")
 
+    // A built-in glob cannot mutate anything, so Jev's mutation score does
+    // not hold it back. Without core attestation it is not exempt.
     jevMutation = 0.4
-    const researcherMutation = { status: "allow", message: "" }
+    const researcherMutation = { status: "ask", message: "" }
     await researcher["permission.ask"](request, researcherMutation)
-    expect(researcherMutation.status).toBe("ask")
-    expect(researcherMutation.message).toBe(
-      "Luna allows, but Jev did not judge this read-only agent's action free of mutation",
+    expect(researcherMutation.status).toBe("allow")
+    const untrustedGlob = { status: "allow", message: "" }
+    await researcher["permission.ask"](
+      { ...request, metadata: { ...request.metadata, core_trusted_builtin: false } },
+      untrustedGlob,
     )
+    expect(untrustedGlob.status).toBe("ask")
     jevMutation = 0.01
 
-    lunaContent = JSON.stringify({ choice: "ask", reason: "This could change the worktree." })
-    const researcherLunaAsk = { status: "allow" }
-    await researcher["permission.ask"](request, researcherLunaAsk)
-    expect(researcherLunaAsk.status).toBe("ask")
-    lunaContent = JSON.stringify({ choice: "allow", reason: "The local request is in scope." })
+    finalReviewContent = JSON.stringify({ choice: "ask", reason: "This could change the worktree." })
+    const researcherFinalReviewAsk = { status: "allow" }
+    await researcher["permission.ask"](request, researcherFinalReviewAsk)
+    expect(researcherFinalReviewAsk.status).toBe("ask")
+    finalReviewContent = JSON.stringify({ choice: "allow", reason: "The local request is in scope." })
 
     const researcherEdit = { status: "allow" }
     await researcher["permission.ask"](
       {
         permission: "edit",
-        sessionID: "ses_luna_test",
+        sessionID: "ses_final_review_test",
         patterns: ["README.md"],
         metadata: { filepath: "README.md", diff: "+note" },
       },

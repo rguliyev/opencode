@@ -273,8 +273,8 @@ async function configuredExternalPatternAllowed(pattern: unknown) {
 const maxContextCommandBytes = 8 * 1024
 
 const endpoint = "https://openrouter.ai/api/alpha/decisions"
-const lunaModel = "google/gemini-3.8-flash"
-const lunaTimeoutMs = 8_000
+const finalReviewerModel = "google/gemini-3.8-flash"
+const finalReviewTimeoutMs = 8_000
 const requestedModel = "typesafe/jev-1.13"
 const acceptedModels = new Set([requestedModel, "typesafe/jev-1.13-20260917"])
 const minConfidence = 0.6
@@ -410,7 +410,7 @@ const reviewerMutationThreshold = 0.25
 // A read-only role is enforced by judging the effect of each request, not by
 // the agent's name: tools such as git, find, or sed are read-only in some
 // forms and mutating in others. Jev's independent mutation score must agree
-// with Luna's read-only allow before a read-only agent proceeds unattended.
+// with the final reviewer's read-only allow before a read-only agent proceeds unattended.
 function jevJudgedReadOnly(answers: JevReview["raw"]) {
   const answer = answers?.reviewer_mutation
   return answer?.type === "noul" && finiteProbability(answer.noul) && answer.noul < reviewerMutationThreshold
@@ -527,11 +527,11 @@ function requiresHuman(command: string) {
 }
 
 // Publishing the human's own work (push of a named feature branch, PR
-// create/edit/ready/comment) may be approved by Luna when the direct human
+// create/edit/ready/comment) may be approved by the final reviewer when the direct human
 // messages explicitly ask for it. Everything else in requiresHumanOperation,
 // and any push that could hit a shared branch or rewrite history, stays a
 // human gate.
-function lunaMayApprovePublish(command: string) {
+function finalReviewMayApprovePublish(command: string) {
   const parts = commandParts(command)
   const name = executableName(parts.verb)
   if (name === "gh")
@@ -1163,7 +1163,7 @@ function combine(response: JevResponse, reviewer: boolean): ReviewResult {
 }
 
 // Concrete local blockers and configured denials remain human gates. Jev's
-// probabilities are evidence for Luna, not a second veto after Luna allows.
+// probabilities are evidence for the final reviewer, not a second veto after the final reviewer allows.
 function sensitiveFilename(value: string) {
   return (
     /(?:^|[/])\.env(?:$|[.*?/])/i.test(value) ||
@@ -1285,7 +1285,7 @@ function sensitiveMatchedPath(file: string) {
 // any session ID it is given, so an unverified task_id must never auto-allow.
 type TaskContinuation = "absent" | "verified" | "unverified"
 
-function lunaMayAutoAllowTask(action: ActionEvidence, continuation: TaskContinuation) {
+function finalReviewMayAutoAllowTask(action: ActionEvidence, continuation: TaskContinuation) {
   if (action.permission !== "task" || action.tool !== "task" || action.patterns.length !== 1) return false
   if (!isRecord(action.args)) return false
   const args = action.args
@@ -1380,13 +1380,13 @@ function executionAgent(input: PermissionInput) {
     : undefined
 }
 
-function lunaMayAutoAllowAction(
+function finalReviewMayAutoAllowAction(
   action: ActionEvidence,
   context: ReviewContext,
   matchedPaths: unknown,
   continuation: TaskContinuation = "absent",
 ) {
-  if (action.permission === "task") return lunaMayAutoAllowTask(action, continuation)
+  if (action.permission === "task") return finalReviewMayAutoAllowTask(action, continuation)
   if (action.permission === "external_directory") return false
   if (action.permission === "tool_call")
     return (
@@ -1457,7 +1457,7 @@ function lunaMayAutoAllowAction(
   return true
 }
 
-type LunaResult = {
+type FinalReviewResult = {
   status: "score" | "not_needed" | "withheld" | "unavailable" | "invalid_response" | "timeout"
   choice?: "allow" | "ask"
   reason?: string
@@ -1476,7 +1476,7 @@ type LunaResult = {
     | "schema"
 }
 
-function lunaAudit(result: LunaResult) {
+function finalReviewAudit(result: FinalReviewResult) {
   const safeReason = result.reason ? sanitizeReviewText(result.reason) : undefined
   return {
     status: result.status,
@@ -1490,12 +1490,12 @@ function lunaAudit(result: LunaResult) {
   }
 }
 
-function lunaAdvisory(result: { status?: string; choice?: string; reason?: string } | undefined) {
+function finalReviewAdvisory(result: { status?: string; choice?: string; reason?: string } | undefined) {
   if (result?.status && !["score", "not_needed"].includes(result.status))
-    return `Luna could not decide (${result.status}); human review required`
+    return `The final reviewer could not decide (${result.status}); human review required`
   if (result?.status !== "score") return undefined
-  if (result.choice === "allow") return "Luna allows, but a local safety rule requires approval"
-  if (result.choice === "ask") return `Luna asks for human review${result.reason ? `: ${result.reason}` : ""}`
+  if (result.choice === "allow") return "The final reviewer allows, but a local safety rule requires approval"
+  if (result.choice === "ask") return `The final reviewer asks for human review${result.reason ? `: ${result.reason}` : ""}`
   return undefined
 }
 
@@ -2161,13 +2161,13 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
     return { ...failure, attempts: 2 }
   }
 
-  async function reviewLuna(
+  async function reviewFinal(
     command: string,
     scripts: ScriptEvidence[],
     context: ReviewContext,
     note?: string,
     action?: ActionEvidence,
-  ): Promise<LunaResult> {
+  ): Promise<FinalReviewResult> {
     const reviewState = sanitizeReviewValue(
       action ? { action, context } : { command, scripts, context, ...(note ? { scripts_unavailable: note } : {}) },
     )
@@ -2204,15 +2204,15 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
     // A transient timeout or malformed reply is retried once with a fresh
     // deadline; a second failure still asks the human.
     const fittedState = fitReviewState(safeState)
-    const first = await lunaAttempt(system, fittedState)
+    const first = await finalReviewAttempt(system, fittedState)
     if (first.status !== "timeout" && first.status !== "invalid_response") return first
-    const second = await lunaAttempt(system, fittedState)
+    const second = await finalReviewAttempt(system, fittedState)
     return { ...second, attempts: 2 }
   }
 
-  async function lunaAttempt(system: string, safeState: unknown): Promise<LunaResult> {
+  async function finalReviewAttempt(system: string, safeState: unknown): Promise<FinalReviewResult> {
     const started = Date.now()
-    const signal = AbortSignal.timeout(lunaTimeoutMs)
+    const signal = AbortSignal.timeout(finalReviewTimeoutMs)
     try {
       if (!reviewPermission) return { status: "unavailable", latency_ms: Date.now() - started }
       if (signal.aborted) return { status: "timeout", latency_ms: Date.now() - started }
@@ -2233,7 +2233,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
         return { status: "invalid_response", diagnostic: "schema", latency_ms: Date.now() - started }
       if ("status" in answer && answer.status === "invalid_response" && answer.diagnostic === "json_content")
         return { status: "invalid_response", diagnostic: "json_content", latency_ms: Date.now() - started }
-      if (answer.model !== lunaModel)
+      if (answer.model !== finalReviewerModel)
         return { status: "invalid_response", diagnostic: "model", latency_ms: Date.now() - started }
       if (
         Object.keys(answer).sort().join(",") !== "choice,model,reason" ||
@@ -2255,7 +2255,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
     }
   }
 
-  async function reviewLunaWithoutEvidence(input: PermissionInput, reasons: string[]): Promise<LunaResult> {
+  async function reviewFinalWithoutEvidence(input: PermissionInput, reasons: string[]): Promise<FinalReviewResult> {
     const session = await sessionInfo(input.sessionID)
     const context: ReviewContext = {
       agent: executionAgent(input) ?? "unverified",
@@ -2266,7 +2266,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
       immediate_effect: immediateEffect(input.permission, formattersDisabled),
     }
     const tool = safeContextText(toolCalls.get(input.tool?.callID ?? "")?.tool ?? input.metadata?.tool, 100)
-    return reviewLuna("", [], context, undefined, {
+    return reviewFinal("", [], context, undefined, {
       permission: input.permission,
       patterns: [],
       ...(tool ? { tool } : {}),
@@ -2306,12 +2306,12 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
         decision: status,
         engine,
       })
-      if (status === "ask" && !extra.luna) {
-        const fallback = await reviewLunaWithoutEvidence(input, reasons).catch(
-          () => ({ status: "unavailable" }) as LunaResult,
+      if (status === "ask" && !extra.final_review) {
+        const fallback = await reviewFinalWithoutEvidence(input, reasons).catch(
+          () => ({ status: "unavailable" }) as FinalReviewResult,
         )
-        extra = { ...extra, luna: lunaAudit(fallback) }
-        const message = sanitizeReviewText([output.message, lunaAdvisory(fallback)].filter(Boolean).join(" — "))
+        extra = { ...extra, final_review: finalReviewAudit(fallback) }
+        const message = sanitizeReviewText([output.message, finalReviewAdvisory(fallback)].filter(Boolean).join(" — "))
         if (message.complete && !containsCredentialLiteralUnmasked(message.value)) output.message = message.value
       }
       output.status = status
@@ -2560,7 +2560,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
     // Only high-precision detections force a human: known token formats,
     // keys, JWTs, URL passwords, auth headers, and credential flags. A broad
     // `secret = "..."` assignment is still hidden from reviewers, but Terraform
-    // naming or referencing a secret is ordinary and Luna judges it.
+    // naming or referencing a secret is ordinary and the final reviewer judges it.
     // Check each string value unescaped: in the serialized action a diff's
     // quotes appear as \", which the quoted-literal detectors cannot match.
     const actionStrings = stringLeaves(action)
@@ -2619,19 +2619,26 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
         if (scope) reasons.push(scope)
     const rawAnswers = result.raw
     const verdictAnswer = rawAnswers?.verdict
-    // Custom dispatch calls have no later built-in permission check, so Luna
+    // Custom dispatch calls have no later built-in permission check, so the final reviewer
     // must see them even when Jev allows.
-    const lunaNeeded = !result.allow || reasons.length > 0 || input.permission === "tool_call"
-    const luna = lunaNeeded
-      ? await reviewLuna(safeRaw, [], reasons.length ? { ...context, local_rules: reasons } : context, undefined, action)
-      : ({ status: "not_needed" } as LunaResult)
-    const lunaAllow =
-      lunaNeeded &&
+    const finalReviewNeeded = !result.allow || reasons.length > 0 || input.permission === "tool_call"
+    const finalReview = finalReviewNeeded
+      ? await reviewFinal(safeRaw, [], reasons.length ? { ...context, local_rules: reasons } : context, undefined, action)
+      : ({ status: "not_needed" } as FinalReviewResult)
+    // Core's built-in read, search, and skill-load tools cannot mutate
+    // anything, so Jev's mutation score adds nothing for them; it still
+    // gates a read-only agent's shell commands, where git and friends can
+    // go either way.
+    const inherentlyReadOnly =
+      action.metadata?.core_trusted_builtin === true &&
+      ["read", "glob", "grep", "list", "lsp", "skill"].includes(input.permission)
+    const finalReviewAllow =
+      finalReviewNeeded &&
       reasons.length === 0 &&
-      (!reviewer || jevJudgedReadOnly(rawAnswers)) &&
-      lunaMayAutoAllowAction(action, context, matchedPaths, continuation) &&
-      luna.status === "score" &&
-      luna.choice === "allow"
+      (!reviewer || inherentlyReadOnly || jevJudgedReadOnly(rawAnswers)) &&
+      finalReviewMayAutoAllowAction(action, context, matchedPaths, continuation) &&
+      finalReview.status === "score" &&
+      finalReview.choice === "allow"
     const details = {
       action_sha256: digest,
       // Generic tool arguments can be arbitrary file content or MCP payloads.
@@ -2640,7 +2647,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
       redactions: sanitized.kinds,
       kev_basis: "shell_checkpoint_advisory_only",
       kev,
-      luna: lunaAudit(luna),
+      final_review: finalReviewAudit(finalReview),
       jev: rawAnswers
         ? {
             model: result.jevModel ?? null,
@@ -2655,34 +2662,34 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
           }
         : { unavailable: result.explanation, attempts: result.attempts ?? 0 },
     }
-    if (lunaAllow) {
+    if (finalReviewAllow) {
       output.message = undefined
-      await settle("allow", "luna", [], details)
+      await settle("allow", "final_review", [], details)
       return
     }
-    // Name the local condition that overrode Luna's allow; attributing it to
+    // Name the local condition that overrode the final reviewer's allow; attributing it to
     // Jev or a generic "safety rule" hid the actual blocker.
     const localVeto =
-      lunaNeeded && reasons.length === 0 && luna.status === "score" && luna.choice === "allow"
+      finalReviewNeeded && reasons.length === 0 && finalReview.status === "score" && finalReview.choice === "allow"
         ? reviewer
-          ? "Luna allows, but Jev did not judge this read-only agent's action free of mutation"
+          ? "The final reviewer allows, but Jev did not judge this read-only agent's action free of mutation"
           : input.permission === "task"
-            ? "Luna allows, but this task request shape is not eligible for automatic approval"
-            : "Luna allows, but this request shape is not eligible for automatic approval"
+            ? "The final reviewer allows, but this task request shape is not eligible for automatic approval"
+            : "The final reviewer allows, but this request shape is not eligible for automatic approval"
         : undefined
     if (localVeto) {
       output.message = localVeto
       await settle("ask", "local_veto", [], details)
       return
     }
-    if (!result.allow || reasons.length || (lunaNeeded && !lunaAllow)) {
-      const message = [reasons.join("; "), result.explanation, lunaAdvisory(luna)].filter(Boolean).join(" — ")
+    if (!result.allow || reasons.length || (finalReviewNeeded && !finalReviewAllow)) {
+      const message = [reasons.join("; "), result.explanation, finalReviewAdvisory(finalReview)].filter(Boolean).join(" — ")
       const safeMessage = sanitizeReviewText(message)
       output.message =
         safeMessage.complete && !containsCredentialLiteralUnmasked(safeMessage.value)
           ? safeMessage.value
           : "Human review required; sensitive details withheld"
-      await settle("ask", reasons.length ? "rule" : luna.choice === "ask" ? "luna" : "jev", reasons, details)
+      await settle("ask", reasons.length ? "rule" : finalReview.choice === "ask" ? "final_review" : "jev", reasons, details)
       return
     }
     output.message = undefined
@@ -2849,8 +2856,8 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
       // configured human decisions remain authoritative.
       if (input.permission === "doom_loop" || input.permission === "workflow_tool_approval") {
         if (output.status === "ask") {
-          const luna = await reviewLunaWithoutEvidence(input, ["internal workflow sentinel"]).catch(
-            () => ({ status: "unavailable" }) as LunaResult,
+          const finalReview = await reviewFinalWithoutEvidence(input, ["internal workflow sentinel"]).catch(
+            () => ({ status: "unavailable" }) as FinalReviewResult,
           )
           logDecision({
             permission: input.permission,
@@ -2859,7 +2866,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
             decision: "ask",
             engine: "workflow_sentinel",
             reasons: ["internal workflow sentinel"],
-            luna: lunaAudit(luna),
+            final_review: finalReviewAudit(finalReview),
           })
         }
         return
@@ -2868,8 +2875,8 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
         try {
           await reviewActionPermission(input, output)
         } catch {
-          const luna = await reviewLunaWithoutEvidence(input, ["unexpected review failure"]).catch(
-            () => ({ status: "unavailable" }) as LunaResult,
+          const finalReview = await reviewFinalWithoutEvidence(input, ["unexpected review failure"]).catch(
+            () => ({ status: "unavailable" }) as FinalReviewResult,
           )
           output.status = "ask"
           output.message = "Automatic action review failed; human review required"
@@ -2880,7 +2887,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
             decision: "ask",
             engine: "guard",
             reasons: ["unexpected review failure"],
-            luna: lunaAudit(luna),
+            final_review: finalReviewAudit(finalReview),
           })
         }
         return
@@ -2941,16 +2948,16 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
           engine,
         })
         const reviewed = Array.isArray(extra.per_command) ? extra.per_command : []
-        const lunaReviewed = reviewed.some(
-          (item) => isRecord(item) && isRecord(item.luna) && item.luna.status !== "not_needed",
+        const finalReviewReviewed = reviewed.some(
+          (item) => isRecord(item) && isRecord(item.final_review) && item.final_review.status !== "not_needed",
         )
-        if (status === "ask" && (engine === "guard" || !lunaReviewed)) {
-          const fallback = await reviewLunaWithoutEvidence(
+        if (status === "ask" && (engine === "guard" || !finalReviewReviewed)) {
+          const fallback = await reviewFinalWithoutEvidence(
             input,
             Array.isArray(extra.reasons) ? extra.reasons : [],
-          ).catch(() => ({ status: "unavailable" }) as LunaResult)
-          extra = { ...extra, luna: lunaAudit(fallback) }
-          const message = sanitizeReviewText([output.message, lunaAdvisory(fallback)].filter(Boolean).join(" — "))
+          ).catch(() => ({ status: "unavailable" }) as FinalReviewResult)
+          extra = { ...extra, final_review: finalReviewAudit(fallback) }
+          const message = sanitizeReviewText([output.message, finalReviewAdvisory(fallback)].filter(Boolean).join(" — "))
           if (message.complete && !containsCredentialLiteralUnmasked(message.value)) output.message = message.value
         }
         output.status = status
@@ -3086,14 +3093,14 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
           }
 
           // A segment that only prints literal text has no effect to review;
-          // Jev and Luna misjudged `echo "=== DIFF A ==="` as an unknown shell
+          // Jev and the final reviewer misjudged `echo "=== DIFF A ==="` as an unknown shell
           // action. Variables other than $? could print secrets, so they still
           // go through review.
           if (commands.length > 1 && safe && isSelfContainedSegment(command) && !/\$(?!\?)/.test(command))
             return {
               ...id,
               kev: { status: "not_needed" },
-              luna: lunaAudit({ status: "not_needed" }),
+              final_review: finalReviewAudit({ status: "not_needed" }),
               ask: false,
               reasons: [],
               jev: null,
@@ -3117,11 +3124,11 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
             // Still obtain Jev's independent verdict on safe-to-share command
             // text, but retain the mechanical hard stop regardless of verdict.
             const result = await review(command, [], context, inspection.error)
-            const luna = await reviewLuna(command, [], context, inspection.error)
+            const finalReview = await reviewFinal(command, [], context, inspection.error)
             return {
               ...id,
               kev,
-              luna: lunaAudit(luna),
+              final_review: finalReviewAudit(finalReview),
               ask: true,
               reasons: [inspection.error],
               jev: {
@@ -3159,16 +3166,16 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
             reasons.push("credential-like literal in command")
           if (inspection.scripts.some((script) => script.redactions?.length))
             reasons.push("credential-like literal in inspected script")
-          // A read-only Google API call with the existing login is Luna's to
+          // A read-only Google API call with the existing login is the final reviewer's to
           // confirm; the rest of the segment still faces the hard rules.
           const tokenRead = readOnlyGoogleApiTokenCall(command, fullCommand)
           const hardChecked = tokenRead ?? command
           if (tokenRead !== undefined)
-            reasons.push("token-read: Luna must confirm a read-only Google API call with the existing login")
+            reasons.push("token-read: the final reviewer must confirm a read-only Google API call with the existing login")
           if (requiresHuman(hardChecked)) reasons.push("credential or secret access")
           if (requiresHumanOperation(command))
             reasons.push(
-              lunaMayApprovePublish(command) ? "publish: needs Luna to confirm an explicit human request" : "human-only operation",
+              finalReviewMayApprovePublish(command) ? "publish: needs the final reviewer to confirm an explicit human request" : "human-only operation",
             )
           const scopes = [gcpScopeReviewMessage(hardChecked, sessions), awsScopeReviewMessage(hardChecked, sessions)]
           for (const script of inspection.scripts) {
@@ -3182,28 +3189,28 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
           for (const scope of scopes) if (scope) reasons.push(scope)
           if (inspection.error) reasons.push(`no script evidence: ${inspection.error}`)
 
-          // "no script evidence" and "publish:" reasons are the ones Luna may resolve.
+          // "no script evidence" and "publish:" reasons are the ones the final reviewer may resolve.
           const soft = (reason: string) =>
             reason.startsWith("no script evidence") || reason.startsWith("publish:") || reason.startsWith("token-read:")
-          const lunaNeeded = !result.allow || reasons.some((reason) => !reason.startsWith("no script evidence"))
-          const luna = lunaNeeded
-            ? await reviewLuna(command, inspection.scripts, context, inspection.error ?? undefined)
-            : ({ status: "not_needed" } as LunaResult)
-          const lunaAllow =
-            lunaNeeded &&
+          const finalReviewNeeded = !result.allow || reasons.some((reason) => !reason.startsWith("no script evidence"))
+          const finalReview = finalReviewNeeded
+            ? await reviewFinal(command, inspection.scripts, context, inspection.error ?? undefined)
+            : ({ status: "not_needed" } as FinalReviewResult)
+          const finalReviewAllow =
+            finalReviewNeeded &&
             reasons.every(soft) &&
             (!reviewer || jevJudgedReadOnly(raw)) &&
-            luna.status === "score" &&
-            luna.choice === "allow"
+            finalReview.status === "score" &&
+            finalReview.choice === "allow"
 
           return {
             ...id,
             kev,
-            luna: lunaAudit(luna),
+            final_review: finalReviewAudit(finalReview),
             ask:
-              (!result.allow && !lunaAllow) ||
+              (!result.allow && !finalReviewAllow) ||
               reasons.some((r) => !soft(r)) ||
-              (reasons.some((r) => r.startsWith("publish:") || r.startsWith("token-read:")) && !lunaAllow),
+              (reasons.some((r) => r.startsWith("publish:") || r.startsWith("token-read:")) && !finalReviewAllow),
             reasons,
             jev,
             explanation: result.explanation,
@@ -3231,7 +3238,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
         const reasons = [...new Set(blocking.flatMap((r) => r.reasons))]
         const policy = reasons.filter((r) => !r.startsWith("no script evidence"))
         const explanation = blocking.map((r) => (r as { explanation?: string }).explanation).filter(Boolean)[0] ?? ""
-        const advisory = blocking.map((r) => lunaAdvisory(r.luna)).find(Boolean)
+        const advisory = blocking.map((r) => finalReviewAdvisory(r.final_review)).find(Boolean)
         const message =
           policy.length > 0
             ? `Human review required for ${policy.join(", ")}. ${explanation}${advisory ? ` — ${advisory}` : ""}${input.sessionID ? ` [session ${input.sessionID}]` : ""}`
@@ -3251,7 +3258,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
                     command: typeof item.cmd === "string" ? item.cmd : null,
                     reason: (() => {
                       const text =
-                        [item.reasons?.join("; "), item.explanation, lunaAdvisory(item.luna)]
+                        [item.reasons?.join("; "), item.explanation, finalReviewAdvisory(item.final_review)]
                           .filter(Boolean)
                           .join(" — ") || "Human review required"
                       const safe = sanitizeReviewText(text)
@@ -3266,7 +3273,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
         }
         await settle(
           "ask",
-          policy.length > 0 ? "rule" : blocking.some((item) => item.luna?.choice === "ask") ? "luna" : "jev",
+          policy.length > 0 ? "rule" : blocking.some((item) => item.final_review?.choice === "ask") ? "final_review" : "jev",
           {
             per_command: reviewed,
             reasons,
@@ -3285,7 +3292,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
         return
       }
       output.message = undefined
-      await settle("allow", reviewed.some((item) => item.luna?.choice === "allow") ? "luna" : "jev", {
+      await settle("allow", reviewed.some((item) => item.final_review?.choice === "allow") ? "final_review" : "jev", {
         per_command: reviewed,
         reasons: [],
       })
