@@ -466,7 +466,20 @@ function loadsAnotherShellFile(file: string, content: string) {
   let shell = ""
   let quote = ""
   let escaped = false
+  let comment = false
   for (const character of content) {
+    // A comment is prose: "# (update-schemas.sh). -strict" is not `. file`.
+    if (comment) {
+      if (character === "\n") {
+        comment = false
+        shell += character
+      }
+      continue
+    }
+    if (!quote && !escaped && character === "#" && (!shell || /\s/.test(shell.at(-1)!))) {
+      comment = true
+      continue
+    }
     if (quote === "'") {
       shell += character === "'" ? character : character === "\n" ? "\n" : " "
       if (character === "'") quote = ""
@@ -1092,7 +1105,25 @@ function targetFacts(target: string, real: string | undefined, workdir: string) 
   ]
 }
 
-function lunaMayAutoAllowTask(action: ActionEvidence) {
+// A glob lists filenames. A directory such as go/secret-manager/ names a
+// service, not a secret; sensitive words count only in the file's own name,
+// while identity patterns and .env components are checked on the full path.
+function sensitiveMatchedPath(file: string) {
+  return (
+    sensitiveFilename(path.basename(file)) ||
+    /(?:^|[/])\.env(?:$|[.*?/])/i.test(file) ||
+    /[A-Za-z]+[-_]\d{4}-\d{2}-\d{2}/.test(file) ||
+    /\b\d{3}-\d{2}-\d{4}\b/.test(file) ||
+    /[A-Z0-9._%+-]{1,64}@[A-Z0-9.-]{1,255}\.[A-Z]{2,24}/i.test(file)
+  )
+}
+
+// "verified" means the gate confirmed task_id names an existing child of the
+// requesting session with the requested agent and directory. OpenCode resumes
+// any session ID it is given, so an unverified task_id must never auto-allow.
+type TaskContinuation = "absent" | "verified" | "unverified"
+
+function lunaMayAutoAllowTask(action: ActionEvidence, continuation: TaskContinuation) {
   if (action.permission !== "task" || action.tool !== "task" || action.patterns.length !== 1) return false
   if (!isRecord(action.args)) return false
   const args = action.args
@@ -1100,7 +1131,13 @@ function lunaMayAutoAllowTask(action: ActionEvidence) {
   if (!metadata || metadata.core_trusted_builtin !== true) return false
   if (Object.keys(metadata).some((key) => !["description", "subagent_type", "core_trusted_builtin"].includes(key)))
     return false
-  if (Object.keys(args).some((key) => !["description", "prompt", "subagent_type", "background"].includes(key)))
+  if (
+    Object.keys(args).some(
+      (key) =>
+        !["description", "prompt", "subagent_type", "background"].includes(key) &&
+        !(key === "task_id" && continuation === "verified"),
+    )
+  )
     return false
   if (
     typeof args.prompt !== "string" ||
@@ -1140,8 +1177,13 @@ function executionAgent(input: PermissionInput) {
     : undefined
 }
 
-function lunaMayAutoAllowAction(action: ActionEvidence, context: ReviewContext, matchedPaths: unknown) {
-  if (action.permission === "task") return lunaMayAutoAllowTask(action)
+function lunaMayAutoAllowAction(
+  action: ActionEvidence,
+  context: ReviewContext,
+  matchedPaths: unknown,
+  continuation: TaskContinuation = "absent",
+) {
+  if (action.permission === "task") return lunaMayAutoAllowTask(action, continuation)
   if (action.permission === "external_directory") return false
   if (action.permission === "tool_call")
     return (
@@ -1202,7 +1244,7 @@ function lunaMayAutoAllowAction(action: ActionEvidence, context: ReviewContext, 
         !safe.complete ||
         safe.kinds.length > 0 ||
         safe.value !== file ||
-        sensitiveFilename(file) ||
+        sensitiveMatchedPath(file) ||
         !path.relative(root, file) ||
         path.relative(root, file).startsWith("..")
       )
@@ -1469,6 +1511,14 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
     } catch {
       return undefined
     }
+  }
+
+  async function taskContinuation(input: PermissionInput, args: unknown): Promise<TaskContinuation> {
+    if (input.permission !== "task" || !isRecord(args) || args.task_id === undefined) return "absent"
+    const id = args.task_id
+    if (typeof id !== "string" || !/^ses_[A-Za-z0-9]{20,40}$/.test(id)) return "unverified"
+    const child = await sessionInfo(id)
+    return child && child.parentID === input.sessionID && child.agent === args.subagent_type ? "verified" : "unverified"
   }
 
   async function sessionChain(sessionID: string | undefined) {
@@ -2173,7 +2223,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
     if (
       input.permission === "glob" &&
       Array.isArray(matchedPaths) &&
-      matchedPaths.some((file) => typeof file !== "string" || sensitiveFilename(file))
+      matchedPaths.some((file) => typeof file !== "string" || sensitiveMatchedPath(file))
     ) {
       output.message = "A matched path may contain sensitive information; human review required"
       await settle("ask", "guard", ["sensitive matched path"])
@@ -2269,6 +2319,8 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
         ? JSON.stringify({ permission: "skill", name: metadata.name, location: skillLocation })
         : raw
     if (requiresHuman(policyRaw)) reasons.push("credential or secret access")
+    const continuation = await taskContinuation(input, call?.args)
+    if (continuation === "unverified") reasons.push("task continuation lineage unverified")
     if (action.local_evidence?.literal_scan === "found")
       reasons.push("credential-like literal in read target")
     const fileTargets =
@@ -2292,7 +2344,9 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
     // A task prompt is prose handed to a subagent; it runs nothing. Parsing it
     // as a shell command mistook "projects produced recent entries" for a GCP
     // project named "recent". The subagent's actual commands are still scoped.
-    if (input.permission !== "task")
+    // Task prompts and edit diffs are text being handed over or written; they
+    // run nothing. Terraform that mentions projects/<id> is not a gcloud call.
+    if (input.permission !== "task" && input.permission !== "edit")
       for (const scope of [gcpScopeReviewMessage(policyRaw, sessions), awsScopeReviewMessage(policyRaw, sessions)])
         if (scope) reasons.push(scope)
     const rawAnswers = result.raw
@@ -2307,7 +2361,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
       lunaNeeded &&
       reasons.length === 0 &&
       (!reviewer || jevJudgedReadOnly(rawAnswers)) &&
-      lunaMayAutoAllowAction(action, context, matchedPaths) &&
+      lunaMayAutoAllowAction(action, context, matchedPaths, continuation) &&
       luna.status === "score" &&
       luna.choice === "allow"
     const details = {

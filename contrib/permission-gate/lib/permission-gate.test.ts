@@ -1149,6 +1149,12 @@ test("shell segments get module evidence and self-contained segments are judged 
     "module example.invalid/app\n\ngo 1.24\n\nrequire (\n\tgithub.com/pressly/goose/v3 v3.24.1\n)\n",
   )
   writeFileSync(path.join(directory, "go.sum"), "github.com/pressly/goose/v3 v3.24.1 h1:abc=\n")
+  // Comments that look like `. file` or mention "source" load nothing.
+  writeFileSync(
+    path.join(directory, "check.sh"),
+    "#!/usr/bin/env bash\n# (update-schemas.sh). -strict rejects unknown fields\n# and the source of truth is upstream\necho ok\n",
+  )
+  writeFileSync(path.join(directory, "loads.sh"), "#!/usr/bin/env bash\nsource ./lib.sh\necho ok\n")
   const previousFetch = globalThis.fetch
   const previousStateHome = process.env.XDG_STATE_HOME
   const previousKevSocket = process.env.OPENCODE_KEV_SOCKET
@@ -1194,6 +1200,19 @@ test("shell segments get module evidence and self-contained segments are judged 
     expect(contexts[commands[3]].full_command).toBeUndefined()
     expect(contexts[commands[3]].module_evidence).toBeUndefined()
     expect(contexts[commands[0]].full_command).toBe(commands.join("; "))
+
+    const commented = { status: "ask" }
+    await hooks["permission.ask"](
+      { permission: "bash", sessionID: "ses_go_module", patterns: ["./check.sh"], metadata: { command: "./check.sh" } },
+      commented,
+    )
+    expect(commented.status).toBe("allow")
+    const sourcing = { status: "allow" }
+    await hooks["permission.ask"](
+      { permission: "bash", sessionID: "ses_go_module", patterns: ["./loads.sh"], metadata: { command: "./loads.sh" } },
+      sourcing,
+    )
+    expect(sourcing.status).toBe("ask")
   } finally {
     globalThis.fetch = previousFetch
     if (previousStateHome === undefined) delete process.env.XDG_STATE_HOME
@@ -1301,6 +1320,14 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
             ]
           : []),
       ])
+    for (const [id, parentID, agent] of [
+      ["ses_childverified00000000001", "ses_luna_test", "deep-implementer"],
+      ["ses_childforeign000000000002", "ses_other_parent", "deep-implementer"],
+      ["ses_childwrongagent000000003", "ses_luna_test", "reviewer"],
+    ])
+      if (url.startsWith(`http://gate.test/session/${id}?`)) return Response.json({ id, directory, agent, parentID })
+    if (url.startsWith("http://gate.test/session/ses_childmissing000000000004?"))
+      return new Response("missing", { status: 404 })
     if (url.startsWith("http://gate.test/session/"))
       return Response.json({ id: "ses_luna_test", directory, agent: "solo", title: "Update README" })
     if (url === "https://openrouter.ai/api/alpha/decisions") {
@@ -1456,6 +1483,22 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
     })
     expect(gcpProse.status).toBe("allow")
     expect(gcpProse.message ?? "").not.toContain("GCP project")
+
+    // A task_id continuation auto-allows only for a verified child of this
+    // session with the requested agent; anything else asks with a named reason.
+    expect((await taskWith("call_task_verified", { ...baseTask, task_id: "ses_childverified00000000001" })).status).toBe(
+      "allow",
+    )
+    for (const [callID, taskID] of [
+      ["call_task_foreign", "ses_childforeign000000000002"],
+      ["call_task_agent", "ses_childwrongagent000000003"],
+      ["call_task_missing", "ses_childmissing000000000004"],
+      ["call_task_malformed", "../ses_luna_test"],
+    ]) {
+      const unverified = await taskWith(callID, { ...baseTask, task_id: taskID })
+      expect(unverified.status).toBe("ask")
+      expect(unverified.message).toContain("task continuation lineage unverified")
+    }
 
     const orchestrator = await gateForTest(directory, "orchestrator", lunaReview)
     await orchestrator.provider.models({ models: {} }, { auth: { type: "api", key: "fake-test-key" } })
@@ -1641,6 +1684,18 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
         ? editContext.immediate_effect
         : undefined,
     ).toContain("formatter")
+
+    const terraformEdit = { status: "ask", message: "" }
+    await hooks["permission.ask"](
+      {
+        ...editRequest,
+        patterns: ["logging.tf"],
+        metadata: { filepath: "logging.tf", diff: '+  parent = "projects/zzz-unlisted-project-9"' },
+      },
+      terraformEdit,
+    )
+    expect(terraformEdit.status).toBe("allow")
+    expect(terraformEdit.message ?? "").not.toContain("GCP project")
 
     const policyEdit = { status: "allow" }
     await hooks["permission.ask"](
@@ -1878,6 +1933,32 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
       withPath,
     )
     expect(withPath.status).toBe("allow")
+
+    const globWithMatches = async (callID: string, file: string) => {
+      await hooks["tool.execute.before"](
+        { tool: "glob", sessionID: "ses_luna_test", callID },
+        { args: { pattern: "**/*migration*" } },
+      )
+      const output = { status: "ask" }
+      await hooks["permission.ask"](
+        {
+          permission: "glob",
+          sessionID: "ses_luna_test",
+          patterns: ["**/*migration*"],
+          metadata: {
+            pattern: "**/*migration*",
+            matched_paths: [path.join(directory, file)],
+            truncated: false,
+            core_trusted_builtin: true,
+          },
+          tool: { callID },
+        },
+        output,
+      )
+      return output.status
+    }
+    expect(await globWithMatches("call_glob_service", "go/secret-manager/internal/db/migrations.go")).toBe("allow")
+    expect(await globWithMatches("call_glob_secret_file", "deploy/secrets-migration.yaml")).toBe("ask")
 
     const untrustedTool = { status: "allow" }
     await hooks["permission.ask"](
