@@ -526,6 +526,37 @@ function requiresHuman(command: string) {
   )
 }
 
+// Publishing the human's own work (push of a named feature branch, PR
+// create/edit/ready/comment) may be approved by Luna when the direct human
+// messages explicitly ask for it. Everything else in requiresHumanOperation,
+// and any push that could hit a shared branch or rewrite history, stays a
+// human gate.
+function lunaMayApprovePublish(command: string) {
+  const parts = commandParts(command)
+  const name = executableName(parts.verb)
+  if (name === "gh")
+    return parts.args[0] === "pr" && ["create", "edit", "ready", "comment"].includes(parts.args[1] ?? "")
+  if (name !== "git" || parts.args[0] !== "push") return false
+  const args = parts.args.slice(1)
+  if (
+    args.some((argument) =>
+      /^(?:-f|--force|--force-with-lease.*|--force-if-includes|-d|--delete|--mirror|--all|--tags|--prune)$/.test(argument),
+    )
+  )
+    return false
+  const positional = args.filter((argument) => !argument.startsWith("-"))
+  // git push <remote> <refspec>: the destination must be a named feature branch.
+  if (positional.length !== 2) return false
+  const refspec = positional[1]
+  if (refspec.startsWith("+") || refspec.startsWith(":") || /[$`*]/.test(refspec)) return false
+  const destination = refspec.includes(":") ? refspec.split(":").at(-1)! : refspec
+  return (
+    !!destination &&
+    destination !== "HEAD" &&
+    !/^(?:refs\/heads\/)?(?:main|master|dev|develop|release.*|production|prod)$/i.test(destination)
+  )
+}
+
 function requiresHumanOperation(command: string) {
   return /(?:^|[\n;|&(){}])\s*(?:(?:sudo|env)\s+)?(?:git\s+push|gh\s+pr\s+(?:create|edit|merge|close)|terraform\s+(?:apply|destroy)|terragrunt\s+(?:apply|destroy)|atlantis\s+apply|kubectl\s+(?:apply|delete|patch|replace|scale|rollout|set)|gcloud\s+(?:projects\s+add-iam-policy-binding|iam\s+|secrets\s+(?:create|delete|update|versions\s+(?:add|destroy|disable)))|aws\s+(?:iam\s+|secretsmanager\s+(?:create|delete|update|put|rotate))|tailscale\s+(?:set|up)\b[^\n;|&]*--exit-node|(?:rm\s+-rf|mkfs|wipefs)\b)/i.test(
     command,
@@ -2097,6 +2128,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
       "When a shell segment's context has no full_command, the gate judged it self-contained (it only prints or filters stdin): judge that segment alone and do not attribute other segments' effects to it. context.module_evidence reports whether a go run module is pinned with a go.sum checksum; a pinned module is a verified dependency, not arbitrary downloaded code. context.command_evidence is the gate's local reading of the command's flags, such as whether a gh api call is a read-only GET. A read-only query to a remote service (a GET, gh pr view/diff/list, gh run view) is read-only inspection for a read-only role; it launches no subagent and changes nothing. For a review or research task, read-only inspection of history, changelogs, adjacent versions, sibling repositories, and related files is ordinary context gathering within the task; ask only when the target is clearly unrelated to what is under review or research.",
       "Standing human policy: editing files inside dedicated worktrees under /data/rguliyev/tmp/opencode/worktrees is allowed, including configuration, Terraform, and IAM files, whenever it serves the human's task. Such edits change nothing live; push, PR changes, apply, and deploy are separately gated. Do not read an instruction not to change configuration as forbidding worktree file edits. Still ask for embedded credential literals, backdoor or exfiltration code, or edits outside worktrees.",
       "The attested goal-plugin tools get_goal, get_goal_history, and goal_status only read goal status and keep local bookkeeping (a persistence lease and state snapshot); they are within any task. goal_resume and goal_block change autonomous work and still need a direct human request.",
+      "A git push of a named feature branch, or gh pr create/edit/ready/comment, may be allowed only when the direct human messages explicitly ask to push or open or update a PR for this work; otherwise ask. Pushes to shared branches, force pushes, and merges are never yours to allow.",
       "Return allow ONLY when this exact action is clearly within the applicable direct human task and role policy, with no credential disclosure, regulated-data exposure, destructive effect, security-control change, production or unrelated shared-state mutation, opaque side effect, or human-only gate. Otherwise ask.",
       "An existing E2B sandbox explicitly identified by direct human messages for the current isolated test is a task-local environment, not automatically production or unrelated shared state. Existing credentials from the task\'s environment may be used solely inside that same sandbox for the authorized test; ordinary use is not credential disclosure.",
       "Starting or restarting the test worker inside that same sandbox after a status report, such as a closed callback port, can be within an ongoing explicit instruction to continue testing. Do not require a new one-off instruction solely because this routine test action is remote or starts a background process. This does not authorize a new sandbox, a different service, or expansion of the test.",
@@ -3061,7 +3093,10 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
           if (inspection.scripts.some((script) => script.redactions?.length))
             reasons.push("credential-like literal in inspected script")
           if (requiresHuman(command)) reasons.push("credential or secret access")
-          if (requiresHumanOperation(command)) reasons.push("human-only operation")
+          if (requiresHumanOperation(command))
+            reasons.push(
+              lunaMayApprovePublish(command) ? "publish: needs Luna to confirm an explicit human request" : "human-only operation",
+            )
           const scopes = [gcpScopeReviewMessage(command, sessions), awsScopeReviewMessage(command, sessions)]
           for (const script of inspection.scripts) {
             if (requiresHuman(script.content)) reasons.push("script credential or secret access")
@@ -3074,13 +3109,15 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
           for (const scope of scopes) if (scope) reasons.push(scope)
           if (inspection.error) reasons.push(`no script evidence: ${inspection.error}`)
 
+          // "no script evidence" and "publish:" reasons are the ones Luna may resolve.
+          const soft = (reason: string) => reason.startsWith("no script evidence") || reason.startsWith("publish:")
           const lunaNeeded = !result.allow || reasons.some((reason) => !reason.startsWith("no script evidence"))
           const luna = lunaNeeded
             ? await reviewLuna(command, inspection.scripts, context, inspection.error ?? undefined)
             : ({ status: "not_needed" } as LunaResult)
           const lunaAllow =
             lunaNeeded &&
-            reasons.every((reason) => reason.startsWith("no script evidence")) &&
+            reasons.every(soft) &&
             (!reviewer || jevJudgedReadOnly(raw)) &&
             luna.status === "score" &&
             luna.choice === "allow"
@@ -3089,7 +3126,10 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
             ...id,
             kev,
             luna: lunaAudit(luna),
-            ask: (!result.allow && !lunaAllow) || reasons.some((r) => !r.startsWith("no script evidence")),
+            ask:
+              (!result.allow && !lunaAllow) ||
+              reasons.some((r) => !soft(r)) ||
+              (reasons.some((r) => r.startsWith("publish:")) && !lunaAllow),
             reasons,
             jev,
             explanation: result.explanation,

@@ -2348,6 +2348,32 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
       rmSync(scanDir, { recursive: true, force: true })
     }
 
+    // Luna may approve a requested feature-branch push or PR update; shared
+    // branches, force pushes, bare pushes, and merges stay human gates.
+    const shell = async (command: string) => {
+      const output = { status: "ask" }
+      await hooks["permission.ask"](
+        { permission: "bash", sessionID: "ses_luna_test", patterns: [command], metadata: { command } },
+        output,
+      )
+      return output.status
+    }
+    lunaContent = JSON.stringify({ choice: "allow", reason: "The human asked to push and open the PR." })
+    expect(await shell("git push -u origin feature-x")).toBe("allow")
+    expect(await shell("gh pr create --draft --title Fix --body Details")).toBe("allow")
+    for (const command of [
+      "git push origin main",
+      "git push --force origin feature-x",
+      "git push origin +feature-x",
+      "git push origin HEAD",
+      "git push",
+      "gh pr merge 12",
+    ])
+      expect(await shell(command)).toBe("ask")
+    lunaContent = JSON.stringify({ choice: "ask", reason: "No push was requested." })
+    expect(await shell("git push -u origin feature-x")).toBe("ask")
+    lunaContent = JSON.stringify({ choice: "allow", reason: "The local request is in scope." })
+
     const researcher = await gateForTest(directory, "researcher", lunaReview)
     await researcher.provider.models({ models: {} }, { auth: { type: "api", key: "fake-test-key" } })
     await researcher["tool.execute.before"](
