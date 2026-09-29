@@ -859,8 +859,32 @@ function lstatSyncSafe(file: string) {
   }
 }
 
+// contrib/permission-gate/bin/grafana-query, installed in ~/.local/bin. It
+// reads the Grafana instance token itself and never prints it, so a query
+// through it involves no credential handling by the agent. The gate trusts
+// it only when the installed file matches this hash.
+const grafanaHelperSha256 = "c5d5277d4ee3c863e255b2def44cc6d36a22389b32c4544bf15ff4b60a348cff"
+
+function grafanaHelperPath() {
+  return process.env.OPENCODE_GRAFANA_HELPER ?? path.join(homedir(), ".local/bin/grafana-query")
+}
+
+function grafanaHelperEvidence(args: string[]) {
+  let installed: string | undefined
+  try {
+    installed = createHash("sha256").update(readFileSync(grafanaHelperPath())).digest("hex")
+  } catch {
+    installed = undefined
+  }
+  if (installed !== grafanaHelperSha256)
+    return "grafana-query: the installed helper does not match the gate's pinned version; treat it as unknown code"
+  const [host, method, apiPath] = args
+  return `grafana-query: verified local helper; it reads the Grafana instance token itself, sends it only to ${host ?? "the named host"} over HTTPS without following redirects, and never prints it. It allows only GET or a datasource-query POST, so this ${method ?? ""} ${apiPath ?? ""} request is a read-only Grafana query and involves no credential handling by the agent`
+}
+
 function ghApiEvidence(command: string) {
   const parts = commandParts(command)
+  if (["grafana-query", grafanaHelperPath()].includes(parts.verb)) return grafanaHelperEvidence(parts.args)
   // Chart and script validators read files and write nothing, unless told to
   // update snapshots or write rendered output.
   const validator = executableName(parts.verb)

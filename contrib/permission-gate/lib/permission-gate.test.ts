@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { createHash } from "node:crypto"
-import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
+import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { createServer } from "node:net"
 import { homedir, tmpdir } from "node:os"
 import path from "node:path"
@@ -1312,6 +1312,30 @@ test("shell segments get module evidence and self-contained segments are judged 
       "git show abc123 2>&1",
     ])
       expect(await redirectEvidence(command)).toBeUndefined()
+
+    // The pinned Grafana helper is reported as a token-safe read-only query;
+    // a modified copy is unknown code.
+    const helper = path.join(import.meta.dir, "../bin/grafana-query")
+    const tampered = path.join(directory, "grafana-query")
+    writeFileSync(tampered, readFileSync(helper, "utf8") + "\n# changed\n")
+    const previousHelper = process.env.OPENCODE_GRAFANA_HELPER
+    const grafanaEvidence = async (helperPath: string) => {
+      process.env.OPENCODE_GRAFANA_HELPER = helperPath
+      const command = "grafana-query e2bstg.grafana.net GET /api/datasources"
+      delete contexts[command]
+      await hooks["permission.ask"](
+        { permission: "bash", sessionID: "ses_go_module", patterns: [command], metadata: { command } },
+        { status: "ask" },
+      )
+      return contexts[command]?.command_evidence
+    }
+    try {
+      expect(await grafanaEvidence(helper)).toContain("verified local helper")
+      expect(await grafanaEvidence(tampered)).toContain("does not match the gate's pinned version")
+    } finally {
+      if (previousHelper === undefined) delete process.env.OPENCODE_GRAFANA_HELPER
+      else process.env.OPENCODE_GRAFANA_HELPER = previousHelper
+    }
 
     const commented = { status: "ask" }
     await hooks["permission.ask"](
@@ -2625,4 +2649,10 @@ test("source files named for tokens are readable once the scan finds no literal"
     else process.env.OPENCODE_KEV_SOCKET = previousKevSocket
     rmSync(directory, { recursive: true, force: true })
   }
+})
+
+test("the gate pins the grafana-query helper it ships", () => {
+  const source = readFileSync(path.join(import.meta.dir, "../plugins/command-approval.ts"), "utf8")
+  const helper = readFileSync(path.join(import.meta.dir, "../bin/grafana-query"))
+  expect(source).toContain(`const grafanaHelperSha256 = "${createHash("sha256").update(helper).digest("hex")}"`)
 })
