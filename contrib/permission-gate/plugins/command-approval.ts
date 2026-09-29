@@ -1182,9 +1182,13 @@ async function editTargetsInWorktrees(patterns: string[], filepath: unknown) {
 // service, not a secret; sensitive words count only in the file's own name,
 // while identity patterns and .env components are checked on the full path.
 function sensitiveMatchedPath(file: string) {
+  // Listing a name like access_token.tftest.hcl leaks nothing; reading such a
+  // file is still gated by the read rule. Only personal-data words and
+  // identity patterns can disclose something through a filename alone.
   return (
-    sensitiveFilename(path.basename(file)) ||
-    /(?:^|[/])\.env(?:$|[.*?/])/i.test(file) ||
+    /(?:^|[/._-])(?:patients?|medical|health|ssn|social.?security|passports?|pii|phi|hipaa|payroll|customers?|employees?|dob)(?:$|[/._-])/i.test(
+      path.basename(file),
+    ) ||
     /[A-Za-z]+[-_]\d{4}-\d{2}-\d{2}/.test(file) ||
     /\b\d{3}-\d{2}-\d{4}\b/.test(file) ||
     /[A-Z0-9._%+-]{1,64}@[A-Z0-9.-]{1,255}\.[A-Z]{2,24}/i.test(file)

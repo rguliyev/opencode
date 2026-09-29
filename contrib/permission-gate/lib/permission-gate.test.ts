@@ -2208,7 +2208,9 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
       return output.status
     }
     expect(await globWithMatches("call_glob_service", "go/secret-manager/internal/db/migrations.go")).toBe("allow")
-    expect(await globWithMatches("call_glob_secret_file", "deploy/secrets-migration.yaml")).toBe("ask")
+    // Credential words in a listed name leak nothing; reading the file is gated separately.
+    expect(await globWithMatches("call_glob_secret_file", "tests/access_token.tftest.hcl")).toBe("allow")
+    expect(await globWithMatches("call_glob_pii_file", "exports/patient-records.csv")).toBe("ask")
 
     const untrustedTool = { status: "allow" }
     await hooks["permission.ask"](
