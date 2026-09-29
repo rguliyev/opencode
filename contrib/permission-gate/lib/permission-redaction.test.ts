@@ -152,3 +152,9 @@ test("credential file paths and closing quotes are not credentials", () => {
   expect(sanitizeReviewText("token: '" + "abc def ghi" + "'").value).toContain("[REDACTED:CREDENTIAL]")
   expect(sanitizeReviewText("token: '" + "abcDEF123456").value).toContain("[REDACTED:CREDENTIAL]")
 })
+
+test("printf format verbs are not URL passwords", () => {
+  const line = '{{- $ref = printf "%s:%s@%s" $repo $tag $digest -}}'
+  expect(sanitizeReviewText(line).value).toBe(line)
+  expect(sanitizeReviewText("https://admin:" + "S3cretValue9@db.example.invalid").value).toContain("[REDACTED:PASSWORD]")
+})

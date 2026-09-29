@@ -65,9 +65,12 @@ function sanitizeText(input: string): RedactionResult<string> {
     // sed templates like s@x@${VAR:-100m}@g from reading as user:password@host.
     /((?:https?:\/\/)?[^\s/:@"'(),{}]{1,256}:)([^\s/@"'(),{}]{1,256})(?=@(?!sha(?:256|384|512):)[^\s/]+)/gi,
     "PASSWORD",
-    (prefix) =>
-      /^https?:\/\//i.test(prefix) ||
-      !/(?:^|["'\s=,[(])(?:serviceAccount|user|group|domain|principal|principalSet|deleted):$/i.test(prefix),
+    // printf "%s:%s@%s" repo tag digest builds an image reference; a format
+    // verb is not a password.
+    (prefix, secret) =>
+      !/^%[-+ #0-9.]*[a-zA-Z]$/.test(secret) &&
+      (/^https?:\/\//i.test(prefix) ||
+        !/(?:^|["'\s=,[(])(?:serviceAccount|user|group|domain|principal|principalSet|deleted):$/i.test(prefix)),
   )
   replaceValue(
     /(https:\/\/(?:hooks\.slack\.com\/services|(?:discord(?:app)?\.com)\/api\/webhooks)\/)([^\s'";|]{12,})/gi,
