@@ -2517,6 +2517,18 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
       if (toolDescriptions.size > 200) toolDescriptions.delete(toolDescriptions.keys().next().value!)
     },
     config: async (config: Config) => {
+      // Core asks a generic tool_call permission for every tool at dispatch.
+      // An agent whose rules are "*": deny had no tool_call rule, so every
+      // tool call (read, glob, grep, bash) was denied before its own rule or
+      // this gate was consulted. Ask instead: the gate defers trusted
+      // built-ins to their internal check, where the agent's read/glob/bash
+      // rules apply; without the gate, ask prompts rather than executing.
+      for (const agent of Object.values(config.agent ?? {})) {
+        const permission = agent?.permission
+        if (!permission || typeof permission !== "object" || Array.isArray(permission)) continue
+        const rules = permission as Record<string, unknown>
+        if (rules["*"] === "deny" && rules.tool_call === undefined) rules.tool_call = "ask"
+      }
       // Agent markdown keeps Bash denied. Only a successfully loaded gate may
       // replace it with ask, and its final rules must retain every global hard
       // deny AFTER the broad ask (OpenCode uses last matching rule wins).

@@ -1243,6 +1243,33 @@ test("shell segments get module evidence and self-contained segments are judged 
   }
 })
 
+test("agents denying everything still reach the gate for tool dispatch", async () => {
+  const hooks = await gateForTest(path.resolve(import.meta.dir, ".."), "deep-reviewer")
+  const config: any = {
+    permission: {
+      bash: {
+        "*command-approval.ts*": "deny",
+        "*opencode.jsonc*": "deny",
+        "*atlantis*apply*": "deny",
+        "*/.config/opencode/lib/*": "deny",
+      },
+    },
+    agent: {
+      "deep-reviewer": { permission: { "*": "deny", read: "allow", glob: "allow", bash: "deny" } },
+      implementer: { permission: { edit: "allow" } },
+      custom: { permission: { "*": "deny", tool_call: "deny" } },
+    },
+  }
+  await hooks.config(config)
+  const reviewer = config.agent["deep-reviewer"].permission
+  // Last matching rule wins, so tool_call must come after "*": deny.
+  expect(Object.keys(reviewer).at(-1)).toBe("tool_call")
+  expect(reviewer.tool_call).toBe("ask")
+  expect(reviewer.bash["*"]).toBe("ask")
+  expect(config.agent.implementer.permission.tool_call).toBeUndefined()
+  expect(config.agent.custom.permission.tool_call).toBe("deny")
+})
+
 test("configured external-directory allow does not follow a symlink outside the allowlist", async () => {
   const directory = path.resolve(import.meta.dir, "..")
   const previousFetch = globalThis.fetch
