@@ -838,7 +838,13 @@ function scratchRedirectEvidence(fullCommand: unknown) {
   const targets = [
     ...fullCommand.matchAll(/(?:^|[^<>&0-9])(?:[0-9]|&)?>>?(?![&>])[ \t]*("[^"\n]*"|'[^'\n]*'|[^\s;&|()<>]+)/g),
   ].map((match) => match[1].replace(/^(["'])(.*)\1$/, "$2"))
-  const files = targets.filter((target) => target !== "/dev/null")
+  // `cd /data/rguliyev/tmp/opencode && diff a b > delta.txt`: a relative
+  // target is resolved against one leading cd to an absolute directory.
+  const leadingCd = fullCommand.match(/^\s*cd\s+(\/[A-Za-z0-9._/-]+)\s*&&/)?.[1]
+  const base = leadingCd && (fullCommand.match(/(?:^|[;&|(]\s*)cd\s/g) ?? []).length === 1 ? leadingCd : undefined
+  const files = targets
+    .filter((target) => target !== "/dev/null")
+    .map((target) => (base && /^[A-Za-z0-9_][A-Za-z0-9._-]*$/.test(target) ? path.join(base, target) : target))
   if (!files.length) return undefined
   const scratch = files.every((file) => {
     if (!/^\/[A-Za-z0-9._/-]+$/.test(file) || !scratchDirectories.has(path.dirname(file))) return false

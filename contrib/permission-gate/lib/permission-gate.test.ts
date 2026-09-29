@@ -1304,6 +1304,13 @@ test("shell segments get module evidence and self-contained segments are judged 
       "scratch file(s) /data/rguliyev/tmp/opencode/review-a.diff",
     )
     expect(await redirectEvidence("helm template x charts/x >/dev/null 2>/tmp/render-err.txt")).toContain("/tmp/render-err.txt")
+    expect(
+      await redirectEvidence("cd /data/rguliyev/tmp/opencode && diff -u a.diff b.diff > delta.txt"),
+    ).toContain("/data/rguliyev/tmp/opencode/delta.txt")
+    expect(
+      await redirectEvidence("cd /data/rguliyev/tmp/opencode/worktrees/charts/x && git diff > values.yaml"),
+    ).toBeUndefined()
+    expect(await redirectEvidence("cd /data/rguliyev/tmp/opencode && cd sub && git diff > out.diff")).toBeUndefined()
     for (const command of [
       "git show abc123 > /data/rguliyev/tmp/opencode/worktrees/charts/x/values.yaml",
       "git show abc123 > /data/rguliyev/tmp/opencode/sub/review.diff",
