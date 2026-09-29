@@ -1604,7 +1604,7 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
     expect(gcpProse.status).toBe("allow")
     const secretProse = await taskWith("call_luna_task_secret", {
       ...baseTask,
-      prompt: "Review the syncer: it reads a token via secretmanager.googleapis.com and sends Authorization: Bearer headers.",
+      prompt: "Review the syncer: it reads a token via secretmanager.googleapis.com and sends it as a Bearer token.",
     })
     expect(secretProse.status).toBe("allow")
     expect(gcpProse.message ?? "").not.toContain("GCP project")
