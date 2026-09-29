@@ -1351,9 +1351,9 @@ test("shell segments get module evidence and self-contained segments are judged 
       sourcing,
     )
     expect(sourcing.status).toBe("ask")
-    const runScript = async (script: string) => {
+    const runScript = async (script: string, options = "") => {
       const output = { status: "ask" }
-      const command = `bash ${path.join(directory, script)}`
+      const command = `bash ${options}${path.join(directory, script)}`
       await hooks["permission.ask"](
         { permission: "bash", sessionID: "ses_go_module", patterns: [command], metadata: { command } },
         output,
@@ -1363,6 +1363,9 @@ test("shell segments get module evidence and self-contained segments are judged 
     expect(await runScript("run.sh")).toBe("allow")
     expect(await runScript("run-secret.sh")).toBe("ask")
     expect(await runScript("run-dynamic.sh")).toBe("ask")
+    // A syntax check runs nothing, so what the script would load does not matter.
+    expect(await runScript("run-dynamic.sh", "-n ")).toBe("allow")
+    expect(await runScript("run-dynamic.sh", "-e ")).toBe("ask")
   } finally {
     globalThis.fetch = previousFetch
     if (previousStateHome === undefined) delete process.env.XDG_STATE_HOME

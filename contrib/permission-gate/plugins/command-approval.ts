@@ -972,6 +972,13 @@ function scriptPaths(command: string, cwd: string, depth = 0) {
         }
         index += 1
       }
+      // `bash -n script` only parses the script for syntax errors; it runs
+      // nothing and loads nothing, so there is no script to inspect.
+      if (
+        ["bash", "dash", "fish", "ksh", "sh", "zsh"].includes(name) &&
+        args.slice(0, index).some((option) => /^-[a-z]*n[a-z]*$/.test(option))
+      )
+        continue
       script = args[index]
     } else if (verb.startsWith("./") || verb.startsWith("../") || scriptExtension.test(verb) || path.isAbsolute(verb)) {
       script = verb
