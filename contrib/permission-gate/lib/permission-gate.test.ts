@@ -1412,6 +1412,7 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
       expect(input.system).toContain("independently judged this exact action or command to be read-only in effect")
       expect(input.system).toContain("reading data into the agent's context for the human's task is not credential disclosure")
       expect(input.system).toContain("A skill load only reads that skill's instructions")
+      expect(input.system).toContain("Standing human policy: editing files inside dedicated worktrees")
       if (lunaDelayMs) await new Promise((resolve) => setTimeout(resolve, lunaDelayMs))
       if (lunaInvalidResponse) return { status: "invalid_response", diagnostic: "json_content" }
       if (lunaInvalidOnce) {
@@ -1816,6 +1817,9 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
         worktreeEdit,
       )
       expect(worktreeEdit.status).toBe("allow")
+      expect((lunaState?.context as { role_policy?: string })?.role_policy).toContain(
+        "changing files inside dedicated worktrees",
+      )
       const escapedFile = path.join(worktree, "escape", "iam", "main.tf")
       const escapedEdit = { status: "allow", message: "" }
       await hooks["permission.ask"](
