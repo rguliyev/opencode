@@ -1254,6 +1254,9 @@ test("shell segments get module evidence and self-contained segments are judged 
       "gh api -X PATCH repos/e2b-dev/argocd/pulls/12 -f state=closed",
       "gh pr diff 12 --repo e2b-dev/argocd",
       "terraform-docs markdown table modules/gke",
+      "shellcheck --shell=bash charts/node-init/files/local-ssd-swap.sh",
+      "helm unittest charts/node-init",
+      "helm unittest -u charts/node-init",
     ]
     const output = { status: "ask" }
     await hooks["permission.ask"](
@@ -1269,6 +1272,9 @@ test("shell segments get module evidence and self-contained segments are judged 
     expect(contexts[commands[5]].command_evidence).toContain("PATCH request with a request body")
     expect(contexts[commands[6]].command_evidence).toBe("gh pr diff: read-only GitHub query")
     expect(contexts[commands[7]].command_evidence).toContain("prints generated docs to stdout")
+    expect(contexts[commands[8]].command_evidence).toBe("shellcheck: static analysis; reads files and writes nothing")
+    expect(contexts[commands[9]].command_evidence).toBe("helm unittest: validates the chart; reads files and writes nothing")
+    expect(contexts[commands[10]].command_evidence).toContain("it writes files")
     // A literal echo ($? only) is allowed locally and never sent to Jev.
     expect(contexts[commands[3]]).toBeUndefined()
     expect(contexts[commands[0]].full_command).toBe(commands.join("; "))

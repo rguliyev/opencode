@@ -826,6 +826,15 @@ const ghReadOnly = new Set([
 
 function ghApiEvidence(command: string) {
   const parts = commandParts(command)
+  // Chart and script validators read files and write nothing, unless told to
+  // update snapshots or write rendered output.
+  const validator = executableName(parts.verb)
+  if (["shellcheck", "yamllint", "kubeconform"].includes(validator))
+    return `${validator}: static analysis; reads files and writes nothing`
+  if (validator === "helm" && ["lint", "template", "unittest"].includes(parts.args[0] ?? ""))
+    return parts.args.some((argument) => /^(?:-u|--update-snapshot|--output-dir)(?:=|$)/.test(argument))
+      ? `helm ${parts.args[0]}: snapshot-update or output-dir flag given; it writes files`
+      : `helm ${parts.args[0]}: validates the chart; reads files and writes nothing`
   // terraform-docs prints to stdout unless told to write a file.
   if (executableName(parts.verb) === "terraform-docs")
     return parts.args.some((argument) => /^(?:--output-file|--output-mode|-c|--config)(?:=|$)/.test(argument))
