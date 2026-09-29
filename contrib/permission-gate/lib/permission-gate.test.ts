@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { createHash } from "node:crypto"
-import { mkdtempSync, rmSync, symlinkSync } from "node:fs"
+import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { createServer } from "node:net"
 import { homedir, tmpdir } from "node:os"
 import path from "node:path"
@@ -1210,6 +1210,7 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
   let earlierUpdates: string[] = []
   let lunaState: Record<string, unknown> | undefined
   let jevState: Record<string, unknown> | undefined
+  let jevQuestions: unknown
   const lunaSignals: (AbortSignal | null | undefined)[] = []
   process.env.XDG_STATE_HOME = "/dev/null"
   process.env.OPENCODE_KEV_SOCKET = "/dev/null/no-kev-socket"
@@ -1237,6 +1238,7 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
       if (typeof init?.body !== "string") throw new Error("Missing Jev request body")
       const payload = JSON.parse(init.body)
       jevState = payload.state
+      jevQuestions = payload.questions
       const answers: Record<string, unknown> = {
         verdict: {
           type: "choice",
@@ -1266,6 +1268,7 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
       expect(input.system).toContain("Ask if the sandbox identity is not corroborated by direct human messages")
       expect(input.system).toContain("the remote program's effects are materially unknown")
       expect(input.system).toContain("independently judged this exact action or command to be read-only in effect")
+      expect(input.system).toContain("reading data into the agent's context for the human's task is not credential disclosure")
       if (lunaDelayMs) await new Promise((resolve) => setTimeout(resolve, lunaDelayMs))
       if (lunaInvalidResponse) return { status: "invalid_response", diagnostic: "json_content" }
       if (lunaInvalidOnce) {
@@ -1768,6 +1771,61 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
     expect(seen).toHaveLength(beforeSensitive + 1)
     expect(seen.at(-1)).toBe("luna")
     expect(JSON.stringify(lunaState)).not.toContain("patient-123-45-6789.ts")
+
+    // Reads carry the gate's local scan, never the file content.
+    const scanDir = mkdtempSync(path.join(tmpdir(), "permission-read-scan-"))
+    try {
+      const cleanFile = path.join(scanDir, "datasource.tf")
+      writeFileSync(cleanFile, 'resource "grafana_data_source" "logs" {\n  token = var.grafana_token\n}\n')
+      const tokenValue = "ghp_" + "Z".repeat(36)
+      const secretFile = path.join(scanDir, "notes.txt")
+      writeFileSync(secretFile, `deploy key ${tokenValue}\n`)
+      const readRequest = (file: string, callID: string) => ({
+        permission: "read",
+        sessionID: "ses_luna_test",
+        patterns: [file],
+        metadata: { filepath: file },
+        tool: { callID },
+      })
+      await hooks["tool.execute.before"](
+        { tool: "read", sessionID: "ses_luna_test", callID: "call_scan_clean" },
+        { args: { filePath: cleanFile } },
+      )
+      const clean = { status: "ask" }
+      await hooks["permission.ask"](readRequest(cleanFile, "call_scan_clean"), clean)
+      expect(clean.status).toBe("allow")
+      expect(lunaState?.action).toMatchObject({
+        local_evidence: { literal_scan: "none_found", assignment_like_keys: true },
+      })
+      expect(JSON.stringify(lunaState)).not.toContain("grafana_data_source")
+      expect(JSON.stringify(jevQuestions)).toContain("Is there concrete evidence")
+      expect(JSON.stringify(jevState)).not.toContain("REDACTED")
+      expect((lunaState?.context as { immediate_effect?: string })?.immediate_effect).toContain(
+        "nothing leaves this host",
+      )
+
+      await hooks["tool.execute.before"](
+        { tool: "read", sessionID: "ses_luna_test", callID: "call_scan_secret" },
+        { args: { filePath: secretFile } },
+      )
+      const secret = { status: "allow", message: "" }
+      await hooks["permission.ask"](readRequest(secretFile, "call_scan_secret"), secret)
+      expect(secret.status).toBe("ask")
+      expect(secret.message).toContain("credential-like literal in read target")
+      expect(JSON.stringify(lunaState)).not.toContain(tokenValue)
+      expect(JSON.stringify(jevState)).not.toContain(tokenValue)
+
+      await hooks["tool.execute.before"](
+        { tool: "read", sessionID: "ses_luna_test", callID: "call_scan_dir" },
+        { args: { filePath: scanDir } },
+      )
+      await hooks["permission.ask"](readRequest(scanDir, "call_scan_dir"), { status: "ask" })
+      expect(lunaState?.action).toMatchObject({
+        local_evidence: { literal_scan: "not_scanned", not_scanned_reason: "directory" },
+      })
+    } finally {
+      rmSync(scanDir, { recursive: true, force: true })
+    }
 
     const researcher = await gateForTest(directory, "researcher", lunaReview)
     await researcher.provider.models({ models: {} }, { auth: { type: "api", key: "fake-test-key" } })

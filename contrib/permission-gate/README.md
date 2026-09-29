@@ -68,7 +68,14 @@ prose, so the GCP/AWS project-scope rules are not applied to it; the
 subagent's actual commands are still scoped. The orchestrator's role policy
 states that delegating the current task to known subagents is its ordinary
 work. OpenCode core's allow for its own tool-output files is preserved, like
-the configured `/data/rguliyev/tmp/opencode` root. A
+the configured `/data/rguliyev/tmp/opencode` root. For read and grep targets
+the gate scans the file locally (up to 2 MB) and sends reviewers only the
+result as `action.local_evidence`: `literal_scan` (`none_found`, `found`, or
+`not_scanned` with a reason), whether credential-like assignment keys appear,
+and path facts such as `within_workdir` or `opencode_tool_output`. File
+content never leaves the process. A token, private key, JWT, or URL password
+found in the target asks the human by local rule; assignments such as
+`token = var.x` are reported but not ruled on. A
 verified glob snapshot must stay in the workdir and contain no sensitive
 filenames. Only the match count—not discovered filenames—is sent to Jev or
 Luna. A verified built-in skill load sends its name, location, description,
