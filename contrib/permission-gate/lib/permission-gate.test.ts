@@ -1319,9 +1319,9 @@ test("shell segments get module evidence and self-contained segments are judged 
     const tampered = path.join(directory, "grafana-query")
     writeFileSync(tampered, readFileSync(helper, "utf8") + "\n# changed\n")
     const previousHelper = process.env.OPENCODE_GRAFANA_HELPER
-    const grafanaEvidence = async (helperPath: string) => {
+    const grafanaEvidence = async (helperPath: string, verb = "grafana-query") => {
       process.env.OPENCODE_GRAFANA_HELPER = helperPath
-      const command = "grafana-query e2bstg.grafana.net GET /api/datasources"
+      const command = `${verb} e2bstg.grafana.net GET /api/datasources`
       delete contexts[command]
       await hooks["permission.ask"](
         { permission: "bash", sessionID: "ses_go_module", patterns: [command], metadata: { command } },
@@ -1331,6 +1331,8 @@ test("shell segments get module evidence and self-contained segments are judged 
     }
     try {
       expect(await grafanaEvidence(helper)).toContain("verified local helper")
+      expect(await grafanaEvidence(helper, helper)).toContain("verified local helper")
+      expect(await grafanaEvidence(helper, tampered)).toBeUndefined()
       expect(await grafanaEvidence(tampered)).toContain("does not match the gate's pinned version")
     } finally {
       if (previousHelper === undefined) delete process.env.OPENCODE_GRAFANA_HELPER
