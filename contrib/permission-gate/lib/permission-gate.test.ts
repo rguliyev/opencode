@@ -1592,11 +1592,13 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
     }
     expect((await taskWith("call_luna_task_bg", { ...baseTask, background: true })).status).toBe("allow")
     expect((await taskWith("call_luna_task_cmd", { ...baseTask, command: "/review" })).status).toBe("allow")
-    expect((await taskWith("call_luna_task_cmd_long", { ...baseTask, command: "x".repeat(201) })).status).toBe("ask")
+    expect((await taskWith("call_luna_task_cmd_human", { ...baseTask, command: "create a PR to add two node pools ".repeat(10) })).status).toBe("allow")
+    expect((await taskWith("call_luna_task_cmd_long", { ...baseTask, command: "x".repeat(2_001) })).status).toBe("ask")
     expect((await taskWith("call_luna_task_5k", { ...baseTask, prompt: "Build the fixture. ".repeat(270) })).status).toBe(
       "allow",
     )
-    expect((await taskWith("call_luna_task_6k", { ...baseTask, prompt: "x".repeat(6_001) })).status).toBe("ask")
+    expect((await taskWith("call_luna_task_7k", { ...baseTask, prompt: "Review the diff. ".repeat(420) })).status).toBe("allow")
+    expect((await taskWith("call_luna_task_25k", { ...baseTask, prompt: "x".repeat(24_001) })).status).toBe("ask")
     const gcpProse = await taskWith("call_luna_task_gcp", {
       ...baseTask,
       prompt: "Earlier gcloud logging read timestamp>=last24h showed 12 projects produced recent entries; build the fixture.",

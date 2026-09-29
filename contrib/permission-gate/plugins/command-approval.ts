@@ -1216,13 +1216,14 @@ function lunaMayAutoAllowTask(action: ActionEvidence, continuation: TaskContinua
   // task tool does not execute it.
   if (
     args.command !== undefined &&
-    (typeof args.command !== "string" || args.command.length > 200 || args.command.includes("[REDACTED:"))
+    (typeof args.command !== "string" || args.command.length > 2_000 || args.command.includes("[REDACTED:"))
   )
     return false
   if (
     typeof args.prompt !== "string" ||
     !args.prompt.trim() ||
-    Buffer.byteLength(args.prompt) > 6_000 ||
+    // Deep-review briefs routinely exceed 6 KB; match the human-message limit.
+    Buffer.byteLength(args.prompt) > maxHumanMessageBytes ||
     args.prompt.includes("[REDACTED:") ||
     typeof args.description !== "string" ||
     !args.description.trim() ||
