@@ -707,11 +707,11 @@ test("a long live-style session yields bounded user history without hydrating gi
     db.exec(
       "CREATE TABLE session (id TEXT PRIMARY KEY, directory TEXT NOT NULL);" +
         "CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, time_created INTEGER NOT NULL, data TEXT NOT NULL);" +
-        "CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT NOT NULL, data TEXT NOT NULL);",
+        "CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT NOT NULL, data TEXT NOT NULL, session_id TEXT, time_created INTEGER);",
     )
     db.query("INSERT INTO session VALUES (?, ?)").run("ses_long_context", directory)
     const insertMessage = db.query("INSERT INTO message VALUES (?, ?, ?, ?)")
-    const insertPart = db.query("INSERT INTO part VALUES (?, ?, ?)")
+    const insertPart = db.query("INSERT INTO part (id, message_id, data) VALUES (?, ?, ?)")
     db.transaction(() => {
       for (let index = 0; index < 2450; index++) {
         const id = `msg_assistant_${String(index).padStart(4, "0")}`
@@ -747,6 +747,21 @@ test("a long live-style session yields bounded user history without hydrating gi
           )
       }
     })()
+    // Feedback typed while rejecting a permission is stored on the tool part.
+    db.query("INSERT INTO part VALUES (?, ?, ?, ?, ?)").run(
+      "part_rejected_feedback",
+      "msg_assistant_0520",
+      JSON.stringify({
+        type: "tool",
+        state: {
+          status: "error",
+          error:
+            "The user rejected permission to use this specific tool call with the following feedback: editing files in the worktree is fine",
+        },
+      }),
+      "ses_long_context",
+      1_202,
+    )
     process.env.OPENCODE_DB = filename
     process.env.XDG_STATE_HOME = "/dev/null"
     globalThis.fetch = async (input, init) => {
@@ -799,7 +814,12 @@ test("a long live-style session yields bounded user history without hydrating gi
     expect(messageApiCalls).toBe(0)
     const context = state?.context
     if (!isRecord(context) || !Array.isArray(context.human_messages)) throw new Error("Missing Jev human context")
-    expect(context.human_messages).toHaveLength(260)
+    expect(context.human_messages).toHaveLength(261)
+    expect(context.human_messages).toContainEqual({
+      id: "part_rejected_feedback",
+      created: 1_202,
+      text: "[permission feedback] editing files in the worktree is fine",
+    })
     expect(context.human_request).toBe("Inspect the local fixture without network access.")
     const secretMessage = context.human_messages[40] as unknown
     const attachmentMessage = context.human_messages[41] as unknown
@@ -1732,6 +1752,40 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
       policyEdit,
     )
     expect(policyEdit.status).toBe("ask")
+
+    // Proposed IAM/policy files in a dedicated worktree change nothing live;
+    // push, PR, and deploy are separately gated. A symlink escape still asks.
+    const worktree = mkdtempSync("/data/rguliyev/tmp/opencode/worktrees/permission-gate-test-")
+    const outsideTarget = mkdtempSync("/data/rguliyev/tmp/permission-gate-outside-")
+    symlinkSync(outsideTarget, path.join(worktree, "escape"), "dir")
+    try {
+      const iamFile = path.join(worktree, "gcp", "_global", "iam", "grafana-gcp-logs", "terragrunt.hcl")
+      const worktreeEdit = { status: "ask", message: "" }
+      await hooks["permission.ask"](
+        {
+          ...editRequest,
+          patterns: [iamFile.slice(1)],
+          metadata: { filepath: iamFile, diff: '+inputs = { role = "roles/logging.viewer" }' },
+        },
+        worktreeEdit,
+      )
+      expect(worktreeEdit.status).toBe("allow")
+      const escapedFile = path.join(worktree, "escape", "iam", "main.tf")
+      const escapedEdit = { status: "allow", message: "" }
+      await hooks["permission.ask"](
+        {
+          ...editRequest,
+          patterns: [escapedFile.slice(1)],
+          metadata: { filepath: escapedFile, diff: '+role = "roles/owner"' },
+        },
+        escapedEdit,
+      )
+      expect(escapedEdit.status).toBe("ask")
+      expect(escapedEdit.message).toContain("human-only policy or data change may apply")
+    } finally {
+      rmSync(worktree, { recursive: true, force: true })
+      rmSync(outsideTarget, { recursive: true, force: true })
+    }
     expect((lunaState?.context as { local_rules?: string[] })?.local_rules).toContain(
       "human-only policy or data change may apply",
     )
