@@ -2461,7 +2461,10 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
         : raw
     // This detector matches shell commands that fetch or send credentials. An
     // edit diff is code being written, not run; running it is checked as Bash.
-    if (input.permission !== "edit" && requiresHuman(policyRaw)) reasons.push("credential or secret access")
+    // Task prompts are prose handed to a subagent, like edit diffs; the
+    // subagent's actual commands are checked when it runs them.
+    if (input.permission !== "edit" && input.permission !== "task" && requiresHuman(policyRaw))
+      reasons.push("credential or secret access")
     const continuation = await taskContinuation(input, call?.args)
     if (continuation === "unverified") reasons.push("task continuation lineage unverified")
     if (action.local_evidence?.literal_scan === "found")

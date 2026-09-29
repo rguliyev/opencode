@@ -1602,6 +1602,11 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
       prompt: "Earlier gcloud logging read timestamp>=last24h showed 12 projects produced recent entries; build the fixture.",
     })
     expect(gcpProse.status).toBe("allow")
+    const secretProse = await taskWith("call_luna_task_secret", {
+      ...baseTask,
+      prompt: "Review the syncer: it reads a token via secretmanager.googleapis.com and sends Authorization: Bearer headers.",
+    })
+    expect(secretProse.status).toBe("allow")
     expect(gcpProse.message ?? "").not.toContain("GCP project")
 
     // A task_id continuation auto-allows only for a verified child of this
