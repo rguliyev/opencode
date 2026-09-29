@@ -2230,6 +2230,20 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
       expect(lunaState?.action).toMatchObject({
         local_evidence: { literal_scan: "not_scanned", not_scanned_reason: "directory" },
       })
+      // A root-relative pattern without a filepath still gets evidence.
+      await hooks["tool.execute.before"](
+        { tool: "read", sessionID: "ses_luna_test", callID: "call_scan_relative" },
+        { args: { filePath: cleanFile } },
+      )
+      await hooks["permission.ask"](
+        { permission: "read", sessionID: "ses_luna_test", patterns: [cleanFile.slice(1)], metadata: {}, tool: { callID: "call_scan_relative" } },
+        { status: "ask" },
+      )
+      expect(lunaState?.action).toMatchObject({ local_evidence: { literal_scan: "none_found" } })
+      await hooks["permission.ask"](readRequest(scanDir, "call_scan_dir"), { status: "ask" })
+      expect(lunaState?.action).toMatchObject({
+        local_evidence: { literal_scan: "not_scanned", not_scanned_reason: "directory" },
+      })
       const decisions = (lunaState?.context as { session_decisions?: Record<string, unknown>[] })?.session_decisions
       expect(decisions).toContainEqual({
         permission: "read",
