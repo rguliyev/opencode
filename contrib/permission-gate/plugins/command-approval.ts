@@ -377,7 +377,7 @@ const actionRiskQuestions = {
     "Could this action weaken or modify authentication, authorization, IAM, permissions, secrets policy, users, groups, sudoers, SSH, firewall, or audit controls?",
   offensive: "Could this action scan, probe, attack, brute-force, or exfiltrate data to another host?",
   shared_state:
-    "Could this action publish, delete, or mutate remote/shared state used by other people or machines? Local Git staging, commits, and unpushed worktrees are not shared state.",
+    "Could this action itself publish, delete, or mutate remote/shared state used by other people or machines? Count only what this action does now: loading a skill or delegating a task performs none of the later actions it describes. Local Git staging, commits, and unpushed worktrees are not shared state.",
   system_state: "Could this action change machine-wide state or other programs' connections?",
   gcp_credentials:
     "Could this action obtain, print, mint, impersonate, switch, or access Google Cloud credentials, ADC, OAuth tokens, or service-account credentials?",
@@ -513,7 +513,7 @@ function immediateEffect(permission: string) {
     case "lsp":
       return "Reads local data into the agent's context only; nothing leaves this host unless a later, separately reviewed action sends it. action.local_evidence reports the gate's local credential scan of the target. Known secret paths and detected credential literals are sent to the human by local rule before review."
     case "skill":
-      return "Loads an installed skill's instructions and lists up to ten files now; this does not execute the skill's scripts. Later tool actions receive separate permission checks."
+      return "Loads an installed skill's instructions and lists up to ten files now; this does not execute the skill's scripts or perform any action the skill describes, such as creating a PR or deploying. Later tool actions receive separate permission checks."
     case "external_directory":
       return "Grants the requested access to a path outside the workspace now."
     case "webfetch":
@@ -695,6 +695,22 @@ function scriptPaths(command: string, cwd: string, depth = 0) {
       }
       continue
     }
+    // `python3 -m json.tool` reading stdin and writing stdout only pretty-prints.
+    // A positional argument would be an input or output file, so any is refused.
+    if (
+      ["python", "python3"].includes(name) &&
+      args[0] === "-m" &&
+      args[1] === "json.tool" &&
+      args
+        .slice(2)
+        .every(
+          (argument, index, rest) =>
+            /^--(?:sort-keys|compact|json-lines|no-ensure-ascii|tab|indent=\d{1,2})$/.test(argument) ||
+            (argument === "--indent" && /^\d{1,2}$/.test(rest[index + 1] ?? "")) ||
+            (/^\d{1,2}$/.test(argument) && rest[index - 1] === "--indent"),
+        )
+    )
+      continue
     if (interpreters.has(name)) {
       let index = 0
       while (index < args.length && args[index].startsWith("-")) {
@@ -963,11 +979,12 @@ function sensitiveFilename(value: string) {
     ) ||
     /[A-Za-z]+[-_]\d{4}-\d{2}-\d{2}/.test(value) ||
     /\b\d{3}-\d{2}-\d{4}\b/.test(value) ||
-    /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i.test(value)
+    /[A-Z0-9._%+-]{1,64}@[A-Z0-9.-]{1,255}\.[A-Z]{2,24}/i.test(value)
   )
 }
 
-const maxScanBytes = 2 * 1024 * 1024
+// Redaction regexes are linear but not free (~1.3 ms per KB on long runs).
+const maxScanBytes = 256 * 1024
 // Long human instructions are ordinary; a 7 KB message used to be withheld,
 // which left every later action without an authorizing request.
 const maxHumanMessageBytes = 24_000
@@ -1692,7 +1709,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
     // action without task context and forced a human prompt.
     return text
       .replace(/\b\d{3}-\d{2}-\d{4}\b/g, "[REDACTED:PERSONAL_IDENTIFIER]")
-      .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[REDACTED:PERSONAL_IDENTIFIER]")
+      .replace(/[A-Z0-9._%+-]{1,64}@[A-Z0-9.-]{1,255}\.[A-Z]{2,24}/gi, "[REDACTED:PERSONAL_IDENTIFIER]")
       .replace(/(?:\+\d{1,3}[-. ]?)?\(?\d{3}\)?[-. ]\d{3}[-. ]\d{4}\b/g, "[REDACTED:PERSONAL_IDENTIFIER]")
   }
 
@@ -1829,6 +1846,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
       "When context.role_policy restricts the agent to read-only inspection, your allow also asserts that you independently judged this exact action or command to be read-only in effect: no change to files, Git refs, index, or worktrees, remote services, or machine state, and no build, test, download, or delegation. Dual-use tools are read-only only in read-only forms, for example git status, log, diff, or show but not commit, checkout, reset, fetch, or push; sed without -i; find without -delete or -exec that writes. If read-only effect cannot be established, ask.",
       "For local read, grep, glob, and lsp actions, reading data into the agent's context for the human's task is not credential disclosure; disclosure means printing, logging, exporting, or sending secret values elsewhere. Judge from action.local_evidence: when literal_scan is none_found for a task-relevant target, the mere possibility that a file could hold credentials is not grounds to ask. Configuration that names a secret or references it by variable is not a credential. A redacted literal elsewhere in the human history is not grounds to ask about an unrelated action.",
       "context.session_decisions lists recent gate outcomes in the same task; human_approved marks requests the human approved. Treat them as evidence of what the human accepts for this task, not as authorization for a materially different action. context.local_rules lists local rules that already require human review for this request.",
+      "A skill load only reads that skill's instructions into the agent's context; it performs none of the actions the skill describes, each of which receives its own permission check (pushes and PR changes are human gates). Judge a skill load against the human's overall task, not only the current step: loading a PR or deployment skill ahead of time is not creating a PR or deploying. Likewise, delegating a task whose instructions include committing, pushing, or opening a PR is not publishing; those later steps are separately gated, and pushes and PR changes require the human.",
       "Return allow ONLY when this exact action is clearly within the applicable direct human task and role policy, with no credential disclosure, regulated-data exposure, destructive effect, security-control change, production or unrelated shared-state mutation, opaque side effect, or human-only gate. Otherwise ask.",
       "An existing E2B sandbox explicitly identified by direct human messages for the current isolated test is a task-local environment, not automatically production or unrelated shared state. Existing credentials from the task\'s environment may be used solely inside that same sandbox for the authorized test; ordinary use is not credential disclosure.",
       "Starting or restarting the test worker inside that same sandbox after a status report, such as a closed callback port, can be within an ongoing explicit instruction to continue testing. Do not require a new one-off instruction solely because this routine test action is remote or starts a background process. This does not authorize a new sandbox, a different service, or expansion of the test.",

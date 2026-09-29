@@ -1078,7 +1078,12 @@ test("a read-only agent's dual-use shell command needs both Luna and Jev to judg
   const previousFetch = globalThis.fetch
   const previousStateHome = process.env.XDG_STATE_HOME
   const previousKevSocket = process.env.OPENCODE_KEV_SOCKET
-  const mutation: Record<string, number> = { "git status --short": 0.05, "git push fork HEAD": 0.9 }
+  const mutation: Record<string, number> = {
+    "git status --short": 0.05,
+    "git push fork HEAD": 0.9,
+    "python3 -m json.tool --indent 2": 0.02,
+    "python3 -m json.tool in.json out.json": 0.9,
+  }
   let lunaChoice = "allow"
   process.env.XDG_STATE_HOME = "/dev/null"
   process.env.OPENCODE_KEV_SOCKET = "/dev/null/no-kev-socket"
@@ -1123,6 +1128,9 @@ test("a read-only agent's dual-use shell command needs both Luna and Jev to judg
     expect(await ask(hooks, "git status --short")).toBe("allow")
     // Luna allowing is not enough when Jev independently sees a mutation.
     expect(await ask(hooks, "git push fork HEAD")).toBe("ask")
+    // A stdin-to-stdout json.tool is inspectable; file arguments are not.
+    expect(await ask(hooks, "python3 -m json.tool --indent 2")).toBe("allow")
+    expect(await ask(hooks, "python3 -m json.tool in.json out.json")).toBe("ask")
     lunaChoice = "ask"
     expect(await ask(hooks, "git status --short")).toBe("ask")
   } finally {
@@ -1269,6 +1277,7 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
       expect(input.system).toContain("the remote program's effects are materially unknown")
       expect(input.system).toContain("independently judged this exact action or command to be read-only in effect")
       expect(input.system).toContain("reading data into the agent's context for the human's task is not credential disclosure")
+      expect(input.system).toContain("A skill load only reads that skill's instructions")
       if (lunaDelayMs) await new Promise((resolve) => setTimeout(resolve, lunaDelayMs))
       if (lunaInvalidResponse) return { status: "invalid_response", diagnostic: "json_content" }
       if (lunaInvalidOnce) {
@@ -1430,6 +1439,20 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
       "Check whether src/main.ts exists; reply to [REDACTED:PERSONAL_IDENTIFIER].",
     )
     expect(JSON.stringify(lunaState)).not.toContain("bob@example.test")
+
+    // Long messages fit individually; over the timeline budget the oldest are
+    // replaced by markers and the latest request survives.
+    earlierUpdates = Array.from({ length: 5 }, (_, index) => `Update ${index}: ` + "a".repeat(23_000))
+    latestHumanText = "Check whether src/main.ts exists."
+    const longHistory = { status: "ask" }
+    await hooks["permission.ask"](request, longHistory)
+    expect(longHistory.status).toBe("allow")
+    const longMessages = (lunaState?.context as { human_messages?: { text: string; withheld?: string }[] })
+      ?.human_messages
+    expect(longMessages?.at(-1)?.text).toBe("Check whether src/main.ts exists.")
+    expect(longMessages?.[0]?.withheld).toBe("oversized_message")
+    expect(longMessages?.some((item) => item.text.startsWith("Update 4: "))).toBe(true)
+    earlierUpdates = []
     latestHumanText = undefined
 
     lunaContent = 'Prose before JSON: {"choice":"allow","reason":"Looks fine"}'
@@ -1846,6 +1869,7 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
       })
       expect(JSON.stringify(lunaState)).not.toContain("grafana_data_source")
       expect(JSON.stringify(jevQuestions)).toContain("Is there concrete evidence")
+      expect(JSON.stringify(jevQuestions)).toContain("Count only what this action does now")
       expect(JSON.stringify(jevState)).not.toContain("REDACTED")
       expect((lunaState?.context as { immediate_effect?: string })?.immediate_effect).toContain(
         "nothing leaves this host",
