@@ -1518,6 +1518,8 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
       subagent_type: "deep-implementer",
     }
     expect((await taskWith("call_luna_task_bg", { ...baseTask, background: true })).status).toBe("allow")
+    expect((await taskWith("call_luna_task_cmd", { ...baseTask, command: "/review" })).status).toBe("allow")
+    expect((await taskWith("call_luna_task_cmd_long", { ...baseTask, command: "x".repeat(201) })).status).toBe("ask")
     expect((await taskWith("call_luna_task_5k", { ...baseTask, prompt: "Build the fixture. ".repeat(270) })).status).toBe(
       "allow",
     )

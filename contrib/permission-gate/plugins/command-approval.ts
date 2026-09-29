@@ -1164,9 +1164,16 @@ function lunaMayAutoAllowTask(action: ActionEvidence, continuation: TaskContinua
   if (
     Object.keys(args).some(
       (key) =>
-        !["description", "prompt", "subagent_type", "background"].includes(key) &&
+        !["description", "prompt", "subagent_type", "background", "command"].includes(key) &&
         !(key === "task_id" && continuation === "verified"),
     )
+  )
+    return false
+  // `command` is a label for the slash command that triggered the task; the
+  // task tool does not execute it.
+  if (
+    args.command !== undefined &&
+    (typeof args.command !== "string" || args.command.length > 200 || args.command.includes("[REDACTED:"))
   )
     return false
   if (
