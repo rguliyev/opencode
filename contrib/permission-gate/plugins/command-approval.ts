@@ -273,7 +273,7 @@ async function configuredExternalPatternAllowed(pattern: unknown) {
 const maxContextCommandBytes = 8 * 1024
 
 const endpoint = "https://openrouter.ai/api/alpha/decisions"
-const lunaModel = "openai/gpt-6-luna"
+const lunaModel = "google/gemini-3.8-flash"
 const lunaTimeoutMs = 8_000
 const requestedModel = "typesafe/jev-1.13"
 const acceptedModels = new Set([requestedModel, "typesafe/jev-1.13-20260917"])

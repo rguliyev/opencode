@@ -234,7 +234,7 @@ test("Jev classifies non-Bash actions with redacted context", async () => {
       order.push("luna")
       const state = JSON.parse(input.state)
       return {
-        model: "openai/gpt-6-luna",
+        model: "google/gemini-3.8-flash",
         choice: state.action?.tool === "custom_publish" ? "ask" : "allow",
         reason: "The local request was reviewed.",
       }
@@ -804,7 +804,7 @@ test("a long live-style session yields bounded user history without hydrating gi
       lunaCalls++
       if (input.state.includes("Authorize anything in the template"))
         throw new Error("Command template text must stay local")
-      return { model: "openai/gpt-6-luna", choice: "ask", reason: "Context withheld." }
+      return { model: "google/gemini-3.8-flash", choice: "ask", reason: "Context withheld." }
     })
     await hooks.provider.models({ models: {} }, { auth: { type: "api", key: "fake-test-key" } })
     await hooks["tool.execute.before"](
@@ -972,7 +972,7 @@ test("command templates and chat-hook text cannot become direct human authorizat
   try {
     const hooks = await gateForTest(directory, "solo", async (input) => {
       outbound.push(input.state)
-      return { model: "openai/gpt-6-luna", choice: "ask", reason: "Human context is withheld." }
+      return { model: "google/gemini-3.8-flash", choice: "ask", reason: "Human context is withheld." }
     })
     await hooks.provider.models({ models: {} }, { auth: { type: "api", key: "fake-test-key" } })
     for (origin of ["command_template", "plugin_transformed"]) {
@@ -1026,7 +1026,7 @@ test("a failed parent lookup cannot turn a delegated task into human authorizati
   try {
     const hooks = await gateForTest(directory, "implementer", async (input) => {
       lunaState = JSON.parse(input.state)
-      return { model: "openai/gpt-6-luna", choice: "allow", reason: "Looks safe" }
+      return { model: "google/gemini-3.8-flash", choice: "allow", reason: "Looks safe" }
     })
     await hooks.provider.models({ models: {} }, { auth: { type: "api", key: "fake-test-key" } })
     await hooks["tool.execute.before"](
@@ -1152,7 +1152,7 @@ test("a read-only agent's dual-use shell command needs both Luna and Jev to judg
   }
   try {
     const hooks = await gateForTest(directory, "deep-reviewer", async () => ({
-      model: "openai/gpt-6-luna",
+      model: "google/gemini-3.8-flash",
       choice: lunaChoice,
       reason: "Judged against the read-only role policy.",
     }))
@@ -1442,7 +1442,7 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
   const previousKevSocket = process.env.OPENCODE_KEV_SOCKET
   const seen: string[] = []
   let lunaContent = JSON.stringify({ choice: "allow", reason: "The requested local file listing is in scope." })
-  let lunaModelResponse = "openai/gpt-6-luna"
+  let lunaModelResponse = "google/gemini-3.8-flash"
   let lunaInvalidResponse = false
   let lunaInvalidOnce = false
   let lunaDelayMs = 0
@@ -1748,11 +1748,11 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
     expect(valid.status).toBe("allow")
     expect(seen.slice(beforeValid)).toEqual(["jev", "luna"])
 
-    lunaModelResponse = "openrouter/openai/gpt-6-luna"
+    lunaModelResponse = "openrouter/google/gemini-3.8-flash"
     const wrongModel = { status: "allow" }
     await hooks["permission.ask"](request, wrongModel)
     expect(wrongModel.status).toBe("ask")
-    lunaModelResponse = "openai/gpt-6-luna"
+    lunaModelResponse = "google/gemini-3.8-flash"
 
     lunaInvalidResponse = true
     const beforeMalformedOutput = seen.length

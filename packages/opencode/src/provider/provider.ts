@@ -2071,16 +2071,18 @@ const layer = Layer.effect(
     const reviewPermission = (input: PermissionReviewInput) =>
       Effect.gen(function* () {
         const cfg = yield* config.get()
-        // The permission gate must not silently drift to another model or provider.
-        if (cfg.small_model !== "openai/gpt-6-luna") throw new Error("Luna is not the configured small model")
+        // The permission gate is pinned to one model and provider; it must not
+        // silently drift. It is independent of small_model.
         if (input.system.length > 8_000 || input.state.length > 128_000)
           throw new Error("Permission review context exceeds its safety budget")
 
-        const model = yield* getModel(ProviderV2.ID.make("openai"), ModelV2.ID.make("gpt-6-luna")).pipe(Effect.orDie)
-        if (model.api.id !== "gpt-6-luna" || model.api.npm !== "@ai-sdk/openai")
-          throw new Error("Configured Luna model resolves outside the direct OpenAI provider")
-        if ((yield* auth.get(model.providerID))?.type !== "oauth")
-          throw new Error("Permission review requires OpenCode's existing OpenAI OAuth access")
+        const model = yield* getModel(ProviderV2.ID.make("google"), ModelV2.ID.make("gemini-3.8-flash")).pipe(
+          Effect.orDie,
+        )
+        if (model.api.id !== "gemini-3.8-flash" || model.api.npm !== "@ai-sdk/google")
+          throw new Error("Configured reviewer model resolves outside the direct Google provider")
+        if ((yield* auth.get(model.providerID))?.type !== "api")
+          throw new Error("Permission review requires OpenCode's existing Google API key")
         const language = yield* getLanguage(model).pipe(Effect.orDie)
         if (input.signal?.aborted) throw new Error("Permission review deadline elapsed")
         const params = {
@@ -2089,15 +2091,13 @@ const layer = Layer.effect(
             Schema.toStandardSchemaV1(permissionReviewSchema),
             Schema.toStandardJSONSchemaV1(permissionReviewSchema),
           ),
+          system: input.system,
           messages: [{ role: "user" as const, content: input.state }],
           abortSignal: input.signal,
-          // The ChatGPT Codex OAuth endpoint rejects max_output_tokens.
           maxRetries: 0,
-          providerOptions: ProviderTransform.providerOptions(model, {
-            instructions: input.system,
-            store: false,
-            reasoningEffort: "none",
-          }),
+          // Default thinking took 8-13 s to refuse a destructive command; low
+          // keeps allows around 1-4 s. Minimal is not supported by this model.
+          providerOptions: { google: { thinkingConfig: { thinkingLevel: "low" } } },
         } satisfies Parameters<typeof streamObject>[0]
 
         const answer = yield* Effect.promise(async () => {
@@ -2120,7 +2120,7 @@ const layer = Layer.effect(
           }
         })
         if ("status" in answer) return answer
-        return { model: "openai/gpt-6-luna", choice: answer.choice, reason: answer.reason }
+        return { model: "google/gemini-3.8-flash", choice: answer.choice, reason: answer.reason }
       })
 
     yield* plugin.setPermissionModelReviewer(reviewPermission)
