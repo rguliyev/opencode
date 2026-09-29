@@ -134,3 +134,9 @@ test("date -u format strings are not curl -u credentials", () => {
     expect(sanitizeReviewText(command).value).toBe(command)
   expect(sanitizeReviewText("curl -u admin:" + "S3cretValue9 https://api.example.invalid").value).toContain("[REDACTED:PASSWORD]")
 })
+
+test("documentation placeholders are not credentials", () => {
+  for (const line of ["NOMAD_TOKEN=<token> nomad status", "token: <your-token>", 'api_key="<api-key>"'])
+    expect(sanitizeReviewText(line).value).toBe(line)
+  expect(sanitizeReviewText("NOMAD_TOKEN=<tok>" + "en123 nomad status").value).toContain("[REDACTED:CREDENTIAL]")
+})

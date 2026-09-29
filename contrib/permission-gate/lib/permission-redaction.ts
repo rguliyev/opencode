@@ -12,6 +12,9 @@ const markerPattern = /\[REDACTED:[A-Z_]+\]/g
 const reference =
   /^(?:\$|process\.env\b|os\.environ\b|os\.getenv\b|getenv\(|env\(|\[REDACTED:|(?:data|var|local|module|dependency|include|each|self)\.[A-Za-z_])/i
 
+// A documentation placeholder such as NOMAD_TOKEN=<token> holds no value.
+const placeholder = /^<[A-Za-z][A-Za-z0-9_.-]{0,62}>$/
+
 // This is deliberately a bounded, local detector rather than a claim that
 // arbitrary passwords can be recognized. Unrecognized values remain a risk.
 const residualCredential =
@@ -32,7 +35,8 @@ function sanitizeText(input: string): RedactionResult<string> {
     shouldRedact: (prefix: string, secret: string) => boolean = () => true,
   ) => {
     value = value.replace(pattern, (found, prefix: string, secret: string) => {
-      if (!secret || reference.test(secret) || !shouldRedact(prefix, secret)) return found
+      if (!secret || reference.test(secret) || placeholder.test(secret.trim()) || !shouldRedact(prefix, secret))
+        return found
       kinds.add(kind)
       return prefix + marker(kind)
     })
