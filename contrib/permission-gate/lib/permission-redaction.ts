@@ -118,6 +118,9 @@ function sanitizeText(input: string): RedactionResult<string> {
     /((?:["']?(?:[A-Za-z_][A-Za-z0-9_.-]{0,63})?(?:api[_-]?key|access[_-]?key|token|secret|password|passwd|credential|private[_-]?key)[A-Za-z0-9_.-]{0,63}["']?)\s*(?:=|:)\s*["']?)([^\s'"`;|&,}]+)/gi,
     "CREDENTIAL",
     (prefix, secret) =>
+      // A value with no letters or digits ("=== ClusterSecretStore ===") is
+      // punctuation, not a credential.
+      /[A-Za-z0-9]/.test(secret) &&
       !/(?:count|length|size|max|min|timeout|ttl)["']?\s*(?:=|:)/i.test(prefix) &&
       !(
         !/["']\s*$/.test(prefix) &&

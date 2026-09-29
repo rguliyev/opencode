@@ -117,3 +117,9 @@ test("mapping literals with service accounts are not URL passwords", () => {
   expect(sanitizeReviewText(mapping).value).toBe(mapping)
   expect(sanitizeReviewText("https://admin:" + "S3cretValue9@db.example.invalid").value).toContain("[REDACTED:PASSWORD]")
 })
+
+test("punctuation after a secret-like key is not a credential", () => {
+  const label = 'echo "=== shared cluster ESO / ClusterSecretStore ==="'
+  expect(sanitizeReviewText(label).value).toBe(label)
+  expect(sanitizeReviewText("API_KEY=" + "abc123def456").value).toContain("[REDACTED:CREDENTIAL]")
+})
