@@ -764,6 +764,11 @@ const ghReadOnly = new Set([
 
 function ghApiEvidence(command: string) {
   const parts = commandParts(command)
+  // terraform-docs prints to stdout unless told to write a file.
+  if (executableName(parts.verb) === "terraform-docs")
+    return parts.args.some((argument) => /^(?:--output-file|--output-mode|-c|--config)(?:=|$)/.test(argument))
+      ? "terraform-docs: output-file, output-mode, or config flags given; it may write files"
+      : "terraform-docs: no output-file or config flags; it prints generated docs to stdout unless the module's .terraform-docs.yml sets an output file"
   if (executableName(parts.verb) !== "gh") return undefined
   const subcommand = parts.args.slice(0, 2).join(" ")
   if (ghReadOnly.has(subcommand)) return `gh ${subcommand}: read-only GitHub query`

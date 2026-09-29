@@ -1246,6 +1246,7 @@ test("shell segments get module evidence and self-contained segments are judged 
       "gh api repos/e2b-dev/argocd/pulls/12 --jq .state",
       "gh api -X PATCH repos/e2b-dev/argocd/pulls/12 -f state=closed",
       "gh pr diff 12 --repo e2b-dev/argocd",
+      "terraform-docs markdown table modules/gke",
     ]
     const output = { status: "ask" }
     await hooks["permission.ask"](
@@ -1260,6 +1261,7 @@ test("shell segments get module evidence and self-contained segments are judged 
     expect(contexts[commands[4]].command_evidence).toBe("gh api: GET request (read-only)")
     expect(contexts[commands[5]].command_evidence).toContain("PATCH request with a request body")
     expect(contexts[commands[6]].command_evidence).toBe("gh pr diff: read-only GitHub query")
+    expect(contexts[commands[7]].command_evidence).toContain("prints generated docs to stdout")
     // A literal echo ($? only) is allowed locally and never sent to Jev.
     expect(contexts[commands[3]]).toBeUndefined()
     expect(contexts[commands[0]].full_command).toBe(commands.join("; "))
