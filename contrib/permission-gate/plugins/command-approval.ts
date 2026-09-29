@@ -153,6 +153,9 @@ const localGitAgents = new Set(["orchestrator", "solo", "implementer", "deep-imp
 // it does not waive human gates for the underlying change or publication.
 const localGitRolePolicy =
   "For assigned development work, this role may fetch, create branches and dedicated worktrees under /data/rguliyev/tmp/opencode/worktrees, edit files there, stage, commit, and rebase unpushed branches without a separate human permission. These are ordinary local development actions, not shared-state rewrites. Pushing, PR creation/update, merging, and rewriting pushed history require human authorization; Terraform/Atlantis apply and other human gates still apply. The human has stated that changing files inside dedicated worktrees under /data/rguliyev/tmp/opencode/worktrees is fine, including configuration, Terraform, and IAM files: such edits change nothing live until a separately gated push, PR, apply, or deploy."
+// A GET to GitHub or another API was read as a forbidden "download".
+const readOnlyRolePolicy =
+  "Read-only inspection only; no edits, builds, tests, delegation, state changes, or downloading and running code. Read-only queries to remote services, such as GET requests, gh pr view/diff/list, gh run view, and gh api GET calls, are allowed inspection."
 const orchestratorDelegationPolicy =
   "Delegating the human's current task to known subagents (explore, researcher, reviewer, deep-reviewer, implementer, deep-implementer), including in the background, is this role's ordinary work and needs no separate human instruction; each subagent's later tool actions receive separate permission checks."
 const requiredBashDenies = new Set([
@@ -2396,7 +2399,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
       subagent: !!session.parentID,
       ...(reviewer
         ? {
-            role_policy: "Read-only inspection only; no edits, builds, tests, downloads, delegation, or state changes",
+            role_policy: readOnlyRolePolicy,
           }
         : localGitAgents.has(agent)
           ? {
@@ -2771,7 +2774,9 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
         typeof fullCommand === "string" &&
         (redact(fullCommand) !== fullCommand || containsCredentialLiteral(fullCommand))
       const batch =
-        commands.length > 1 && typeof fullCommand === "string" && fullCommand.trim() && !commands.includes(fullCommand)
+        // With process substitution core reports the whole call as one of the
+        // patterns too; it is still a batch of several commands.
+        commands.length > 1 && typeof fullCommand === "string" && fullCommand.trim()
           ? {
               cmd_sha256: createHash("sha256").update(fullCommand).digest("hex"),
               cmd:
@@ -2909,7 +2914,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
         subagent: !!session.parentID,
         ...(reviewer
           ? {
-              role_policy: "Read-only inspection only; no edits, builds, tests, downloads, or state changes",
+              role_policy: readOnlyRolePolicy,
             }
           : localGitAgents.has(agent)
             ? { role_policy: localGitRolePolicy }

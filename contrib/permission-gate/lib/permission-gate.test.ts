@@ -1164,6 +1164,24 @@ test("a read-only agent's dual-use shell command needs both Luna and Jev to judg
     }
     expect(await batched(['echo "=== DIFF A ==="', 'echo "=== DIFF B ==="'])).toBe("allow")
     expect(await batched(['echo "=== DIFF A ==="', 'echo "$GRAFANA_TOKEN"'])).toBe("ask")
+    // Process substitution: the full call is itself one of the patterns.
+    lunaChoice = "allow"
+    mutation["diff <(git show HEAD:a.yaml) <(git show HEAD~1:a.yaml)"] = 0.05
+    mutation["git show HEAD:a.yaml"] = 0.05
+    mutation["git show HEAD~1:a.yaml"] = 0.05
+    const substituted = { status: "ask" }
+    const full = "diff <(git show HEAD:a.yaml) <(git show HEAD~1:a.yaml)"
+    await hooks["permission.ask"](
+      {
+        permission: "bash",
+        sessionID: "ses_reviewer_shell",
+        patterns: [full, "git show HEAD:a.yaml", "git show HEAD~1:a.yaml"],
+        metadata: { command: full, purpose: "Compare the template between two revisions" },
+      },
+      substituted,
+    )
+    expect(substituted.status).toBe("allow")
+    lunaChoice = "ask"
     lunaChoice = "allow"
     // Luna allowing is not enough when Jev independently sees a mutation.
     expect(await ask(hooks, "git push fork HEAD")).toBe("ask")
@@ -2298,6 +2316,7 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
     expect(researcherGlob.status).toBe("allow")
     expect(seen.slice(beforeResearcher)).toEqual(["jev", "luna"])
     expect((lunaState?.context as { role_policy?: string })?.role_policy).toContain("Read-only inspection only")
+    expect((lunaState?.context as { role_policy?: string })?.role_policy).toContain("gh api GET calls, are allowed inspection")
 
     jevMutation = 0.4
     const researcherMutation = { status: "allow", message: "" }
