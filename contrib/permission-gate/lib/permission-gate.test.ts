@@ -1759,6 +1759,17 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
         ? editContext.immediate_effect
         : undefined,
     ).toContain("formatter")
+    await hooks.config({ agent: {} })
+    const noFormatter = { status: "ask" }
+    await hooks["permission.ask"](editRequest, noFormatter)
+    expect((lunaState?.context as { immediate_effect?: string })?.immediate_effect).toContain(
+      "No formatter runs: formatters are disabled",
+    )
+    await hooks.config({ agent: {}, formatter: {} })
+    await hooks["permission.ask"](editRequest, { status: "ask" })
+    expect((lunaState?.context as { immediate_effect?: string })?.immediate_effect).toContain(
+      "can immediately run a project-configured formatter",
+    )
 
     const terraformEdit = { status: "ask", message: "" }
     await hooks["permission.ask"](
