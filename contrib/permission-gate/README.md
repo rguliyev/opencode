@@ -75,7 +75,14 @@ result as `action.local_evidence`: `literal_scan` (`none_found`, `found`, or
 and path facts such as `within_workdir` or `opencode_tool_output`. File
 content never leaves the process. A token, private key, JWT, or URL password
 found in the target asks the human by local rule; assignments such as
-`token = var.x` are reported but not ruled on. A
+`token = var.x` are reported but not ruled on. When the gate resolves a grep
+path itself, it replaces core's "not yet verified" note. Reviewers also get
+`context.session_decisions`: the last 20 gate outcomes in the same root task
+(permission, sanitized target, decision, engine), with `human_approved` set
+when an asked call later executed. This memory lives in the plugin process
+only and is not persisted. Luna additionally gets `context.local_rules` when
+a local rule already requires human review. A glob may carry an explicit
+search path if it resolves under the workdir or the configured tmp root. A
 verified glob snapshot must stay in the workdir and contain no sensitive
 filenames. Only the match count—not discovered filenames—is sent to Jev or
 Luna. A verified built-in skill load sends its name, location, description,

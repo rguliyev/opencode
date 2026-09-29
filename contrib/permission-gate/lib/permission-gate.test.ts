@@ -1567,6 +1567,9 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
       policyEdit,
     )
     expect(policyEdit.status).toBe("ask")
+    expect((lunaState?.context as { local_rules?: string[] })?.local_rules).toContain(
+      "human-only policy or data change may apply",
+    )
     expect(seen.slice(-2)).toEqual(["jev", "luna"])
 
     await hooks["tool.execute.before"](
@@ -1591,6 +1594,25 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
     expect(grepAllowed.status).toBe("allow")
     expect((lunaState?.action as { search?: { requested_path?: string } })?.search?.requested_path).toBe(
       path.join(directory, "src"),
+    )
+    // A path the gate cannot resolve keeps core's unverified note.
+    expect((lunaState?.action as { search?: { resolution?: string } })?.search?.resolution).toBe(
+      "lexical; symlinks and matched files are not yet verified",
+    )
+    await hooks["tool.execute.before"](
+      { tool: "grep", sessionID: "ses_luna_test", callID: "call_luna_grep_lib" },
+      { args: { pattern: "main", path: "lib" } },
+    )
+    await hooks["permission.ask"](
+      {
+        ...grepRequest,
+        metadata: { ...grepRequest.metadata, path: "lib", requested_path: path.join(directory, "lib") },
+        tool: { callID: "call_luna_grep_lib" },
+      },
+      { status: "ask" },
+    )
+    expect((lunaState?.action as { search?: { resolution?: string } })?.search?.resolution).toContain(
+      "resolved locally by the gate",
     )
     await hooks["tool.execute.before"](
       { tool: "grep", sessionID: "ses_luna_test", callID: "call_luna_grep_token" },
@@ -1726,7 +1748,7 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
 
     await hooks["tool.execute.before"](
       { tool: "glob", sessionID: "ses_luna_test", callID: "call_luna_outside" },
-      { args: { pattern: "**/*.ts", path: "../outside" } },
+      { args: { pattern: "**/*.ts", path: "/etc" } },
     )
     const outside = { status: "allow" }
     await hooks["permission.ask"](
@@ -1736,7 +1758,7 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
         patterns: ["**/*.ts"],
         metadata: {
           pattern: "**/*.ts",
-          path: "../outside",
+          path: "/etc",
           matched_paths: [],
           truncated: false,
           core_trusted_builtin: true,
@@ -1746,6 +1768,31 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
       outside,
     )
     expect(outside.status).toBe("ask")
+
+    // A glob with an explicit path under the workdir is eligible like one
+    // without a path; Luna's allow is honoured.
+    await hooks["tool.execute.before"](
+      { tool: "glob", sessionID: "ses_luna_test", callID: "call_luna_glob_path" },
+      { args: { pattern: "*.ts", path: "src" } },
+    )
+    const withPath = { status: "ask" }
+    await hooks["permission.ask"](
+      {
+        permission: "glob",
+        sessionID: "ses_luna_test",
+        patterns: ["*.ts"],
+        metadata: {
+          pattern: "*.ts",
+          path: "src",
+          matched_paths: [path.join(directory, "src/main.ts")],
+          truncated: false,
+          core_trusted_builtin: true,
+        },
+        tool: { callID: "call_luna_glob_path" },
+      },
+      withPath,
+    )
+    expect(withPath.status).toBe("allow")
 
     const untrustedTool = { status: "allow" }
     await hooks["permission.ask"](
@@ -1814,6 +1861,11 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
       expect(secret.message).toContain("credential-like literal in read target")
       expect(JSON.stringify(lunaState)).not.toContain(tokenValue)
       expect(JSON.stringify(jevState)).not.toContain(tokenValue)
+      // The human approves the asked read; the tool then executes.
+      await hooks["tool.execute.after"](
+        { tool: "read", sessionID: "ses_luna_test", callID: "call_scan_secret", args: {} },
+        { title: "", output: "", metadata: {} },
+      )
 
       await hooks["tool.execute.before"](
         { tool: "read", sessionID: "ses_luna_test", callID: "call_scan_dir" },
@@ -1823,6 +1875,15 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
       expect(lunaState?.action).toMatchObject({
         local_evidence: { literal_scan: "not_scanned", not_scanned_reason: "directory" },
       })
+      const decisions = (lunaState?.context as { session_decisions?: Record<string, unknown>[] })?.session_decisions
+      expect(decisions).toContainEqual({
+        permission: "read",
+        target: secretFile,
+        decision: "ask",
+        engine: "rule",
+        human_approved: true,
+      })
+      expect(decisions).toContainEqual({ permission: "read", target: cleanFile, decision: "allow", engine: "luna" })
     } finally {
       rmSync(scanDir, { recursive: true, force: true })
     }
