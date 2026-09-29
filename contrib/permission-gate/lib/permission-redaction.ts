@@ -44,7 +44,9 @@ function sanitizeText(input: string): RedactionResult<string> {
   // IAM member strings such as "serviceAccount:name@project.iam..." have the
   // same user:secret@host shape; without a URL scheme they are not passwords.
   replaceValue(
-    /((?:https?:\/\/)?[^\s/:@]{1,256}:)([^\s/@]{1,256})(?=@[^\s/]+)/gi,
+    // Container references such as python:3.13-slim@sha256:<digest> have the
+    // same name:tag@host shape; a digest after @ is not a host.
+    /((?:https?:\/\/)?[^\s/:@]{1,256}:)([^\s/@]{1,256})(?=@(?!sha(?:256|384|512):)[^\s/]+)/gi,
     "PASSWORD",
     (prefix) =>
       /^https?:\/\//i.test(prefix) ||

@@ -102,3 +102,11 @@ test("IAM member strings are not URL passwords", () => {
   expect(sanitizeReviewText("https://admin:hunter2secret@db.example.invalid/x").value).toContain("[REDACTED:PASSWORD]")
   expect(sanitizeReviewText("postgres://app:" + "s3cretvalue@db.internal/app").value).toContain("[REDACTED:PASSWORD]")
 })
+
+test("container image digests are not URL passwords", () => {
+  const image = "image: python:3.13-slim@sha256:79e7a9b9ff1cbceff819f856fb374477792a5967759d94df266de7b7b4120e6f"
+  expect(sanitizeReviewText(image).value).toBe(image)
+  expect(sanitizeReviewText("https://deploy:" + "hunter2value@registry.example.invalid/v2").value).toContain(
+    "[REDACTED:PASSWORD]",
+  )
+})
