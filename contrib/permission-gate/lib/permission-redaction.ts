@@ -12,6 +12,10 @@ const markerPattern = /\[REDACTED:[A-Z_]+\]/g
 const reference =
   /^(?:\$|process\.env\b|os\.environ\b|os\.getenv\b|getenv\(|env\(|\[REDACTED:|(?:data|var|local|module|dependency|include|each|self)\.[A-Za-z_])/i
 
+// tokenFile: /var/run/secrets/.../token names where a credential is read
+// from; the path is not the credential.
+const pathSetting = /(?:file|path|dir)["']?\s*(?:=|:)\s*["']?$/i
+const pathValue = /^(?:\/|~\/|\.\.?\/)[A-Za-z0-9._/-]*$/
 // A documentation placeholder such as NOMAD_TOKEN=<token> holds no value.
 const placeholder = /^<[A-Za-z][A-Za-z0-9_.-]{0,62}>$/
 
@@ -35,7 +39,13 @@ function sanitizeText(input: string): RedactionResult<string> {
     shouldRedact: (prefix: string, secret: string) => boolean = () => true,
   ) => {
     value = value.replace(pattern, (found, prefix: string, secret: string) => {
-      if (!secret || reference.test(secret) || placeholder.test(secret.trim()) || !shouldRedact(prefix, secret))
+      if (
+        !secret ||
+        reference.test(secret) ||
+        placeholder.test(secret.trim()) ||
+        (pathSetting.test(prefix) && pathValue.test(secret.trim())) ||
+        !shouldRedact(prefix, secret)
+      )
         return found
       kinds.add(kind)
       return prefix + marker(kind)
@@ -102,11 +112,11 @@ function sanitizeText(input: string): RedactionResult<string> {
   replaceValue(/(\bredis-cli[^\n;|&]*\s-a\s+["']?)([^\s'";|]+)/gi, "PASSWORD")
   replaceValue(/(\b(?:mysql|mariadb)[^\n;|&]*\s-p)([^\s'";|]+)/gi, "PASSWORD")
   replaceValue(
-    /((?:["']?(?:[A-Za-z_][A-Za-z0-9_.-]{0,63})?(?:api[_-]?key|access[_-]?key|token|secret|password|passwd|credential|private[_-]?key)[A-Za-z0-9_.-]{0,63}["']?)\s*(?:=|:)\s*")((?:\\.|[^"\\])*)/gi,
+    /((?:["']?(?:[A-Za-z_][A-Za-z0-9_.-]{0,63})?(?:api[_-]?key|access[_-]?key|token|secret|password|passwd|credential|private[_-]?key)[A-Za-z0-9_.-]{0,63}["']?)\s*(?:=|:)\s*")((?:\\.|[^"\\\n])*)(?=")/gi,
     "CREDENTIAL",
   )
   replaceValue(
-    /((?:["']?(?:[A-Za-z_][A-Za-z0-9_.-]{0,63})?(?:api[_-]?key|access[_-]?key|token|secret|password|passwd|credential|private[_-]?key)[A-Za-z0-9_.-]{0,63}["']?)\s*(?:=|:)\s*')((?:\\.|[^'\\])*)/gi,
+    /((?:["']?(?:[A-Za-z_][A-Za-z0-9_.-]{0,63})?(?:api[_-]?key|access[_-]?key|token|secret|password|passwd|credential|private[_-]?key)[A-Za-z0-9_.-]{0,63}["']?)\s*(?:=|:)\s*')((?:\\.|[^'\\\n])*)(?=')/gi,
     "CREDENTIAL",
   )
   // YAML plain scalars can contain spaces. Mask the whole value, not just its

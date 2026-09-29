@@ -140,3 +140,15 @@ test("documentation placeholders are not credentials", () => {
     expect(sanitizeReviewText(line).value).toBe(line)
   expect(sanitizeReviewText("NOMAD_TOKEN=<tok>" + "en123 nomad status").value).toContain("[REDACTED:CREDENTIAL]")
 })
+
+test("credential file paths and closing quotes are not credentials", () => {
+  for (const line of [
+    "grep -F -c 'tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token'",
+    "password_file = ~/.config/app/pass",
+    `test "$(printf '%s\\n' "\${CFG}" | grep -E -c '^[[:space:]]*token:')" -eq 0\necho 'done'`,
+  ])
+    expect(sanitizeReviewText(line).value).toBe(line)
+  expect(sanitizeReviewText("tokenFile: " + "abcDEF123456").value).toContain("[REDACTED:CREDENTIAL]")
+  expect(sanitizeReviewText("token: '" + "abc def ghi" + "'").value).toContain("[REDACTED:CREDENTIAL]")
+  expect(sanitizeReviewText("token: '" + "abcDEF123456").value).toContain("[REDACTED:CREDENTIAL]")
+})
