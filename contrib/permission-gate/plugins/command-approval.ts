@@ -1170,7 +1170,9 @@ function sensitiveFilename(value: string) {
     /(?:^|[/._-])(?:\.env|secrets?|credentials?|tokens?|passwords?|private|patients?|medical|health|ssn|social.?security|passports?|pii|phi|hipaa|payroll|customers?|employees?|dob)(?:$|[/._-])/i.test(
       value,
     ) ||
-    /[A-Za-z]+[-_]\d{4}-\d{2}-\d{2}/.test(value) ||
+    // name_YYYY-MM-DD reads as a birth date only for plausible birth years;
+    // cilium-2026-09-10.md is a dated document, not a person.
+    /[A-Za-z]+[-_](?:19\d{2}|200\d)-\d{2}-\d{2}/.test(value) ||
     /\b\d{3}-\d{2}-\d{4}\b/.test(value) ||
     /[A-Z0-9._%+-]{1,64}@[A-Z0-9.-]{1,255}\.[A-Z]{2,24}/i.test(value)
   )
@@ -1272,7 +1274,7 @@ function sensitiveMatchedPath(file: string) {
     /(?:^|[/._-])(?:patients?|medical|health|ssn|social.?security|passports?|pii|phi|hipaa|payroll|customers?|employees?|dob)(?:$|[/._-])/i.test(
       path.basename(file),
     ) ||
-    /[A-Za-z]+[-_]\d{4}-\d{2}-\d{2}/.test(file) ||
+    /[A-Za-z]+[-_](?:19\d{2}|200\d)-\d{2}-\d{2}/.test(file) ||
     /\b\d{3}-\d{2}-\d{4}\b/.test(file) ||
     /[A-Z0-9._%+-]{1,64}@[A-Z0-9.-]{1,255}\.[A-Z]{2,24}/i.test(file)
   )

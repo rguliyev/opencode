@@ -1823,6 +1823,19 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
     expect(codeOnly.status).toBe("allow")
     expect((lunaState?.context as { human_request?: string })?.human_request).toBe("Check whether src/main.ts exists.")
     expect(JSON.stringify(lunaState)).not.toContain("Q".repeat(40))
+
+    // A dated document name is not a birth date; a name with a plausible
+    // birth year still is.
+    const listed = async (file: string) => {
+      const output = { status: "ask" }
+      await hooks["permission.ask"](
+        { ...request, metadata: { ...request.metadata, matched_paths: [path.join(directory, file)] } },
+        output,
+      )
+      return output.status
+    }
+    expect(await listed("docs/tech-radar/cilium-2026-09-10.md")).toBe("allow")
+    expect(await listed("people/jane_1985-03-12.pdf")).toBe("ask")
     earlierUpdates = []
 
     const token = "sk-" + "C".repeat(40)
