@@ -2266,6 +2266,7 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
       expect(JSON.stringify(lunaState)).not.toContain("grafana_data_source")
       expect(JSON.stringify(jevQuestions)).toContain("Is there concrete evidence")
       expect(JSON.stringify(jevQuestions)).toContain("Count only what this action does now")
+      expect(JSON.stringify(jevQuestions)).toContain("concrete evidence that this action outputs, persists, copies, or transmits Google Cloud credentials")
       expect(JSON.stringify(jevState)).not.toContain("REDACTED")
       expect((lunaState?.context as { immediate_effect?: string })?.immediate_effect).toContain(
         "nothing leaves this host",

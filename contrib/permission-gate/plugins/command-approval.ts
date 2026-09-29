@@ -398,7 +398,7 @@ const actionRiskQuestions = {
   gcp_secrets:
     "Could this action list Google Secret Manager secrets or versions, access a secret payload, decode it, or print/store/transmit secret material?",
   gcp_exfiltration:
-    "Could this action output, persist, copy, or transmit Google Cloud credentials or secret payloads after obtaining them?",
+    "Is there concrete evidence that this action outputs, persists, copies, or transmits Google Cloud credentials or secret payloads it has obtained? Concrete evidence is a target or argument that is a credential file, token, or secret payload, action.local_evidence reporting found, or an argument that sends such material elsewhere. Reading or searching ordinary code, configuration, or documentation, or delegating work, is not exfiltration.",
 } satisfies Record<keyof typeof riskQuestions, string>
 
 const reviewerActionMutationQuestion =
