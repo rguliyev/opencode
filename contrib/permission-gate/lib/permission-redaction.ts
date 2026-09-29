@@ -81,10 +81,11 @@ function sanitizeText(input: string): RedactionResult<string> {
     /(--(?:api[-_]?key|access[-_]?token|auth[-_]?token|oauth2[-_]?bearer|password|passwd|secret|client[-_]?secret|private[-_]?key|userpwd)(?:=|\s+)["']?)([^\s'";|]+)/gi,
     "CREDENTIAL",
   )
-  replaceValue(/((?:--user(?:=|\s+)|\s-u\s+)"[^:"]+:)((?:\\.|[^"\\])*)/gi, "PASSWORD")
-  replaceValue(/((?:--user(?:=|\s+)|\s-u\s+)'[^:']+:)((?:\\.|[^'\\])*)/gi, "PASSWORD")
+  // `date -u '+%H:%M'` shares the `-u x:y` shape; user names carry no % + =.
+  replaceValue(/((?:--user(?:=|\s+)|\s-u\s+)"[^:"%+=]+:)((?:\\.|[^"\\])*)/gi, "PASSWORD")
+  replaceValue(/((?:--user(?:=|\s+)|\s-u\s+)'[^:'%+=]+:)((?:\\.|[^'\\])*)/gi, "PASSWORD")
   replaceValue(/(--user(?:=|\s+)["']?[^:\s'";|]+:)([^\s'";|]+)/gi, "PASSWORD")
-  replaceValue(/(\s-u\s+["']?[^:\s'";|]+:)([^\s'";|]+)/gi, "PASSWORD")
+  replaceValue(/(\s-u\s+["']?[^:\s'";|%+=]+:)([^\s'";|]+)/gi, "PASSWORD")
   replaceValue(
     /((?:\b(?:docker|podman)\s+login[^\n;|&]*\s-p\s+|\bredis-cli[^\n;|&]*\s-a\s+|\b(?:mysql|mariadb)[^\n;|&]*\s-p)")((?:\\.|[^"\\])*)/gi,
     "PASSWORD",

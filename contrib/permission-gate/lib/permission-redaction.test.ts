@@ -128,3 +128,9 @@ test("shell default-value expansions in sed templates are not URL passwords", ()
   const line = 'sed -i -e "s@{{ cpurequest }}@${KUBE_PROXY_CPU_REQUEST:-100m}@g" "${src_file}"'
   expect(sanitizeReviewText(line).value).toBe(line)
 })
+
+test("date -u format strings are not curl -u credentials", () => {
+  for (const command of ["date -u '+now_utc=%Y-%m-%dT%H:%M:%SZ'", 'date -u "+%H:%M"', "date -u +%H:%M:%S"])
+    expect(sanitizeReviewText(command).value).toBe(command)
+  expect(sanitizeReviewText("curl -u admin:" + "S3cretValue9 https://api.example.invalid").value).toContain("[REDACTED:PASSWORD]")
+})
