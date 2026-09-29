@@ -1580,12 +1580,50 @@ function finalReviewAudit(result: FinalReviewResult) {
   }
 }
 
+// Permission prompts are read by the human in a hurry: say in plain words
+// why they are being asked. Model scores stay in the audit log.
+const plainReasons: [RegExp, string][] = [
+  [/^(?:credential or secret access|script credential or secret access|credential-like literal|sensitive literal|skill contains credential literal)/, "It reads, uses, or contains a secret (token, password, or key)."],
+  [/^(?:human-only operation|script human-only operation)/, "It is an action reserved for you: push, merge, apply, destroy, recursive delete, or disk formatting."],
+  [/^publish:/, "It pushes code or changes a pull request; approve if you asked for that."],
+  [/^token-read:/, "It calls a Google API with your gcloud login."],
+  [/^(?:sensitive file or search target|sensitive matched path)/, "It touches a file whose name suggests secrets or personal data."],
+  [/^human-only policy or data change may apply/, "It edits a security, permission, or data-migration file outside a dedicated worktree."],
+  [/^referenced shell script loads another file/, "It runs a script that loads another file the gate cannot inspect."],
+  [/^no script evidence/, "It runs a script the gate could not read."],
+  [/^task continuation lineage unverified/, "It continues a subagent the gate could not confirm belongs to this session."],
+  [/^review failed/, "The automatic review failed."],
+]
+
+function plainReason(reason: string) {
+  const gcp = reason.match(/^GCP project or credential selection requires human review\.?\s*(.*)$/s)
+  if (gcp) return `It uses a Google Cloud project or login other than your default.${gcp[1] ? ` ${gcp[1]}` : ""}`
+  const aws = reason.match(/^AWS (?:account|profile|credential)[^.]*\.?\s*(.*)$/s)
+  if (aws) return `It uses an AWS account or profile other than your default.${aws[1] ? ` ${aws[1]}` : ""}`
+  return plainReasons.find(([pattern]) => pattern.test(reason))?.[1] ?? reason
+}
+
+function humanPrompt(
+  reasons: string[],
+  review: { status?: string; choice?: string; reason?: string } | undefined,
+  modelUnsure: boolean,
+) {
+  const lines = [...new Set(reasons.map(plainReason))]
+  if (review?.status === "score" && review.choice === "ask" && review.reason) lines.push(`Reviewer: ${review.reason}`)
+  else if (review?.status === "score" && review.choice === "allow" && lines.length)
+    lines.push("The reviewer found it fine, but the rule above always needs you.")
+  else if (review?.status && !["score", "not_needed"].includes(review.status))
+    lines.push(`The automatic reviewer could not answer (${review.status}).`)
+  if (!lines.length && modelUnsure) lines.push("The automatic checks were not confident this is safe.")
+  return lines.join("\n")
+}
+
 function finalReviewAdvisory(result: { status?: string; choice?: string; reason?: string } | undefined) {
   if (result?.status && !["score", "not_needed"].includes(result.status))
-    return `The final reviewer could not decide (${result.status}); human review required`
+    return `The automatic reviewer could not answer (${result.status}).`
   if (result?.status !== "score") return undefined
-  if (result.choice === "allow") return "The final reviewer allows, but a local safety rule requires approval"
-  if (result.choice === "ask") return `The final reviewer asks for human review${result.reason ? `: ${result.reason}` : ""}`
+  if (result.choice === "allow") return "The reviewer found it fine, but a safety rule always needs you."
+  if (result.choice === "ask" && result.reason) return `Reviewer: ${result.reason}`
   return undefined
 }
 
@@ -2409,7 +2447,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
           () => ({ status: "unavailable" }) as FinalReviewResult,
         )
         extra = { ...extra, final_review: finalReviewAudit(fallback) }
-        const message = sanitizeReviewText([output.message, finalReviewAdvisory(fallback)].filter(Boolean).join(" — "))
+        const message = sanitizeReviewText([output.message, finalReviewAdvisory(fallback)].filter(Boolean).join("\n"))
         if (message.complete && !containsCredentialLiteralUnmasked(message.value)) output.message = message.value
       }
       output.status = status
@@ -2443,7 +2481,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
         input.patterns[0] === call.tool &&
         input.metadata.tool === call.tool &&
         input.metadata.trusted_builtin === true
-      output.message = valid ? undefined : "Trusted built-in tool context is incomplete; human review required"
+      output.message = valid ? undefined : "The gate could not verify this built-in tool call."
       await settle(valid ? "allow" : "ask", "internal_permission_check", [
         valid ? "deferred to built-in permission check" : "tool context mismatch",
       ])
@@ -2456,7 +2494,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
         input.permission,
       )
     ) {
-      output.message = "Read-only reviewer cannot use this action"
+      output.message = "This agent is read-only and cannot use this action."
       await settle("deny", "rule", ["read-only reviewer cannot use this action"])
       return
     }
@@ -2493,7 +2531,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
         typeof content !== "string" ||
         Buffer.byteLength(content) > maxActionBytes
       ) {
-        output.message = "Skill load context is incomplete; human review required"
+        output.message = "The gate could not verify which skill is being loaded."
         await settle("ask", "guard", ["unverified skill load context"])
         return
       }
@@ -2568,7 +2606,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
       Array.isArray(matchedPaths) &&
       matchedPaths.some((file) => typeof file !== "string" || sensitiveMatchedPath(file))
     ) {
-      output.message = "A matched path may contain sensitive information; human review required"
+      output.message = "Some of the matching file names suggest secrets or personal data."
       await settle("ask", "guard", ["sensitive matched path"])
       return
     }
@@ -2617,7 +2655,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
       ...(session.parentID && !delegatedTask ? ["delegated task unavailable"] : []),
     ]
     if (missingContext.length) {
-      output.message = "Task context is unavailable for automatic review; human review required"
+      output.message = "The gate could not read what this subagent was asked to do."
       await settle("ask", "guard", missingContext)
       return
     }
@@ -2782,10 +2820,10 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
     const localVeto =
       finalReviewNeeded && reasons.length === 0 && finalReview.status === "score" && finalReview.choice === "allow"
         ? reviewer
-          ? "The final reviewer allows, but Jev did not judge this read-only agent's action free of mutation"
+          ? "The reviewer found it fine, but this agent is read-only and the check for changes was not confident it changes nothing."
           : input.permission === "task"
-            ? "The final reviewer allows, but this task request shape is not eligible for automatic approval"
-            : "The final reviewer allows, but this request shape is not eligible for automatic approval"
+            ? "The reviewer found it fine, but this kind of subagent launch always needs you."
+            : "The reviewer found it fine, but this kind of request always needs you."
         : undefined
     if (localVeto) {
       output.message = localVeto
@@ -2793,12 +2831,12 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
       return
     }
     if (!result.allow || reasons.length || (finalReviewNeeded && !finalReviewAllow)) {
-      const message = [reasons.join("; "), result.explanation, finalReviewAdvisory(finalReview)].filter(Boolean).join(" — ")
+      const message = humanPrompt(reasons, finalReview, !result.allow)
       const safeMessage = sanitizeReviewText(message)
       output.message =
         safeMessage.complete && !containsCredentialLiteralUnmasked(safeMessage.value)
           ? safeMessage.value
-          : "Human review required; sensitive details withheld"
+          : "Details withheld because they may contain a secret."
       await settle("ask", reasons.length ? "rule" : finalReview.choice === "ask" ? "final_review" : "jev", reasons, details)
       return
     }
@@ -2989,7 +3027,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
             () => ({ status: "unavailable" }) as FinalReviewResult,
           )
           output.status = "ask"
-          output.message = "Automatic action review failed; human review required"
+          output.message = "The automatic review failed."
           logDecision({
             permission: input.permission,
             session: input.sessionID ?? null,
@@ -3067,7 +3105,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
             Array.isArray(extra.reasons) ? extra.reasons : [],
           ).catch(() => ({ status: "unavailable" }) as FinalReviewResult)
           extra = { ...extra, final_review: finalReviewAudit(fallback) }
-          const message = sanitizeReviewText([output.message, finalReviewAdvisory(fallback)].filter(Boolean).join(" — "))
+          const message = sanitizeReviewText([output.message, finalReviewAdvisory(fallback)].filter(Boolean).join("\n"))
           if (message.complete && !containsCredentialLiteralUnmasked(message.value)) output.message = message.value
         }
         output.status = status
@@ -3116,7 +3154,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
       }
 
       if (commands.length === 0 || commands.some((c) => Buffer.byteLength(c) > maxCommandBytes)) {
-        output.message = "This command requires direct human review"
+        output.message = "This command always needs you."
         await settle("ask", "guard", {
           reasons: ["no reviewable command, or one exceeds the size limit"],
         })
@@ -3154,7 +3192,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
         ...(session.parentID && !delegatedTask ? ["delegated task unavailable"] : []),
       ]
       if (missingContext.length) {
-        output.message = "Task context is unavailable for automatic review; human review required"
+        output.message = "The gate could not read what this subagent was asked to do."
         await settle("ask", "guard", { reasons: missingContext })
         return
       }
@@ -3349,16 +3387,13 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
         const reasons = [...new Set(blocking.flatMap((r) => r.reasons))]
         const policy = reasons.filter((r) => !r.startsWith("no script evidence"))
         const explanation = blocking.map((r) => (r as { explanation?: string }).explanation).filter(Boolean)[0] ?? ""
-        const advisory = blocking.map((r) => finalReviewAdvisory(r.final_review)).find(Boolean)
-        const message =
-          policy.length > 0
-            ? `Human review required for ${policy.join(", ")}. ${explanation}${advisory ? ` — ${advisory}` : ""}${input.sessionID ? ` [session ${input.sessionID}]` : ""}`
-            : [explanation || reasons.join("; "), advisory].filter(Boolean).join(" — ")
+        const review = blocking.map((r) => r.final_review).find((r) => r && r.status !== "not_needed")
+        const message = humanPrompt(policy, review, Boolean(explanation) || !policy.length)
         const safeMessage = sanitizeReviewText(message)
         output.message =
           safeMessage.complete && !containsCredentialLiteralUnmasked(safeMessage.value)
             ? safeMessage.value
-            : "Human review required; sensitive details withheld"
+            : "Details withheld because they may contain a secret."
         if (blocking.every((item) => typeof item.cmd_sha256 === "string" && /^[a-f0-9]{64}$/.test(item.cmd_sha256))) {
           output.reviewItems = reviewed.flatMap((item, index) =>
             item.ask
@@ -3369,13 +3404,15 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
                     command: typeof item.cmd === "string" ? item.cmd : null,
                     reason: (() => {
                       const text =
-                        [item.reasons?.join("; "), item.explanation, finalReviewAdvisory(item.final_review)]
-                          .filter(Boolean)
-                          .join(" — ") || "Human review required"
+                        humanPrompt(
+                          (item.reasons ?? []).filter((r) => !r.startsWith("no script evidence") || item.reasons!.length === 1),
+                          item.final_review,
+                          Boolean(item.explanation),
+                        ) || "The automatic checks were not confident this is safe."
                       const safe = sanitizeReviewText(text)
                       return safe.complete && !containsCredentialLiteralUnmasked(safe.value)
                         ? safe.value
-                        : "Human review required; sensitive details withheld"
+                        : "Details withheld because they may contain a secret."
                     })(),
                   },
                 ]

@@ -97,6 +97,13 @@ describe("run permission shared", () => {
 
   test("maps supported permission types into display info", () => {
     expect(
+      permissionInfo(req({ permission: "tool_call", patterns: ["goal_resume"], metadata: { tool: "goal_resume" } })),
+    ).toMatchObject({ title: "Resume the session's autonomous goal (goal_resume)", lines: ["Tool: goal_resume"] })
+    expect(
+      permissionInfo(req({ permission: "tool_call", patterns: ["custom_publish"], metadata: { tool: "custom_publish" } })),
+    ).toMatchObject({ title: "Call tool custom_publish", lines: ["Tool: custom_publish"] })
+
+    expect(
       permissionInfo(
         req({
           permission: "bash",

@@ -1708,7 +1708,7 @@ test("configured OpenCode the final reviewer resolves Jev escalations with trust
     )
     expect(backgroundTask.status).toBe("ask")
     expect(backgroundTask.message).toBe(
-      "The final reviewer allows, but this task request shape is not eligible for automatic approval",
+      "The reviewer found it fine, but this kind of subagent launch always needs you.",
     )
 
     // Background delegation, a prompt up to the 6 KB task-context limit, and
@@ -1758,7 +1758,9 @@ test("configured OpenCode the final reviewer resolves Jev escalations with trust
     ]) {
       const unverified = await taskWith(callID, { ...baseTask, task_id: taskID })
       expect(unverified.status).toBe("ask")
-      expect(unverified.message).toContain("task continuation lineage unverified")
+      expect(unverified.message).toContain("could not confirm belongs to this session")
+      // Prompts are plain sentences; model scores stay in the audit log.
+      expect(unverified.message).not.toMatch(/Jev|\d%/)
     }
 
     const orchestrator = await gateForTest(directory, "orchestrator", finalReviewReview)
@@ -2055,7 +2057,7 @@ test("configured OpenCode the final reviewer resolves Jev escalations with trust
       realJsonEdit,
     )
     expect(realJsonEdit.status).toBe("ask")
-    expect(literalEdit.message).toContain("sensitive literal in action")
+    expect(literalEdit.message).toContain("It reads, uses, or contains a secret")
 
     const policyEdit = { status: "allow" }
     await hooks["permission.ask"](
@@ -2099,7 +2101,7 @@ test("configured OpenCode the final reviewer resolves Jev escalations with trust
         escapedEdit,
       )
       expect(escapedEdit.status).toBe("ask")
-      expect(escapedEdit.message).toContain("human-only policy or data change may apply")
+      expect(escapedEdit.message).toContain("security, permission, or data-migration file outside a dedicated worktree")
     } finally {
       rmSync(worktree, { recursive: true, force: true })
       rmSync(outsideTarget, { recursive: true, force: true })
@@ -2426,7 +2428,7 @@ test("configured OpenCode the final reviewer resolves Jev escalations with trust
       const secret = { status: "allow", message: "" }
       await hooks["permission.ask"](readRequest(secretFile, "call_scan_secret"), secret)
       expect(secret.status).toBe("ask")
-      expect(secret.message).toContain("credential-like literal in read target")
+      expect(secret.message).toContain("It reads, uses, or contains a secret")
       expect(JSON.stringify(finalReviewState)).not.toContain(tokenValue)
       expect(JSON.stringify(jevState)).not.toContain(tokenValue)
       // The human approves the asked read; the tool then executes.

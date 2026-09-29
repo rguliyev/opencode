@@ -89,6 +89,15 @@ export function permissionOptions(stage: PermissionStage): PermissionOption[] {
   return []
 }
 
+// Plain descriptions for custom tools the human is asked about most.
+const knownTools: Record<string, string> = {
+  goal_resume: "Resume the session's autonomous goal",
+  goal_block: "Mark the session's goal as blocked, waiting on you",
+  goal_status: "Check the session's goal status",
+  get_goal: "Read the session's goal",
+  get_goal_history: "Read the session's goal history",
+}
+
 export function permissionInfo(request: PermissionRequest): PermissionInfo {
   const pats = patterns(request)
   const input = data(request)
@@ -105,6 +114,18 @@ export function permissionInfo(request: PermissionRequest): PermissionInfo {
       icon: "←",
       title: `Access external directory ${toolPath(dir, { home: true })}`,
       lines: pats.map((item) => `- ${item}`),
+    }
+  }
+
+  // Custom tool dispatch asks as "tool_call"; the tool itself is named in
+  // metadata and patterns. Showing "Call tool tool_call" hid what was asked.
+  if (request.permission === "tool_call") {
+    const name = text(dict(request.metadata).tool) || pats[0] || "unknown tool"
+    const known = knownTools[name]
+    return {
+      icon: "⚙",
+      title: known ? `${known} (${name})` : `Call tool ${name}`,
+      lines: [`Tool: ${name}`],
     }
   }
 
