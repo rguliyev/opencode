@@ -1287,12 +1287,12 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
     // checkpoint's 2,048-token input window; keep the human's actual request.
     if (kevContext.command_count === 1 && kevContext.full_command === evidence) delete kevContext.full_command
     const review = sanitizeReviewValue({ evidence, context: kevContext, scripts, note })
-    if (
-      !review.complete ||
-      containsCredentialLiteralUnmasked(JSON.stringify(review.value)) ||
-      Buffer.byteLength(JSON.stringify(review.value.scripts)) > maxKevEvidenceBytes
-    )
-      return Promise.resolve({ status: "withheld" })
+    // Record why Kev was skipped; the reason is a fixed label, never content.
+    if (!review.complete) return Promise.resolve({ status: "withheld", withheld_reason: "redaction_incomplete" })
+    if (containsCredentialLiteralUnmasked(JSON.stringify(review.value)))
+      return Promise.resolve({ status: "withheld", withheld_reason: "credential_literal" })
+    if (Buffer.byteLength(JSON.stringify(review.value.scripts)) > maxKevEvidenceBytes)
+      return Promise.resolve({ status: "withheld", withheld_reason: "scripts_oversized" })
     const request = JSON.stringify({
       version: 2,
       kind,
@@ -1308,7 +1308,8 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
       },
       redactions: review.kinds,
     })
-    if (Buffer.byteLength(request) > maxKevRequestBytes) return Promise.resolve({ status: "withheld" })
+    if (Buffer.byteLength(request) > maxKevRequestBytes)
+      return Promise.resolve({ status: "withheld", withheld_reason: "request_oversized" })
     return new Promise((resolve) => {
       const socket = createConnection({ path: kevSocket })
       let done = false
