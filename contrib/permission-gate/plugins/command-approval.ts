@@ -2379,7 +2379,9 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
       input.permission === "skill"
         ? JSON.stringify({ permission: "skill", name: metadata.name, location: skillLocation })
         : raw
-    if (requiresHuman(policyRaw)) reasons.push("credential or secret access")
+    // This detector matches shell commands that fetch or send credentials. An
+    // edit diff is code being written, not run; running it is checked as Bash.
+    if (input.permission !== "edit" && requiresHuman(policyRaw)) reasons.push("credential or secret access")
     const continuation = await taskContinuation(input, call?.args)
     if (continuation === "unverified") reasons.push("task continuation lineage unverified")
     if (action.local_evidence?.literal_scan === "found")

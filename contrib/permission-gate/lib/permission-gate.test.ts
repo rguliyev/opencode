@@ -1760,6 +1760,20 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
     expect(secretRefEdit.status).toBe("allow")
     expect(JSON.stringify(lunaState)).toContain("data.google_secret_manager_secret_version.grafana_api_key.secret_data")
     expect(JSON.stringify(lunaState)).not.toContain("grafana-logs-reader")
+    // Writing code that will fetch a token is not fetching one.
+    const syncerEdit = { status: "ask", message: "" }
+    await hooks["permission.ask"](
+      {
+        ...editRequest,
+        patterns: ["syncer.go"],
+        metadata: {
+          filepath: "syncer.go",
+          diff: '+  req.Header.Set("Authorization", "Bearer "+token)\n+  // token from secretmanager.googleapis.com\n',
+        },
+      },
+      syncerEdit,
+    )
+    expect(syncerEdit.status).toBe("allow")
     const literalEdit = { status: "allow", message: "" }
     await hooks["permission.ask"](
       {
