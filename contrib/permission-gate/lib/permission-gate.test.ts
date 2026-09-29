@@ -1163,6 +1163,7 @@ test("a read-only agent's dual-use shell command needs both Luna and Jev to judg
       return output.status
     }
     expect(await batched(['echo "=== DIFF A ==="', 'echo "=== DIFF B ==="'])).toBe("allow")
+    expect(await batched(["cd /data/rguliyev/tmp/opencode/worktrees/charts", 'echo "=== DIFF B ==="'])).toBe("allow")
     expect(await batched(['echo "=== DIFF A ==="', 'echo "$GRAFANA_TOKEN"'])).toBe("ask")
     // Process substitution: the full call is itself one of the patterns.
     lunaChoice = "allow"

@@ -701,7 +701,8 @@ function commandParts(segment: string) {
   }
 }
 
-const outputOnlyCommands = new Set(["echo", "printf", "true", "false", ":", "test", "[", "pwd", "date", "sleep"])
+// `cd` only changes the directory for later segments, which are reviewed.
+const outputOnlyCommands = new Set(["echo", "printf", "true", "false", ":", "test", "[", "pwd", "date", "sleep", "cd"])
 const stdinFilterCommands = new Set(["head", "tail", "wc", "sort", "uniq"])
 
 // A segment that only prints or filters stdin has no effect of its own. It is
