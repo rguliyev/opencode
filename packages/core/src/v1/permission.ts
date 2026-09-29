@@ -14,7 +14,9 @@ export class CorrectedError extends Schema.TaggedErrorClass<CorrectedError>()("P
   feedback: Schema.String,
 }) {
   override get message() {
-    return `The user rejected permission to use this specific tool call with the following feedback: ${this.feedback}`
+    // The reply is often an instruction ("just push it"), not a refusal; the
+    // old "rejected ... feedback" wording made agents stop and wait instead.
+    return `The user answered this tool call's permission request with a message instead of approving it: ${this.feedback}\n\nThat message is the user's direct instruction for your next step. If it tells you to go ahead, retry the same action; otherwise change course as it says.`
   }
 }
 

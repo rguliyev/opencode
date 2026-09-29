@@ -1994,7 +1994,13 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
         // Text the human types when rejecting a permission is stored by core in
         // the rejected tool call, not as a chat message. It is direct human
         // instruction ("editing configuration is fine"), so reviewers see it.
-        const prefix = "The user rejected permission to use this specific tool call with the following feedback: "
+        // Older sessions store the first wording; current core the second,
+        // followed by a fixed instruction suffix that is not the human's text.
+        const prefixes = [
+          "The user rejected permission to use this specific tool call with the following feedback: ",
+          "The user answered this tool call's permission request with a message instead of approving it: ",
+        ]
+        const feedbackSuffix = "\n\nThat message is the user's direct instruction for your next step."
         const readFeedback = (database: SQLiteDatabase) =>
           database
               .query<{ id: string; time_created: number; error: string | null }, string[]>(
@@ -2002,12 +2008,14 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
                 WHERE session_id IN (${feedbackSessions.map(() => "?").join(", ")})
                   AND json_extract(data, '$.type') = 'tool'
                   AND json_extract(data, '$.state.status') = 'error'
-                  AND substr(json_extract(data, '$.state.error'), 1, ${prefix.length}) = ?
+                  AND (${prefixes.map((prefix) => `substr(json_extract(data, '$.state.error'), 1, ${prefix.length}) = ?`).join(" OR ")})
                 ORDER BY time_created DESC, id DESC LIMIT 20`,
               )
-              .all(...feedbackSessions, prefix)
+              .all(...feedbackSessions, ...prefixes)
               .flatMap((row) => {
-                const text = safeTaskText(row.error?.slice(prefix.length))
+                const prefix = prefixes.find((candidate) => row.error?.startsWith(candidate))
+                const body = prefix ? row.error!.slice(prefix.length) : undefined
+                const text = safeTaskText(body?.split(feedbackSuffix)[0])
                 return text ? [{ id: row.id, created: row.time_created, text: `[permission feedback] ${text}` }] : []
               })
         // Feedback is additive context; an unreadable part schema must not

@@ -774,6 +774,20 @@ test("a long live-style session yields bounded user history without hydrating gi
       "ses_long_context",
       1_202,
     )
+    db.query("INSERT INTO part VALUES (?, ?, ?, ?, ?)").run(
+      "part_rejected_feedback_current",
+      "msg_assistant_0520",
+      JSON.stringify({
+        type: "tool",
+        state: {
+          status: "error",
+          error:
+            "The user answered this tool call's permission request with a message instead of approving it: just push it\n\nThat message is the user's direct instruction for your next step. If it tells you to go ahead, retry the same action; otherwise change course as it says.",
+        },
+      }),
+      "ses_long_context",
+      1_203,
+    )
     process.env.OPENCODE_DB = filename
     process.env.XDG_STATE_HOME = "/dev/null"
     globalThis.fetch = async (input, init) => {
@@ -826,7 +840,12 @@ test("a long live-style session yields bounded user history without hydrating gi
     expect(messageApiCalls).toBe(0)
     const context = state?.context
     if (!isRecord(context) || !Array.isArray(context.human_messages)) throw new Error("Missing Jev human context")
-    expect(context.human_messages).toHaveLength(261)
+    expect(context.human_messages).toHaveLength(262)
+    expect(context.human_messages).toContainEqual({
+      id: "part_rejected_feedback_current",
+      created: 1_203,
+      text: "[permission feedback] just push it",
+    })
     expect(context.human_messages).toContainEqual({
       id: "part_rejected_feedback",
       created: 1_202,
