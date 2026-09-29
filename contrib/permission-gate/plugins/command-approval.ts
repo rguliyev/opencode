@@ -1880,18 +1880,28 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
     if (!chain) return undefined
     const messages = await sessionUserMessages(chain.at(-1)!, chain)
     if (!messages?.length) return undefined
+    // A message that is nothing but a pasted credential (an OAuth code the
+    // agent asked for) carries no instruction. Authority comes from the
+    // previous direct message; the credential itself stays redacted and
+    // authorizes nothing.
+    const credentialOnly = (text: string) =>
+      /\[REDACTED:(?!PERSONAL_IDENTIFIER\])/.test(text) && !text.replace(/\[REDACTED:[A-Z_]+\]/g, "").trim()
+    const latest =
+      messages.length > 1 && !messages.at(-1)!.withheld?.startsWith("oversized") && credentialOnly(messages.at(-1)!.text)
+        ? messages.at(-2)!
+        : messages.at(-1)!
     // A newly supplied credential cannot be used as an implicit permission,
     // even when the rest of that message survives redaction.
     if (
-      messages.at(-1)?.withheld === "command_template" ||
-      messages.at(-1)?.withheld === "plugin_transformed" ||
-      messages.at(-1)?.withheld === "oversized_message" ||
-      /\[REDACTED:(?!PERSONAL_IDENTIFIER\])/.test(messages.at(-1)?.text ?? "") ||
-      messages.at(-1)?.text === "[non-text attachment withheld]"
+      latest.withheld === "command_template" ||
+      latest.withheld === "plugin_transformed" ||
+      latest.withheld === "oversized_message" ||
+      /\[REDACTED:(?!PERSONAL_IDENTIFIER\])/.test(latest.text) ||
+      latest.text === "[non-text attachment withheld]"
     )
       return undefined
     return {
-      human_request: messages.at(-1)!.text,
+      human_request: latest.text,
       human_messages: messages,
       sessions: chain,
     }

@@ -1776,6 +1776,17 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
     expect(humanOnly.status).toBe("ask")
     expect(seen.at(-1)).toBe("luna")
 
+    // A latest message that is only a pasted credential defers to the prior
+    // instruction; the credential never becomes the request.
+    earlierUpdates = ["Check whether src/main.ts exists."]
+    latestHumanText = "4/0A" + "Q".repeat(40)
+    const codeOnly = { status: "ask" }
+    await hooks["permission.ask"](request, codeOnly)
+    expect(codeOnly.status).toBe("allow")
+    expect((lunaState?.context as { human_request?: string })?.human_request).toBe("Check whether src/main.ts exists.")
+    expect(JSON.stringify(lunaState)).not.toContain("Q".repeat(40))
+    earlierUpdates = []
+
     const token = "sk-" + "C".repeat(40)
     latestHumanText = `Check whether src/main.ts exists; api_key=${token}`
     const priorReviews = seen.length
