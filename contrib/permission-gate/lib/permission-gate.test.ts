@@ -32,7 +32,19 @@ async function gateForTest(
     reason: string
   }>,
 ) {
-  const hooks = await (CommandApproval as any)({ directory, serverUrl: new URL("http://gate.test"), reviewPermission })
+  // Core rejects review input over these budgets before calling the model.
+  const budgeted = reviewPermission
+    ? (input: { system: string; state: string; signal?: AbortSignal }) => {
+        if (input.system.length > 8_000 || input.state.length > 128_000)
+          throw new Error("Permission review context exceeds its safety budget")
+        return reviewPermission(input)
+      }
+    : undefined
+  const hooks = await (CommandApproval as any)({
+    directory,
+    serverUrl: new URL("http://gate.test"),
+    reviewPermission: budgeted,
+  })
   const ask = hooks["permission.ask"]
   hooks["permission.ask"] = (input: { metadata?: Record<string, unknown> }, output: unknown) =>
     ask({ ...input, metadata: { ...input.metadata, core_execution_agent: agent } }, output)
@@ -1503,16 +1515,16 @@ test("configured OpenCode Luna resolves Jev escalations with trusted human conte
       lunaState = JSON.parse(input.state)
       expect(input.system).toContain("last automatic reviewer")
       expect(input.system).toContain("a shell command, read, or fetch never launches a subagent")
-      expect(input.system).toContain("An existing E2B sandbox explicitly identified by direct human messages")
-      expect(input.system).toContain("Do not require a new one-off instruction solely because this routine test action is remote")
+      expect(input.system).toContain("An existing E2B sandbox identified by direct human messages")
+      expect(input.system).toContain("continues the explicit testing instruction")
       expect(input.system).toContain("Ask if the sandbox identity is not corroborated by direct human messages")
-      expect(input.system).toContain("the remote program's effects are materially unknown")
+      expect(input.system).toContain("the remote program's effects are unknown")
       expect(input.system).toContain("independently judged this exact action or command to be read-only in effect")
       expect(input.system).toContain("reading data into the agent's context for the human's task is not credential disclosure")
       expect(input.system).toContain("A skill load only reads that skill's instructions")
       expect(input.system).toContain("Standing human policy: editing files inside dedicated worktrees")
       expect(input.system).toContain("re-reads the agent's own earlier tool results")
-      expect(input.system).toContain("For a review or research task, read-only inspection of history")
+      expect(input.system).toContain("For review or research, read-only inspection of history")
       expect(input.system).toContain("get_goal, get_goal_history, and goal_status only read goal status")
       if (JSON.parse(input.state).action?.permission === "webfetch")
         expect(JSON.parse(input.state).context.immediate_effect).toContain("changes no remote state")
