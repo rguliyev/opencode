@@ -268,8 +268,8 @@ export function PermissionPrompt(props: { request: PermissionRequest; directory?
           options={{
             allow: "Allow this command",
             ...(multiCommand() ? { allowAll: "Allow all" } : {}),
-            reject: "Reject whole call",
             correct: "Do differently",
+            reject: "Reject whole call",
           }}
           escapeKey="reject"
           fullscreen
@@ -570,8 +570,8 @@ export function PermissionPrompt(props: { request: PermissionRequest; directory?
               options={{
                 once: multiCommand() ? "Allow all" : "Allow once",
                 always: "Allow always",
-                reject: "Reject",
                 correct: "Do differently",
+                reject: "Reject",
               }}
               escapeKey="reject"
               fullscreen

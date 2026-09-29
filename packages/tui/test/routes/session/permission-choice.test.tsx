@@ -132,7 +132,7 @@ for (const reviewed of [false, true]) {
       const setup = await mount(reviewed, child)
       try {
         await waitFor(setup.app, "Do differently")
-        for (let i = 0; i < (reviewed ? 2 : 3); i++) {
+        for (let i = 0; i < (reviewed ? 1 : 2); i++) {
           setup.app.mockInput.pressArrow("right")
           await setup.app.renderOnce()
         }
@@ -165,6 +165,26 @@ test("Do differently stays visible in an 80-column terminal", async () => {
     await setup.cleanup()
   }
 })
+
+for (const reviewed of [false, true]) {
+  for (const commands of [1, 2]) {
+    test(`${reviewed ? "reviewed" : "ordinary"} ${commands > 1 ? "multi-command" : "single-command"} permission places Reject last`, async () => {
+      const setup = await mount(reviewed, false, 110, commands)
+      try {
+        await waitFor(setup.app, "Do differently")
+        const label = reviewed ? "Reject whole call" : "Reject"
+        const line = setup.app
+          .captureCharFrame()
+          .split("\n")
+          .find((line) => line.includes("Do differently") && line.includes(label))
+        expect(line).toBeDefined()
+        expect(line!.indexOf("Do differently")).toBeLessThan(line!.indexOf(label))
+      } finally {
+        await setup.cleanup()
+      }
+    })
+  }
+}
 
 test("Allow all approves every flagged command for this call once", async () => {
   const setup = await mount(true, false, 110, 2)
@@ -279,6 +299,8 @@ test("Reject still rejects immediately without an instruction", async () => {
   const setup = await mount(false)
   try {
     await waitFor(setup.app, "Do differently")
+    setup.app.mockInput.pressArrow("right")
+    await setup.app.renderOnce()
     setup.app.mockInput.pressArrow("right")
     await setup.app.renderOnce()
     setup.app.mockInput.pressArrow("right")
