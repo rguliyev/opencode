@@ -1227,6 +1227,7 @@ test("shell segments get module evidence and self-contained segments are judged 
       'echo "EXIT_CODE: $?"',
       "gh api repos/e2b-dev/argocd/pulls/12 --jq .state",
       "gh api -X PATCH repos/e2b-dev/argocd/pulls/12 -f state=closed",
+      "gh pr diff 12 --repo e2b-dev/argocd",
     ]
     const output = { status: "ask" }
     await hooks["permission.ask"](
@@ -1240,6 +1241,7 @@ test("shell segments get module evidence and self-contained segments are judged 
     expect(contexts[commands[2]].module_evidence).toContain("differs from the go.mod pin v3.24.1")
     expect(contexts[commands[4]].command_evidence).toBe("gh api: GET request (read-only)")
     expect(contexts[commands[5]].command_evidence).toContain("PATCH request with a request body")
+    expect(contexts[commands[6]].command_evidence).toBe("gh pr diff: read-only GitHub query")
     // A literal echo ($? only) is allowed locally and never sent to Jev.
     expect(contexts[commands[3]]).toBeUndefined()
     expect(contexts[commands[0]].full_command).toBe(commands.join("; "))

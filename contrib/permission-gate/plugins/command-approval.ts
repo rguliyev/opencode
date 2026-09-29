@@ -752,11 +752,23 @@ async function goModuleEvidence(command: string, cwd: string) {
 
 // `gh api` is a GET unless a method or request-body flag is given; -f/-F
 // switch it to POST. Report which, so reviewers need not guess.
+// Read-only gh subcommands: they query GitHub and change nothing.
+const ghReadOnly = new Set([
+  "pr view", "pr diff", "pr list", "pr checks", "pr status", "run view", "run list", "run watch",
+  "repo view", "issue view", "issue list", "release view", "release list", "workflow view", "workflow list",
+  "search code", "search prs", "search issues", "search repos",
+])
+
 function ghApiEvidence(command: string) {
   const parts = commandParts(command)
-  if (executableName(parts.verb) !== "gh" || parts.args[0] !== "api") return undefined
+  if (executableName(parts.verb) !== "gh") return undefined
+  const subcommand = parts.args.slice(0, 2).join(" ")
+  if (ghReadOnly.has(subcommand)) return `gh ${subcommand}: read-only GitHub query`
+  if (parts.args[0] !== "api") return undefined
   const args = parts.args.slice(1)
-  const method = args.find((argument, index) => /^(?:-X|--method)$/.test(args[index - 1] ?? "") || /^--method=/.test(argument))
+  const method = args.find(
+    (argument, index) => /^(?:-X|--method)$/.test(args[index - 1] ?? "") || argument.startsWith("--method="),
+  )
   const explicit = method?.replace(/^--method=/, "").toUpperCase()
   const body = args.some((argument) => /^(?:-f|-F|--field|--raw-field|--input)(?:=|$)/.test(argument))
   if ((!explicit || explicit === "GET") && !body) return "gh api: GET request (read-only)"
@@ -2048,7 +2060,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
       "For local read, grep, glob, and lsp actions, reading data into the agent's context for the human's task is not credential disclosure; disclosure means printing, logging, exporting, or sending secret values elsewhere. Judge from action.local_evidence: when literal_scan is none_found for a task-relevant target, the mere possibility that a file could hold credentials is not grounds to ask. Configuration that names a secret or references it by variable is not a credential. A redacted literal elsewhere in the human history is not grounds to ask about an unrelated action. A read whose local_evidence is not_scanned because the target is a directory only lists entry names; it reads no file contents. A read or grep whose target_facts include opencode_tool_output re-reads the agent's own earlier tool results, which were already permission-checked; it is within the task even though the path is outside the worktrees.",
       "context.session_decisions lists recent gate outcomes in the same task; human_approved marks requests the human approved. Treat them as evidence of what the human accepts for this task, not as authorization for a materially different action. context.local_rules lists local rules that already require human review for this request.",
       "A skill load only reads that skill's instructions into the agent's context; it performs none of the actions the skill describes, each of which receives its own permission check (pushes and PR changes are human gates). Judge a skill load against the human's overall task, not only the current step: loading a PR or deployment skill ahead of time is not creating a PR or deploying. Likewise, delegating a task whose instructions include committing, pushing, or opening a PR is not publishing; those later steps are separately gated, and pushes and PR changes require the human.",
-      "When a shell segment's context has no full_command, the gate judged it self-contained (it only prints or filters stdin): judge that segment alone and do not attribute other segments' effects to it. context.module_evidence reports whether a go run module is pinned with a go.sum checksum; a pinned module is a verified dependency, not arbitrary downloaded code. context.command_evidence is the gate's local reading of the command's flags, such as whether a gh api call is a read-only GET.",
+      "When a shell segment's context has no full_command, the gate judged it self-contained (it only prints or filters stdin): judge that segment alone and do not attribute other segments' effects to it. context.module_evidence reports whether a go run module is pinned with a go.sum checksum; a pinned module is a verified dependency, not arbitrary downloaded code. context.command_evidence is the gate's local reading of the command's flags, such as whether a gh api call is a read-only GET. A read-only query to a remote service (a GET, gh pr view/diff/list, gh run view) is read-only inspection for a read-only role; it launches no subagent and changes nothing.",
       "Standing human policy: editing files inside dedicated worktrees under /data/rguliyev/tmp/opencode/worktrees is allowed, including configuration, Terraform, and IAM files, whenever it serves the human's task. Such edits change nothing live; push, PR changes, apply, and deploy are separately gated. Do not read an instruction not to change configuration as forbidding worktree file edits. Still ask for embedded credential literals, backdoor or exfiltration code, or edits outside worktrees.",
       "Return allow ONLY when this exact action is clearly within the applicable direct human task and role policy, with no credential disclosure, regulated-data exposure, destructive effect, security-control change, production or unrelated shared-state mutation, opaque side effect, or human-only gate. Otherwise ask.",
       "An existing E2B sandbox explicitly identified by direct human messages for the current isolated test is a task-local environment, not automatically production or unrelated shared state. Existing credentials from the task\'s environment may be used solely inside that same sandbox for the authorized test; ordinary use is not credential disclosure.",
