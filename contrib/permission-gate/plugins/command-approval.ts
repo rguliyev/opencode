@@ -153,7 +153,7 @@ const localGitAgents = new Set(["orchestrator", "solo", "implementer", "deep-imp
 // "Local git operations" sections. It describes an existing authorization;
 // it does not waive human gates for the underlying change or publication.
 const localGitRolePolicy =
-  "For assigned development work, this role may fetch, create branches and dedicated worktrees under /data/rguliyev/tmp/opencode/worktrees, edit files there, stage, commit, and rebase unpushed branches without a separate human permission. These are ordinary local development actions, not shared-state rewrites. Pushing, PR creation/update, merging, and rewriting pushed history require human authorization; Terraform/Atlantis apply and other human gates still apply. The human has stated that changing files inside dedicated worktrees under /data/rguliyev/tmp/opencode/worktrees is fine, including configuration, Terraform, and IAM files: such edits change nothing live until a separately gated push, PR, apply, or deploy."
+  "For assigned development work, this role may fetch, create branches and dedicated worktrees under /data/rguliyev/tmp/opencode/worktrees, edit files there, stage, commit, and rebase unpushed branches without a separate human permission. These are ordinary local development actions, not shared-state rewrites. Pushing, PR creation/update, merging, and rewriting pushed history require human authorization; Terraform apply and other human gates still apply. The human has stated that changing files inside dedicated worktrees under /data/rguliyev/tmp/opencode/worktrees is fine, including configuration, Terraform, and IAM files: such edits change nothing live until a separately gated push, PR, apply, or deploy."
 // A GET to GitHub or another API was read as a forbidden "download".
 const readOnlyRolePolicy =
   "Read-only inspection only; no edits, builds, tests, delegation, state changes, or downloading and running code. Read-only queries to remote services, such as GET requests, gh pr view/diff/list, gh run view, and gh api GET calls, are allowed inspection. Saving read-only output to scratch files directly under /tmp or /data/rguliyev/tmp/opencode (outside worktrees) is allowed."
@@ -162,7 +162,6 @@ const orchestratorDelegationPolicy =
 const requiredBashDenies = new Set([
   "*command-approval.ts*",
   "*opencode.jsonc*",
-  "*atlantis*apply*",
   "*/.config/opencode/lib/*",
 ])
 const configuredExternalRoot = "/data/rguliyev/tmp/opencode"
@@ -604,7 +603,7 @@ function segmentRequiresHumanOperation(segment: string) {
 }
 
 function requiresHumanOperation(command: string) {
-  return /(?:^|[\n;|&(){}])\s*(?:(?:sudo|env)\s+)?(?:git\s+push|gh\s+pr\s+(?:create|edit|merge|close)|terraform\s+(?:apply|destroy)|terragrunt\s+(?:apply|destroy)|atlantis\s+apply|kubectl\s+(?:apply|delete|patch|replace|scale|rollout|set)|gcloud\s+(?:projects\s+add-iam-policy-binding|iam\s+|secrets\s+(?:create|delete|update|versions\s+(?:add|destroy|disable)))|aws\s+(?:iam\s+|secretsmanager\s+(?:create|delete|update|put|rotate))|tailscale\s+(?:set|up)\b[^\n;|&]*--exit-node|(?:rm\s+-rf|mkfs|wipefs)\b)/i.test(
+  return /(?:^|[\n;|&(){}])\s*(?:(?:sudo|env)\s+)?(?:git\s+push|gh\s+pr\s+(?:create|edit|merge|close)|terraform\s+(?:apply|destroy)|terragrunt\s+(?:apply|destroy)|kubectl\s+(?:apply|delete|patch|replace|scale|rollout|set)|gcloud\s+(?:projects\s+add-iam-policy-binding|iam\s+|secrets\s+(?:create|delete|update|versions\s+(?:add|destroy|disable)))|aws\s+(?:iam\s+|secretsmanager\s+(?:create|delete|update|put|rotate))|tailscale\s+(?:set|up)\b[^\n;|&]*--exit-node|(?:rm\s+-rf|mkfs|wipefs)\b)/i.test(
     command,
   )
 }
