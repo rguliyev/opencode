@@ -2014,6 +2014,26 @@ test("configured OpenCode the final reviewer resolves Jev escalations with trust
     await hooks["permission.ask"](editRequest, edit)
     expect(edit.status).toBe("allow")
     expect(seen.slice(-2)).toEqual(["jev", "final_review"])
+    // Deleting a large generated file is reviewed by path; its old content
+    // is not sent and does not exceed the action size limit.
+    const bundle = "-" + "var x = 1;\n-".repeat(20_000)
+    const deletion = { status: "ask", message: "" }
+    await hooks["permission.ask"](
+      {
+        permission: "edit",
+        sessionID: "ses_final_review_test",
+        patterns: ["dist/bundle.js"],
+        metadata: {
+          filepath: "dist/bundle.js",
+          diff: bundle,
+          files: [{ filePath: path.join(directory, "dist/bundle.js"), relativePath: "dist/bundle.js", type: "delete", patch: bundle, additions: 0, deletions: 20_000 }],
+        },
+      },
+      deletion,
+    )
+    expect(deletion.status).toBe("allow")
+    expect(JSON.stringify(finalReviewState)).toContain("deleted content omitted")
+    expect(JSON.stringify(finalReviewState)).not.toContain("var x = 1;")
     const editContext = finalReviewState?.context
     expect(
       editContext && typeof editContext === "object" && "immediate_effect" in editContext

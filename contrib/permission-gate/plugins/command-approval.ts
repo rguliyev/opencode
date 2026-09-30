@@ -2580,6 +2580,23 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
       ? input.patterns.filter((item): item is string => typeof item === "string")
       : []
     const metadata = { ...input.metadata }
+    // A delete-only patch carries the whole deleted file as its diff; a 729 KB
+    // generated bundle exceeded the review limit. The paths and the fact of
+    // deletion are what matter, so the deleted text is summarised.
+    if (
+      input.permission === "edit" &&
+      Array.isArray(metadata.files) &&
+      metadata.files.length > 0 &&
+      metadata.files.every((file) => isRecord(file) && file.type === "delete")
+    ) {
+      metadata.files = metadata.files.map((file) => ({
+        filePath: (file as Record<string, unknown>).filePath,
+        relativePath: (file as Record<string, unknown>).relativePath,
+        type: "delete",
+        deletions: (file as Record<string, unknown>).deletions,
+      }))
+      metadata.diff = `deletes ${metadata.files.length} file(s); deleted content omitted`
+    }
     // Origin is attested by the core dispatcher, but its local path is not
     // useful to a remote reviewer. Send only a verified effect classification.
     const trustedEffect =
