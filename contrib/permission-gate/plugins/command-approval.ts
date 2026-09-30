@@ -946,6 +946,37 @@ function grafanaHelperPath() {
   return process.env.OPENCODE_GRAFANA_HELPER ?? path.join(homedir(), ".local/bin/grafana-query")
 }
 
+// contrib/permission-gate/bin/gcloud-remote-auth.sh, installed in
+// ~/.local/bin. Its status and verify subcommands only report whether the
+// shared login works (tokens go to /dev/null); start, code, and clean still
+// get full review. Trusted only when the installed file matches this hash.
+const gcloudAuthHelperSha256 = "442d040ce55a2d0c12bd8817e4cd7e0e13465536b56405b5bbe03066ca25452e"
+const gcloudAuthHelperPath = () =>
+  process.env.OPENCODE_GCLOUD_AUTH_HELPER ?? path.join(homedir(), ".local/bin/gcloud-remote-auth.sh")
+
+function isPinnedGcloudAuthHelper(file: string) {
+  try {
+    return (
+      realpathSync(file) === realpathSync(gcloudAuthHelperPath()) &&
+      createHash("sha256").update(readFileSync(file)).digest("hex") === gcloudAuthHelperSha256
+    )
+  } catch {
+    return false
+  }
+}
+
+// `gcloud-remote-auth.sh status` / `verify`, and nothing else in the segment.
+function gcloudAuthStatusCheck(command: string) {
+  const parts = commandParts(command)
+  const verb = parts.verb.replace(/^~(?=\/)/, homedir())
+  return (
+    (verb === gcloudAuthHelperPath() || parts.verb === "gcloud-remote-auth.sh") &&
+    parts.args.length === 1 &&
+    ["status", "verify"].includes(parts.args[0]) &&
+    isPinnedGcloudAuthHelper(gcloudAuthHelperPath())
+  )
+}
+
 // The pinned helper is verified by hash and described by command_evidence;
 // inspecting its own source (which fetches a token by design) as an agent
 // script would stop every call.
@@ -976,6 +1007,8 @@ function grafanaHelperEvidence(args: string[]) {
 function ghApiEvidence(command: string) {
   const parts = commandParts(command)
   if (["grafana-query", grafanaHelperPath()].includes(parts.verb)) return grafanaHelperEvidence(parts.args)
+  if (gcloudAuthStatusCheck(command))
+    return "gcloud-remote-auth.sh status/verify: verified local helper; it only reports whether the shared gcloud login works and prints no token"
   // Chart and script validators read files and write nothing, unless told to
   // update snapshots or write rendered output.
   const validator = executableName(parts.verb)
@@ -1120,6 +1153,7 @@ async function inspectScripts(command: string, cwd: string) {
   }
   for (const item of paths) {
     if (isPinnedGrafanaHelper(item.absolute)) continue
+    if (isPinnedGcloudAuthHelper(item.absolute) && gcloudAuthStatusCheck(command)) continue
     let file
     try {
       // bunx -> bun, and every version manager, installs tools as symlinks. What

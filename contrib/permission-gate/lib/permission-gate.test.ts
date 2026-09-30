@@ -1419,6 +1419,26 @@ test("shell segments get module evidence and self-contained segments are judged 
     try {
       expect(await grafanaEvidence(helper)).toContain("verified local helper")
       expect(await grafanaEvidence(helper, helper)).toContain("verified local helper")
+      // The pinned gcloud login helper's status check reports only whether the
+      // login works; its sign-in steps are still reviewed.
+      const authHelper = path.join(import.meta.dir, "../bin/gcloud-remote-auth.sh")
+      const previousAuthHelper = process.env.OPENCODE_GCLOUD_AUTH_HELPER
+      process.env.OPENCODE_GCLOUD_AUTH_HELPER = authHelper
+      const authStatus = async (sub: string) => {
+        const output = { status: "ask" }
+        const command = `${authHelper} ${sub}`
+        await hooks["permission.ask"](
+          { permission: "bash", sessionID: "ses_go_module", patterns: [command], metadata: { command } },
+          output,
+        )
+        return output.status
+      }
+      expect(await authStatus("status")).toBe("allow")
+      expect(await authStatus("verify")).toBe("allow")
+      expect(await authStatus("start")).toBe("ask")
+      if (previousAuthHelper === undefined) delete process.env.OPENCODE_GCLOUD_AUTH_HELPER
+      else process.env.OPENCODE_GCLOUD_AUTH_HELPER = previousAuthHelper
+
       // Calling the pinned helper by path is not blocked by its own source.
       const helperRun = { status: "ask" }
       await hooks["permission.ask"](
@@ -2906,4 +2926,10 @@ test("a message cut mid-emoji does not break the reviewers' requests", async () 
     else process.env.OPENCODE_KEV_SOCKET = previousKevSocket
     rmSync(directory, { recursive: true, force: true })
   }
+})
+
+test("the gate pins the gcloud login helper it ships", () => {
+  const source = readFileSync(path.join(import.meta.dir, "../plugins/command-approval.ts"), "utf8")
+  const helper = readFileSync(path.join(import.meta.dir, "../bin/gcloud-remote-auth.sh"))
+  expect(source).toContain(`const gcloudAuthHelperSha256 = "${createHash("sha256").update(helper).digest("hex")}"`)
 })
