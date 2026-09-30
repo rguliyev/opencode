@@ -1154,7 +1154,7 @@ test("executing read-only agent remains restricted after the session default cha
       },
       output,
     )
-    expect(output.status).toBe("deny")
+    expect(output.status).toBe("ask")
   } finally {
     globalThis.fetch = previousFetch
     if (previousStateHome === undefined) delete process.env.XDG_STATE_HOME
@@ -1546,31 +1546,25 @@ test("shell segments get module evidence and self-contained segments are judged 
   }
 })
 
-test("agents denying everything still reach the gate for tool dispatch", async () => {
+test("the gate does not reintroduce hard denies into an ask-only policy", async () => {
   const hooks = await gateForTest(path.resolve(import.meta.dir, ".."), "deep-reviewer")
   const config: any = {
     permission: {
       bash: {
-        "*command-approval.ts*": "deny",
-        "*opencode.jsonc*": "deny",
-        "*atlantis*apply*": "deny",
-        "*/.config/opencode/lib/*": "deny",
+        "*command-approval.ts*": "ask",
+        "*opencode.jsonc*": "ask",
       },
     },
     agent: {
-      "deep-reviewer": { permission: { "*": "deny", read: "allow", glob: "allow", bash: "deny" } },
+      "deep-reviewer": { permission: { "*": "ask", read: "allow", glob: "allow", bash: "ask" } },
       implementer: { permission: { edit: "allow" } },
-      custom: { permission: { "*": "deny", tool_call: "deny" } },
     },
   }
   await hooks.config(config)
   const reviewer = config.agent["deep-reviewer"].permission
-  // Last matching rule wins, so tool_call must come after "*": deny.
-  expect(Object.keys(reviewer).at(-1)).toBe("tool_call")
-  expect(reviewer.tool_call).toBe("ask")
-  expect(reviewer.bash["*"]).toBe("ask")
+  expect(reviewer.bash).toBe("ask")
   expect(config.agent.implementer.permission.tool_call).toBeUndefined()
-  expect(config.agent.custom.permission.tool_call).toBe("deny")
+  expect(config.permission.bash["*opencode.jsonc*"]).toBe("ask")
 })
 
 test("configured external-directory allow does not follow a symlink outside the allowlist", async () => {
@@ -2099,11 +2093,13 @@ test("configured OpenCode the final reviewer resolves Jev escalations with trust
       )
       return output.status
     }
-    expect(await external("read", path.join(homedir(), ".local/bin/gcloud-remote-auth.sh"), "call_ext_read")).toBe("allow")
+    expect(await external("read", path.join(homedir(), "opencode/scripts/gcloud-remote-auth.sh"), "call_ext_read")).toBe("allow")
+    expect(await external("read", path.join(homedir(), "opencode/skills/architect-harness/SKILL.md"), "call_ext_skill_new")).toBe("allow")
+    expect(await external("read", path.join(homedir(), ".opencode/skills/architect-harness/SKILL.md"), "call_ext_skill_old")).toBe("ask")
     expect(
       await external("read", path.join(homedir(), ".local/share/opencode/opencode.db"), "call_ext_db"),
     ).toBe("ask")
-    expect(await external("bash", path.join(homedir(), ".local/bin/gcloud-remote-auth.sh"), "call_ext_bash")).toBe("ask")
+    expect(await external("bash", path.join(homedir(), "opencode/scripts/gcloud-remote-auth.sh"), "call_ext_bash")).toBe("ask")
     earlierUpdates = []
 
     const token = "sk-" + "C".repeat(40)
@@ -2757,6 +2753,7 @@ test("configured OpenCode the final reviewer resolves Jev escalations with trust
     finalReviewContent = JSON.stringify({ choice: "allow", reason: "The local request is in scope." })
 
     const researcherEdit = { status: "allow" }
+    const beforeResearcherEdit = seen.length
     await researcher["permission.ask"](
       {
         permission: "edit",
@@ -2766,7 +2763,11 @@ test("configured OpenCode the final reviewer resolves Jev escalations with trust
       },
       researcherEdit,
     )
-    expect(researcherEdit.status).toBe("deny")
+    expect(researcherEdit.status).toBe("ask")
+    expect(seen.slice(beforeResearcherEdit)).toEqual(["jev", "final_review"])
+    expect((finalReviewState?.context as { local_rules?: string[] })?.local_rules).toContain(
+      "read-only agent requested a non-read-only action",
+    )
   } finally {
     globalThis.fetch = previousFetch
     if (previousStateHome === undefined) delete process.env.XDG_STATE_HOME

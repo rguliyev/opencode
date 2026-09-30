@@ -163,11 +163,6 @@ const readOnlyRolePolicy =
   "Read-only inspection only; no edits, builds, tests, delegation, state changes, or downloading and running code. Read-only queries to remote services, such as GET requests, gh pr view/diff/list, gh run view, and gh api GET calls, are allowed inspection. Saving read-only output to scratch files directly under /tmp or /data/rguliyev/tmp/opencode (outside worktrees) is allowed."
 const orchestratorDelegationPolicy =
   "Delegating the human's current task to known subagents (explore, researcher, reviewer, deep-reviewer, implementer, deep-implementer), including in the background, is this role's ordinary work and needs no separate human instruction; each subagent's later tool actions receive separate permission checks."
-const requiredBashDenies = new Set([
-  "*command-approval.ts*",
-  "*opencode.jsonc*",
-  "*/.config/opencode/lib/*",
-])
 const configuredExternalRoot = "/data/rguliyev/tmp/opencode"
 // Dedicated git worktrees: edits here change nothing live until a push, PR,
 // and deploy, each of which is separately human-gated.
@@ -1649,8 +1644,8 @@ function executionAgent(input: PermissionInput) {
 
 const readOnlyExternalRoots = () => [
   "/data/rguliyev/src",
-  path.join(homedir(), ".local/bin"),
-  path.join(homedir(), ".config/opencode/skills"),
+  path.join(homedir(), "opencode/scripts"),
+  path.join(homedir(), "opencode/skills"),
   "/usr/bin",
   "/usr/local/bin",
   "/usr/share",
@@ -1880,16 +1875,11 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
   // distinguish "auto-allowed" from "never gated because the plugin failed to
   // load". Feedback, monitoring and promotion gates all read this.
   // Logging must never be able to break the gate.
-  const logDir = path.join(
-    process.env.XDG_STATE_HOME ?? path.join(homedir(), ".local", "state"),
-    "opencode-gate",
-    "decisions",
-  )
-  const replyDir = path.join(
-    process.env.XDG_STATE_HOME ?? path.join(homedir(), ".local", "state"),
-    "opencode-gate",
-    "replies",
-  )
+  const gateStateRoot = process.env.OPENCODE_HOME
+    ? path.join(process.env.OPENCODE_HOME, "state", "opencode-gate")
+    : path.join(process.env.XDG_STATE_HOME ?? path.join(homedir(), ".local", "state"), "opencode-gate")
+  const logDir = path.join(gateStateRoot, "decisions")
+  const replyDir = path.join(gateStateRoot, "replies")
   try {
     mkdirSync(logDir, { recursive: true, mode: 0o700 })
   } catch {}
@@ -2715,16 +2705,11 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
       return
     }
     const reviewer = readOnlyAgents.has(agent)
-    if (
+    const roleRestricted =
       reviewer &&
       !new Set(["read", "glob", "grep", "lsp", "skill", "webfetch", "websearch", "external_directory"]).has(
         input.permission,
       )
-    ) {
-      output.message = "This agent is read-only and cannot use this action."
-      await settle("deny", "rule", ["read-only reviewer cannot use this action"])
-      return
-    }
     const patterns = Array.isArray(input.patterns)
       ? input.patterns.filter((item): item is string => typeof item === "string")
       : []
@@ -2938,6 +2923,10 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
     recordKev("action", safeRaw, requestID, 0, digest, context, [])
     const result = await review(safeRaw, [], context, undefined, action)
     const reasons: string[] = []
+    // A role-policy violation needs a human decision, not a silent denial.
+    // Keep the reason through final review so neither Jev nor Gemini can
+    // auto-approve a read-only agent's mutation.
+    if (roleRestricted) reasons.push("read-only agent requested a non-read-only action")
     // Only high-precision detections force a human: known token formats,
     // keys, JWTs, URL passwords, auth headers, and credential flags. A broad
     // `secret = "..."` assignment is still hidden from reviewers, but Terraform
@@ -3100,34 +3089,6 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
     },
     config: async (config: Config) => {
       formattersDisabled = !config.formatter
-      // Core asks a generic tool_call permission for every tool at dispatch.
-      // An agent whose rules are "*": deny had no tool_call rule, so every
-      // tool call (read, glob, grep, bash) was denied before its own rule or
-      // this gate was consulted. Ask instead: the gate defers trusted
-      // built-ins to their internal check, where the agent's read/glob/bash
-      // rules apply; without the gate, ask prompts rather than executing.
-      for (const agent of Object.values(config.agent ?? {})) {
-        const permission = agent?.permission
-        if (!permission || typeof permission !== "object" || Array.isArray(permission)) continue
-        const rules = permission as Record<string, unknown>
-        if (rules["*"] === "deny" && rules.tool_call === undefined) rules.tool_call = "ask"
-      }
-      // Agent markdown keeps Bash denied. Only a successfully loaded gate may
-      // replace it with ask, and its final rules must retain every global hard
-      // deny AFTER the broad ask (OpenCode uses last matching rule wins).
-      const globalBash = config.permission?.bash
-      if (!globalBash || typeof globalBash !== "object" || Array.isArray(globalBash)) return
-      const denies = Object.entries(globalBash).filter(([, action]) => action === "deny")
-      if (![...requiredBashDenies].every((pattern) => denies.some(([found]) => found === pattern))) return
-      for (const name of shellReviewAgents) {
-        const agent = config.agent?.[name]
-        if (!agent || !agent.permission || typeof agent.permission !== "object") continue
-        if (agent.permission.bash !== "deny") continue
-        agent.permission.bash = {
-          "*": "ask",
-          ...Object.fromEntries(denies),
-        }
-      }
     },
     event: async ({ event }) => {
       if (event.type === "permission.asked") {
