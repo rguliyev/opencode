@@ -347,6 +347,7 @@ function plugin(ready: Deferred.Deferred<void>) {
       )
     },
     list: () => Effect.succeed([]),
+    listWithOrigins: () => Effect.succeed([]),
     init: () => Effect.void,
   })
 }
@@ -361,6 +362,7 @@ function autocontinue(enabled: boolean) {
       })
     },
     list: () => Effect.succeed([]),
+    listWithOrigins: () => Effect.succeed([]),
     init: () => Effect.void,
   })
 }
@@ -375,6 +377,7 @@ function compactionContext(context: string) {
       })
     },
     list: () => Effect.succeed([]),
+    listWithOrigins: () => Effect.succeed([]),
     init: () => Effect.void,
   })
 }
@@ -1167,7 +1170,9 @@ describe("session.compaction.process", () => {
       expect(last?.info.role).toBe("user")
       expect(last?.parts.some((part) => part.type === "file")).toBe(false)
       expect(
-        last?.parts.some((part) => part.type === "text" && part.text.includes("Attached image/png: cat.png")),
+        last?.parts.some(
+          (part) => part.type === "text" && part.synthetic && part.text.includes("Attached image/png: cat.png"),
+        ),
       ).toBe(true)
     }),
   )

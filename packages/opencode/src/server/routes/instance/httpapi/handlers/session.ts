@@ -364,16 +364,18 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
       payload: typeof PermissionResponsePayload.Type
     }) {
       yield* requireSession(ctx.params.sessionID)
-      yield* permissionSvc.reply({ requestID: ctx.params.permissionID, reply: ctx.payload.response }).pipe(
-        Effect.catchTag("Permission.NotFoundError", (error) =>
-          Effect.fail(
-            new PermissionNotFoundError({
-              requestID: String(error.requestID),
-              message: `Permission request not found: ${error.requestID}`,
-            }),
+      yield* permissionSvc
+        .reply({ requestID: ctx.params.permissionID, reply: ctx.payload.response, origin: ctx.payload.origin })
+        .pipe(
+          Effect.catchTag("Permission.NotFoundError", (error) =>
+            Effect.fail(
+              new PermissionNotFoundError({
+                requestID: String(error.requestID),
+                message: `Permission request not found: ${error.requestID}`,
+              }),
+            ),
           ),
-        ),
-      )
+        )
       return true
     })
 
@@ -381,8 +383,23 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
       params: { sessionID: SessionID; messageID: MessageID }
     }) {
       yield* requireSession(ctx.params.sessionID)
-      yield* SessionError.mapBusy(runState.assertNotBusy(ctx.params.sessionID))
-      yield* session.removeMessage(ctx.params)
+      // A user message after the active assistant has not entered the model's
+      // history yet, so it can be removed without interrupting that run.
+      yield* runState.withInputLock(ctx.params.sessionID)(
+        Effect.gen(function* () {
+          const messages = yield* session.messages({ sessionID: ctx.params.sessionID }).pipe(Effect.orDie)
+          const assistant = messages.findLastIndex((message) => message.info.role === "assistant")
+          const current = messages[assistant]?.info
+          const queued =
+            current?.role === "assistant" &&
+            !current.time.completed &&
+            messages
+              .slice(assistant + 1)
+              .some((message) => message.info.role === "user" && message.info.id === ctx.params.messageID)
+          if (!queued) yield* SessionError.mapBusy(runState.assertNotBusy(ctx.params.sessionID))
+          yield* session.removeMessage(ctx.params)
+        }),
+      )
       return true
     })
 

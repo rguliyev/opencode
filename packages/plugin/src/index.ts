@@ -4,13 +4,12 @@ import type {
   Project,
   Model,
   Provider,
-  Permission,
   UserMessage,
   Message,
   Part,
   Config as SDKConfig,
 } from "@opencode-ai/sdk"
-import type { Provider as ProviderV2, Model as ModelV2, Auth } from "@opencode-ai/sdk/v2"
+import type { Provider as ProviderV2, Model as ModelV2, Auth, PermissionRequest } from "@opencode-ai/sdk/v2"
 
 import type { BunShell } from "./shell.js"
 import { type ToolDefinition } from "./tool.js"
@@ -53,8 +52,20 @@ export type WorkspaceAdapter = {
   target(config: WorkspaceInfo): WorkspaceTarget | Promise<WorkspaceTarget>
 }
 
+export type PermissionReviewInput = {
+  system: string
+  state: string
+  signal?: AbortSignal
+}
+
+export type PermissionReviewOutput =
+  | { model: string; choice: string; reason: string }
+  | { status: "invalid_response"; diagnostic: "json_content" }
+
 export type PluginInput = {
   client: ReturnType<typeof createOpencodeClient>
+  /** One-shot review using OpenCode's configured small model; never starts a session or executes tools. */
+  reviewPermission?: (input: PermissionReviewInput) => Promise<PermissionReviewOutput>
   project: Project
   directory: string
   worktree: string
@@ -258,7 +269,20 @@ export interface Hooks {
     input: { sessionID: string; agent: string; model: Model; provider: ProviderContext; message: UserMessage },
     output: { headers: Record<string, string> },
   ) => Promise<void>
-  "permission.ask"?: (input: Permission, output: { status: "ask" | "deny" | "allow" }) => Promise<void>
+  /**
+   * Fires while a permission is being decided, after the configured rules have
+   * been evaluated. `output.status` carries that decision and may be replaced;
+   * `output.message` explains a denial to the model. A rule that already denied
+   * the request settles it before this hook runs.
+   */
+  "permission.ask"?: (
+    input: PermissionRequest,
+    output: {
+      status: "ask" | "deny" | "allow"
+      message?: string
+      reviewItems?: { index: number; digest: string; command: string | null; reason: string }[]
+    },
+  ) => Promise<void>
   "command.execute.before"?: (
     input: { command: string; sessionID: string; arguments: string },
     output: { parts: Part[] },

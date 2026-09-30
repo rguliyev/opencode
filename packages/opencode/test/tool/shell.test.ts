@@ -220,6 +220,67 @@ describe("tool.shell", () => {
 })
 
 describe("tool.shell permissions", () => {
+  each("rejects empty Bash calls before execution", () =>
+    Effect.gen(function* () {
+      const tmp = yield* tmpdirScoped()
+      yield* runIn(
+        tmp,
+        Effect.gen(function* () {
+          for (const command of ["", " \t "]) {
+            const requests: Array<Omit<PermissionV1.Request, "id" | "sessionID" | "tool">> = []
+            const error = yield* fail({ command }, capture(requests))
+            expect(error.message).toBe("Command must not be empty")
+            expect(requests).toEqual([])
+          }
+        }),
+      )
+    }),
+  )
+
+  it.live("reviews cwd-only and redirection-only Bash calls before execution", () => {
+    if (!bash) return Effect.void
+    return withShell(
+      { label: "bash", shell: bash },
+      Effect.gen(function* () {
+        const tmp = yield* tmpdirScoped()
+        yield* runIn(
+          tmp,
+          Effect.gen(function* () {
+            for (const command of [
+              "cd .",
+              "cd . > /dev/null",
+              "> /dev/null",
+              "> /dev/null; printf hi",
+              "A=1 > /dev/null; printf hi",
+              "printf hi > /dev/null",
+            ]) {
+              const requests: Array<Omit<PermissionV1.Request, "id" | "sessionID" | "tool">> = []
+              const stop = new Error("stop before Bash execution")
+              expect(yield* fail({ command }, capture(requests, stop))).toMatchObject({ message: stop.message })
+              const bashRequest = requests.find((request) => request.permission === "bash")
+              expect(bashRequest).toBeDefined()
+              expect(bashRequest?.patterns.length).toBeGreaterThan(0)
+              if (command.includes(">"))
+                expect(bashRequest?.patterns.some((pattern) => pattern.includes("> /dev/null"))).toBe(true)
+              if (command === "cd . > /dev/null") {
+                expect(bashRequest?.patterns).toContain(command)
+                expect(bashRequest?.always).toContain(command)
+                expect(bashRequest?.always).not.toContain("cd *")
+              }
+              if (command === "> /dev/null; printf hi") expect(bashRequest?.patterns).toContain("> /dev/null")
+              if (command === "A=1 > /dev/null; printf hi") expect(bashRequest?.patterns).toContain(command)
+              if (command === "A=1 > /dev/null; printf hi") expect(bashRequest?.always).toContain(command)
+              if (command === "printf hi > /dev/null") {
+                expect(bashRequest?.always).toContain(command)
+                expect(bashRequest?.always).not.toContain("printf *")
+              }
+            }
+          }),
+        )
+      }),
+    )
+  })
+
   each("asks for bash permission with correct pattern", () =>
     Effect.gen(function* () {
       const tmp = yield* tmpdirScoped()
@@ -230,12 +291,28 @@ describe("tool.shell permissions", () => {
           yield* run(
             {
               command: "echo hello",
+              reason: "Verify the shell is working",
             },
             capture(requests),
           )
           expect(requests.length).toBe(1)
           expect(requests[0].permission).toBe("bash")
           expect(requests[0].patterns).toContain("echo hello")
+          expect(requests[0].metadata.purpose).toBe("Verify the shell is working")
+        }),
+      )
+    }),
+  )
+
+  each("omits purpose metadata when no reason was supplied", () =>
+    Effect.gen(function* () {
+      const tmp = yield* tmpdirScoped()
+      yield* runIn(
+        tmp,
+        Effect.gen(function* () {
+          const requests: Array<Omit<PermissionV1.Request, "id" | "sessionID" | "tool">> = []
+          yield* run({ command: "echo hello" }, capture(requests))
+          expect(requests[0].metadata).not.toHaveProperty("purpose")
         }),
       )
     }),
@@ -258,6 +335,23 @@ describe("tool.shell permissions", () => {
           expect(requests[0].permission).toBe("bash")
           expect(requests[0].patterns).toContain("echo foo")
           expect(requests[0].patterns).toContain("echo bar")
+          expect(requests[0].metadata.commandCount).toBe(2)
+        }),
+      )
+    }),
+  )
+
+  each("counts repeated shell commands even when their permission pattern is deduplicated", () =>
+    Effect.gen(function* () {
+      const tmp = yield* tmpdirScoped()
+      yield* runIn(
+        tmp,
+        Effect.gen(function* () {
+          const requests: Array<Omit<PermissionV1.Request, "id" | "sessionID" | "tool">> = []
+          yield* run({ command: "echo foo && echo foo" }, capture(requests))
+          const bashReq = requests.find((request) => request.permission === "bash")
+          expect(bashReq?.patterns).toEqual(["echo foo"])
+          expect(bashReq?.metadata.commandCount).toBe(2)
         }),
       )
     }),
@@ -337,6 +431,7 @@ describe("tool.shell permissions", () => {
         const extDirReq = requests.find((r) => r.permission === "external_directory")
         expect(extDirReq).toBeDefined()
         expect(extDirReq!.patterns).toContain(want)
+        expect(extDirReq!.metadata).not.toHaveProperty("purpose")
       }),
     ),
   )
@@ -659,7 +754,7 @@ describe("tool.shell permissions", () => {
     }
 
     for (const item of ps) {
-      it.live(`treats Set-Location like cd for permissions [${item.label}]`, () =>
+      it.live(`reviews Set-Location after its external-directory check [${item.label}]`, () =>
         withShell(
           item,
           runIn(
@@ -678,7 +773,7 @@ describe("tool.shell permissions", () => {
               expect(extDirReq!.patterns).toContain(
                 Filesystem.normalizePathPattern(path.join(process.env.WINDIR!, "*")),
               )
-              expect(bashReq).toBeUndefined()
+              expect(bashReq?.patterns).toContain("Set-Location C:/Windows")
             }),
           ),
         ),
@@ -950,7 +1045,7 @@ describe("tool.shell permissions", () => {
     }),
   )
 
-  each("does not ask for bash permission when command is cd only", () =>
+  each("asks for bash permission even when command is cd only", () =>
     Effect.gen(function* () {
       const tmp = yield* tmpdirScoped()
       yield* runIn(
@@ -964,7 +1059,8 @@ describe("tool.shell permissions", () => {
             capture(requests),
           )
           const bashReq = requests.find((r) => r.permission === "bash")
-          expect(bashReq).toBeUndefined()
+          expect(bashReq?.patterns).toEqual(["cd ."])
+          expect(bashReq?.always).toEqual(["cd ."])
         }),
       )
     }),

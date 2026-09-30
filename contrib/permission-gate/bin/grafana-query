@@ -1,0 +1,114 @@
+#!/usr/bin/env python3
+"""Read-only Grafana Cloud query helper that never exposes its token.
+
+Usage:
+  grafana-query HOST GET PATH
+  grafana-query HOST POST PATH [JSON_BODY | @FILE | -]
+
+HOST is e2bprod.grafana.net or e2bstg.grafana.net. PATH starts with /.
+GET may read any API path. POST is limited to Grafana's query endpoints
+(/api/ds/query and /apis/query.grafana.app/.../query), which run a
+datasource query and change nothing.
+
+The instance token is read from Google Secret Manager (project e2b-shared)
+into memory, sent only to HOST over HTTPS, and never printed, logged, or
+written. The response body goes to stdout; HTTP errors go to stderr with a
+non-zero exit.
+"""
+import json
+import re
+import subprocess
+import sys
+import urllib.error
+import urllib.request
+
+SECRETS = {
+    "e2bprod.grafana.net": "grafana-instance-token-e2b-prod",
+    "e2bstg.grafana.net": "grafana-instance-token-e2b-stg",
+}
+QUERY_POST = re.compile(r"^/(?:api/ds/query|apis/query\.grafana\.app/[A-Za-z0-9._/-]+/query)(?:\?[^\s]*)?$")
+MAX_BODY_BYTES = 1_000_000
+TIMEOUT_SECONDS = 60
+
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    # urllib would forward the Authorization header to a redirect target on
+    # any host; refuse redirects so the token only ever reaches HOST.
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def fail(message: str) -> None:
+    print(f"grafana-query: {message}", file=sys.stderr)
+    sys.exit(2)
+
+
+def main() -> None:
+    args = sys.argv[1:]
+    if len(args) < 3 or args[0] in ("-h", "--help"):
+        print(__doc__.strip(), file=sys.stderr)
+        sys.exit(2)
+    host, method, path = args[0], args[1].upper(), args[2]
+    if host not in SECRETS:
+        fail(f"unknown host {host!r}; expected one of {', '.join(SECRETS)}")
+    if not path.startswith("/") or "://" in path or any(c.isspace() for c in path):
+        fail("PATH must be an absolute API path such as /api/datasources")
+    body = None
+    if method == "GET":
+        if len(args) != 3:
+            fail("GET takes no request body")
+    elif method == "POST":
+        if not QUERY_POST.match(path):
+            fail("POST is only allowed to /api/ds/query or /apis/query.grafana.app/.../query")
+        if len(args) != 4:
+            fail("POST needs one JSON body argument, @FILE, or - for stdin")
+        source = args[3]
+        if source == "-":
+            raw = sys.stdin.read(MAX_BODY_BYTES + 1)
+        elif source.startswith("@"):
+            with open(source[1:], encoding="utf-8") as handle:
+                raw = handle.read(MAX_BODY_BYTES + 1)
+        else:
+            raw = source
+        if len(raw) > MAX_BODY_BYTES:
+            fail("request body is too large")
+        try:
+            json.loads(raw)
+        except ValueError:
+            fail("request body must be JSON")
+        body = raw.encode()
+    else:
+        fail("METHOD must be GET or POST")
+
+    token = subprocess.run(
+        ["gcloud", "secrets", "versions", "access", "latest", "--project=e2b-shared", f"--secret={SECRETS[host]}"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if token.returncode != 0 or not token.stdout.strip():
+        # gcloud's stderr names the failure (e.g. expired login), not the token.
+        fail("could not read the instance token: " + token.stderr.strip()[-300:])
+    request = urllib.request.Request(
+        f"https://{host}{path}",
+        data=body,
+        method=method,
+        headers={
+            "Authorization": f"Bearer {token.stdout.strip()}",
+            "Accept": "application/json",
+            **({"Content-Type": "application/json"} if body is not None else {}),
+        },
+    )
+    try:
+        opener = urllib.request.build_opener(NoRedirect)
+        with opener.open(request, timeout=TIMEOUT_SECONDS) as response:
+            sys.stdout.buffer.write(response.read())
+    except urllib.error.HTTPError as error:
+        print(f"grafana-query: HTTP {error.code}: {error.read()[:2000].decode(errors='replace')}", file=sys.stderr)
+        sys.exit(1)
+    except urllib.error.URLError as error:
+        fail(f"request failed: {error.reason}")
+
+
+if __name__ == "__main__":
+    main()

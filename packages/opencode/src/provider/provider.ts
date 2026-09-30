@@ -4,12 +4,12 @@ import { ConfigV1 } from "@opencode-ai/core/v1/config/config"
 import fuzzysort from "fuzzysort"
 import { Config } from "@/config/config"
 import { mapValues, mergeDeep, omit, pickBy, sortBy } from "remeda"
-import { NoSuchModelError, type Provider as SDK } from "ai"
+import { NoObjectGeneratedError, NoSuchModelError, streamObject, type Provider as SDK } from "ai"
 import { Npm } from "@opencode-ai/core/npm"
 import { Hash } from "@opencode-ai/core/util/hash"
 import { Plugin } from "../plugin"
 import { serviceUse } from "@opencode-ai/core/effect/service-use"
-import { type LanguageModelV3 } from "@ai-sdk/provider"
+import { JSONParseError, TypeValidationError, type LanguageModelV3 } from "@ai-sdk/provider"
 import { ModelsDev } from "@opencode-ai/core/models-dev"
 import { Auth } from "../auth"
 import { Env } from "../env"
@@ -31,6 +31,12 @@ import { ModelV2 } from "@opencode-ai/core/model"
 import { ModelStatus } from "./model-status"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import { ProviderError } from "./error"
+import type { PermissionReviewInput } from "@opencode-ai/plugin"
+
+const permissionReviewSchema = Schema.Struct({
+  choice: Schema.Literals(["allow", "ask"]),
+  reason: Schema.String,
+})
 
 const OPENAI_HEADER_TIMEOUT_DEFAULT = 300_000
 
@@ -2062,6 +2068,62 @@ const layer = Layer.effect(
       }
     })
 
+    const reviewPermission = (input: PermissionReviewInput) =>
+      Effect.gen(function* () {
+        const cfg = yield* config.get()
+        // The permission gate is pinned to one model and provider; it must not
+        // silently drift. It is independent of small_model.
+        if (input.system.length > 8_000 || input.state.length > 128_000)
+          throw new Error("Permission review context exceeds its safety budget")
+
+        const model = yield* getModel(ProviderV2.ID.make("google"), ModelV2.ID.make("gemini-3.8-flash")).pipe(
+          Effect.orDie,
+        )
+        if (model.api.id !== "gemini-3.8-flash" || model.api.npm !== "@ai-sdk/google")
+          throw new Error("Configured reviewer model resolves outside the direct Google provider")
+        if ((yield* auth.get(model.providerID))?.type !== "api")
+          throw new Error("Permission review requires OpenCode's existing Google API key")
+        const language = yield* getLanguage(model).pipe(Effect.orDie)
+        if (input.signal?.aborted) throw new Error("Permission review deadline elapsed")
+        const params = {
+          model: language,
+          schema: Object.assign(
+            Schema.toStandardSchemaV1(permissionReviewSchema),
+            Schema.toStandardJSONSchemaV1(permissionReviewSchema),
+          ),
+          system: input.system,
+          messages: [{ role: "user" as const, content: input.state }],
+          abortSignal: input.signal,
+          maxRetries: 0,
+          // Default thinking took 8-13 s to refuse a destructive command; low
+          // keeps allows around 1-4 s. Minimal is not supported by this model.
+          providerOptions: { google: { thinkingConfig: { thinkingLevel: "low" } } },
+        } satisfies Parameters<typeof streamObject>[0]
+
+        const answer = yield* Effect.promise(async () => {
+          // OpenCode's OAuth path uses streaming structured output; mirror it
+          // without creating a session or exposing any executable tools.
+          try {
+            const result = streamObject({ ...params, onError: () => {} })
+            for await (const part of result.fullStream) {
+              if (part.type === "error") throw part.error
+            }
+            return await result.object
+          } catch (error) {
+            if (
+              NoObjectGeneratedError.isInstance(error) ||
+              JSONParseError.isInstance(error) ||
+              TypeValidationError.isInstance(error)
+            )
+              return { status: "invalid_response" as const, diagnostic: "json_content" as const }
+            throw error
+          }
+        })
+        if ("status" in answer) return answer
+        return { model: "google/gemini-3.8-flash", choice: answer.choice, reason: answer.reason }
+      })
+
+    yield* plugin.setPermissionModelReviewer(reviewPermission)
     return Service.of({ list, getProvider, getModel, getLanguage, closest, getSmallModel, defaultModel })
   }),
 )

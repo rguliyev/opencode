@@ -1,10 +1,12 @@
 import path from "path"
-import { onMount } from "solid-js"
-import { createStore, produce, unwrap } from "solid-js/store"
+import { createEffect, onCleanup } from "solid-js"
+import { unwrap } from "solid-js/store"
 import type { AgentPart, FilePart, TextPart } from "@opencode-ai/sdk/v2"
 import { createSimpleContext } from "../context/helper"
+import { useRoute } from "../context/route"
+import { useSDK } from "../context/sdk"
 import { useTuiPaths } from "../context/runtime"
-import { appendText, readText, writeText } from "../util/persistence"
+import { readJson, readText, writeJsonAtomic } from "../util/persistence"
 
 export type PromptInfo = {
   input: string
@@ -24,21 +26,49 @@ export type PromptInfo = {
   )[]
 }
 
+export type PromptHistoryEntry = PromptInfo & { sessionID?: string }
 export const MAX_HISTORY_ENTRIES = 50
 
-export function parsePromptHistory(text: string) {
-  return text
-    .split("\n")
-    .filter(Boolean)
-    .map((line) => {
-      try {
-        return JSON.parse(line) as PromptInfo
-      } catch {
-        return undefined
-      }
+function validEntry(value: unknown): value is PromptHistoryEntry {
+  if (!value || typeof value !== "object") return false
+  if (!("input" in value) || typeof value.input !== "string") return false
+  if (
+    !("parts" in value) ||
+    !Array.isArray(value.parts) ||
+    !value.parts.every((part) => part && typeof part === "object" && "type" in part && typeof part.type === "string")
+  )
+    return false
+  if ("mode" in value && value.mode !== undefined && value.mode !== "normal" && value.mode !== "shell") return false
+  if ("sessionID" in value && value.sessionID !== undefined && typeof value.sessionID !== "string") return false
+  return true
+}
+
+export function retainPromptHistory(entries: PromptHistoryEntry[]) {
+  const counts = new Map<string | undefined, number>()
+  return entries
+    .toReversed()
+    .filter((entry) => {
+      const count = counts.get(entry.sessionID) ?? 0
+      counts.set(entry.sessionID, count + 1)
+      return count < MAX_HISTORY_ENTRIES
     })
-    .filter((line): line is PromptInfo => line !== undefined)
-    .slice(-MAX_HISTORY_ENTRIES)
+    .reverse()
+}
+
+export function parsePromptHistory(text: string) {
+  return retainPromptHistory(
+    text
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => {
+        try {
+          return JSON.parse(line) as unknown
+        } catch {
+          return undefined
+        }
+      })
+      .filter(validEntry),
+  )
 }
 
 export function isDuplicateEntry(previous: PromptInfo | undefined, next: PromptInfo): boolean {
@@ -46,65 +76,107 @@ export function isDuplicateEntry(previous: PromptInfo | undefined, next: PromptI
   return JSON.stringify(previous) === JSON.stringify(next)
 }
 
+type SessionPromptMessage = {
+  info: { role: string }
+  parts: { type: string; text?: string; synthetic?: boolean }[]
+}
+
+export function promptsFromMessages(messages: SessionPromptMessage[]) {
+  return messages
+    .flatMap((message): PromptInfo[] => {
+      if (message.info.role !== "user") return []
+      const input = message.parts
+        .filter((part) => part.type === "text" && !part.synthetic && typeof part.text === "string")
+        .map((part) => part.text)
+        .join("\n")
+      if (!input.trim()) return []
+      // Old client-local entries retain attachments. The server fallback only
+      // restores text, rather than pretending an attachment is still available.
+      return [{ input, parts: [] }]
+    })
+    .slice(-MAX_HISTORY_ENTRIES)
+}
+
+export function promptHistoryForSession(
+  entries: PromptHistoryEntry[],
+  sessionID: string | undefined,
+  server: PromptInfo[] = [],
+) {
+  const local = entries.filter((entry) => entry.sessionID === sessionID)
+  if (!sessionID) return local
+  const matched = new Set<number>()
+  const restored = server.map((entry) => {
+    const index = local.findIndex((item, index) => !matched.has(index) && item.input === entry.input)
+    if (index === -1) return entry
+    matched.add(index)
+    return local[index]
+  })
+  return [...restored, ...local.filter((_, index) => !matched.has(index))].slice(-MAX_HISTORY_ENTRIES)
+}
+
 export const { use: usePromptHistory, provider: PromptHistoryProvider } = createSimpleContext({
   name: "PromptHistory",
   init: () => {
     const paths = useTuiPaths()
-    const historyPath = path.join(paths.state, "prompt-history.jsonl")
-    onMount(async () => {
-      const lines = parsePromptHistory(await readText(historyPath).catch(() => ""))
-      setStore("history", lines)
+    const route = useRoute()
+    const sdk = useSDK()
+    const historyPath = path.join(paths.state, "prompt-history.json")
+    let history: PromptHistoryEntry[] = []
+    const server = new Map<string, PromptInfo[]>()
+    const index = new Map<string | undefined, number>()
+    const ready = readJson<unknown>(historyPath)
+      .then((value) => (Array.isArray(value) ? retainPromptHistory(value.filter(validEntry)) : []))
+      .catch(() => readText(path.join(paths.state, "prompt-history.jsonl")).then(parsePromptHistory).catch(() => []))
+      .then((loaded) => {
+        history = retainPromptHistory([...loaded, ...history])
+      })
+    let writing = Promise.resolve()
 
-      // Rewrite valid retained entries to self-heal corruption and enforce the limit.
-      if (lines.length > 0)
-        writeText(historyPath, lines.map((line) => JSON.stringify(line)).join("\n") + "\n").catch(() => {})
-    })
-
-    const [store, setStore] = createStore({
-      index: 0,
-      history: [] as PromptInfo[],
+    createEffect(() => {
+      const sessionID = route.data.type === "session" ? route.data.sessionID : undefined
+      if (!sessionID || sessionID === "dummy") return
+      const controller = new AbortController()
+      onCleanup(() => controller.abort())
+      void ready
+        .then(() => {
+          if (controller.signal.aborted || history.filter((entry) => entry.sessionID === sessionID).length >= MAX_HISTORY_ENTRIES)
+            return undefined
+          return sdk.client.session.messages({ sessionID, limit: 500 }, { signal: controller.signal, throwOnError: true })
+        })
+        .then((response) => {
+          if (controller.signal.aborted || !response) return
+          server.set(sessionID, promptsFromMessages(response.data ?? []))
+          index.delete(sessionID)
+        })
+        .catch(() => {})
     })
 
     return {
-      move(direction: 1 | -1, input: string) {
-        if (!store.history.length) return undefined
-        const current = store.history.at(store.index)
-        if (!current) return undefined
-        if (current.input !== input && input.length) return
-        setStore(
-          produce((draft) => {
-            const next = store.index + direction
-            if (Math.abs(next) > store.history.length) return
-            if (next > 0) return
-            draft.index = next
-          }),
-        )
-        if (store.index === 0) return { input: "", parts: [] }
-        return store.history.at(store.index)
+      move(direction: 1 | -1, input: string, sessionID?: string) {
+        const entries = promptHistoryForSession(history, sessionID, server.get(sessionID ?? ""))
+        if (!entries.length) return undefined
+        const currentIndex = index.get(sessionID) ?? 0
+        const current = entries.at(currentIndex)
+        if (current?.input !== input && input.length) return undefined
+        const next = currentIndex + direction
+        if (Math.abs(next) > entries.length || next > 0) return undefined
+        index.set(sessionID, next)
+        if (next === 0) return { input: "", parts: [] }
+        return entries.at(next)
       },
-      append(item: PromptInfo) {
-        const entry = structuredClone(unwrap(item))
-        if (isDuplicateEntry(store.history.at(-1), entry)) {
-          setStore("index", 0)
+      append(item: PromptInfo, sessionID?: string) {
+        const entry = { ...structuredClone(unwrap(item)), ...(sessionID ? { sessionID } : {}) }
+        const previous = history.findLast((value) => value.sessionID === sessionID)
+        if (isDuplicateEntry(previous, entry)) {
+          index.set(sessionID, 0)
           return
         }
-        let trimmed = false
-        setStore(
-          produce((draft) => {
-            draft.history.push(entry)
-            if (draft.history.length > MAX_HISTORY_ENTRIES) {
-              draft.history = draft.history.slice(-MAX_HISTORY_ENTRIES)
-              trimmed = true
-            }
-            draft.index = 0
-          }),
-        )
-
-        if (trimmed) {
-          writeText(historyPath, store.history.map((line) => JSON.stringify(line)).join("\n") + "\n").catch(() => {})
-          return
-        }
-        appendText(historyPath, JSON.stringify(entry) + "\n").catch(() => {})
+        history = retainPromptHistory([...history, entry])
+        index.set(sessionID, 0)
+        writing = writing
+          .then(() => ready)
+          .then(() => writeJsonAtomic(historyPath, history))
+          .catch(() => {})
       },
     }
   },

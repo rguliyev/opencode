@@ -67,6 +67,24 @@ export function webSearchEnabled(providerID: ProviderV2.ID, flags = { exa: false
 type TaskDef = Tool.InferDef<typeof TaskTool>
 type ReadDef = Tool.InferDef<typeof ReadTool>
 
+// Only the registry may mark these built-ins as self-gated. A custom tool that
+// reuses a built-in ID must still receive dispatch-time permission review.
+const selfGatedBuiltinIDs = new Set([
+  "bash",
+  "read",
+  "glob",
+  "grep",
+  "edit",
+  "write",
+  "apply_patch",
+  "webfetch",
+  "websearch",
+  "task",
+  "skill",
+  "lsp",
+  "todowrite",
+])
+
 type State = {
   custom: Tool.Def[]
   builtin: Tool.Def[]
@@ -122,7 +140,11 @@ const layer = Layer.effect(
       Effect.fn("ToolRegistry.state")(function* (ctx) {
         const custom: Tool.Def[] = []
 
-        function fromPlugin(id: string, def: ToolDefinition): Tool.Def {
+        function fromPlugin(
+          id: string,
+          def: ToolDefinition,
+          origin?: { packageName: string; version: string; packageDirectory: string; entry: string },
+        ): Tool.Def {
           // Plugin tools still expose Zod args publicly; keep that compatibility
           // boxed at the registry boundary and give the LLM the original JSON Schema.
           // Normalize missing args to `{}` once — pre-1.14.49 the code was
@@ -137,6 +159,7 @@ const layer = Layer.effect(
             : Schema.Unknown
           return {
             id,
+            ...(origin ? { pluginOrigin: origin } : {}),
             parameters,
             jsonSchema,
             description: def.description,
@@ -196,10 +219,10 @@ const layer = Layer.effect(
           }
         }
 
-        const plugins = yield* plugin.list()
-        for (const p of plugins) {
-          for (const [id, def] of Object.entries(p.tool ?? {})) {
-            custom.push(fromPlugin(id, def))
+        const plugins = yield* plugin.listWithOrigins()
+        for (const entry of plugins) {
+          for (const [id, def] of Object.entries(entry.hooks.tool ?? {})) {
+            custom.push(fromPlugin(id, def, entry.origin.source === "npm" ? entry.origin : undefined))
           }
         }
 
@@ -289,7 +312,9 @@ const layer = Layer.effect(
     })
 
     const tools: Interface["tools"] = Effect.fn("ToolRegistry.tools")(function* (input) {
-      const filtered = (yield* all()).filter((tool) => {
+      const s = yield* InstanceState.get(state)
+      const builtins = new Set(s.builtin)
+      const filtered = [...s.builtin, ...s.custom].filter((tool) => {
         if (tool.id === WebSearchTool.id) {
           return webSearchEnabled(input.providerID, { exa: flags.enableExa, parallel: flags.enableParallel })
         }
@@ -322,6 +347,9 @@ const layer = Layer.effect(
               : undefined
           return {
             id: tool.id,
+            trustedBuiltin: builtins.has(tool),
+            internalPermissionCheck: builtins.has(tool) && selfGatedBuiltinIDs.has(tool.id),
+            ...(tool.pluginOrigin ? { pluginOrigin: tool.pluginOrigin } : {}),
             description: [
               output.description,
               tool.id === TaskTool.id ? yield* describeTask(input.agent) : undefined,

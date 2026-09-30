@@ -199,7 +199,9 @@ export async function checkPluginCompatibility(target: string, opencodeVersion: 
   if (!isRecord(engines)) return
   const range = engines.opencode
   if (typeof range !== "string") return
-  if (!semver.satisfies(opencodeVersion, range)) {
+  // Fork builds are versioned <release>-<sha>, a semver prerelease that never
+  // satisfies an ordinary range such as ">=1.17.15 <2" without this option.
+  if (!semver.satisfies(opencodeVersion, range, { includePrerelease: true })) {
     throw new Error(`Plugin requires opencode ${range} but running ${opencodeVersion}`)
   }
 }

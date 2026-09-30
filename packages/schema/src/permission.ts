@@ -40,6 +40,9 @@ export interface Request extends Schema.Schema.Type<typeof Request> {}
 export const Reply = Schema.Literals(["once", "always", "reject"]).annotate({ identifier: "PermissionV2.Reply" })
 export type Reply = typeof Reply.Type
 
+export const ReplyOrigin = Schema.Literals(["human", "automatic"])
+export type ReplyOrigin = typeof ReplyOrigin.Type
+
 const Asked = define({ type: "permission.v2.asked", schema: Request.fields })
 const Replied = define({
   type: "permission.v2.replied",
@@ -47,6 +50,8 @@ const Replied = define({
     sessionID: SessionID,
     requestID: ID,
     reply: Reply,
+    origin: Schema.optional(Schema.Literals(["human", "automatic", "unknown", "cascade"])),
+    direct: Schema.optional(Schema.Boolean),
   },
 })
 export const Event = { Asked, Replied, Definitions: inventory(Asked, Replied) }

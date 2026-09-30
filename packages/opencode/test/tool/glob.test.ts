@@ -93,16 +93,26 @@ describe("tool.glob", () => {
       yield* Effect.promise(() => Bun.write(path.join(test.directory, "b.txt"), "hello\n"))
       const info = yield* GlobTool
       const glob = yield* info.init()
+      const review = asks()
       const result = yield* glob.execute(
         {
           pattern: "*.ts",
           path: test.directory,
         },
-        ctx,
+        review.next,
       )
       expect(result.metadata.count).toBe(1)
       expect(result.output).toContain(path.join(test.directory, "a.ts"))
       expect(result.output).not.toContain(path.join(test.directory, "b.txt"))
+      expect(review.items).toMatchObject([
+        {
+          permission: "glob",
+          metadata: {
+            matched_paths: [path.join(test.directory, "a.ts")],
+            truncated: false,
+          },
+        },
+      ])
     }),
   )
 

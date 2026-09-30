@@ -86,6 +86,12 @@ Use this skill.
       expect(requests[0].permission).toBe("skill")
       expect(requests[0].patterns).toContain("tool-skill")
       expect(requests[0].always).toContain("tool-skill")
+      expect(requests[0].metadata).toMatchObject({
+        name: "tool-skill",
+        description: "Skill for tool tests.",
+        location: path.join(skill, "SKILL.md"),
+        content: expect.stringContaining("Use this skill."),
+      })
       expect(result.metadata.dir).toBe(skill)
       expect(result.output).toContain(`<skill_content name="tool-skill">`)
       expect(result.output).toContain(`Base directory for this skill: ${skill}`)

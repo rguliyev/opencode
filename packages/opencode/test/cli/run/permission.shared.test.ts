@@ -6,6 +6,7 @@ import {
   permissionCancel,
   permissionEscape,
   permissionInfo,
+  permissionOptions,
   permissionReject,
   permissionRun,
 } from "@/cli/cmd/run/permission.shared"
@@ -23,6 +24,10 @@ function req(input: Partial<PermissionRequest> = {}): PermissionRequest {
 }
 
 describe("run permission shared", () => {
+  test("keeps Reject last in the permission menu", () => {
+    expect(permissionOptions("permission")).toEqual(["once", "always", "correct", "reject"])
+  })
+
   test("replies immediately for allow once", () => {
     const out = permissionRun(createPermissionBodyState("perm-1"), "perm-1", "once")
 
@@ -76,7 +81,28 @@ describe("run permission shared", () => {
     })
   })
 
+  test("requires a message for Do differently and sends it as a correction", () => {
+    expect(permissionOptions("permission")).toContain("correct")
+    const next = permissionRun(createPermissionBodyState("perm-1"), "perm-1", "correct")
+    expect(next.state.stage).toBe("correct")
+    expect(next.reply).toBeUndefined()
+    expect(permissionReject(next.state, "perm-1")).toBeUndefined()
+    expect(permissionReject({ ...next.state, message: "  split the publish step  " }, "perm-1")).toEqual({
+      requestID: "perm-1",
+      reply: "reject",
+      message: "split the publish step",
+    })
+    expect(permissionEscape(next.state)).toMatchObject({ stage: "permission", selected: "correct" })
+  })
+
   test("maps supported permission types into display info", () => {
+    expect(
+      permissionInfo(req({ permission: "tool_call", patterns: ["goal_resume"], metadata: { tool: "goal_resume" } })),
+    ).toMatchObject({ title: "Resume the session's autonomous goal (goal_resume)", lines: ["Tool: goal_resume"] })
+    expect(
+      permissionInfo(req({ permission: "tool_call", patterns: ["custom_publish"], metadata: { tool: "custom_publish" } })),
+    ).toMatchObject({ title: "Call tool custom_publish", lines: ["Tool: custom_publish"] })
+
     expect(
       permissionInfo(
         req({

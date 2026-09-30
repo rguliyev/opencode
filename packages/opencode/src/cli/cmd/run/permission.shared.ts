@@ -3,7 +3,7 @@
 // Lives outside the JSX component so it can be tested independently. The
 // machine has three stages:
 //
-//   permission → initial view with Allow once / Always / Reject options
+//   permission → initial view with Allow once / Always / Do differently / Reject options
 //   always     → confirmation step (Confirm / Cancel)
 //   reject     → text input for rejection message
 //
@@ -19,8 +19,8 @@ import { toolPath, toolPermissionInfo } from "./tool"
 
 type Dict = Record<string, unknown>
 
-export type PermissionStage = "permission" | "always" | "reject"
-export type PermissionOption = "once" | "always" | "reject" | "confirm" | "cancel"
+export type PermissionStage = "permission" | "always" | "reject" | "correct"
+export type PermissionOption = "once" | "always" | "reject" | "correct" | "confirm" | "cancel"
 
 export type PermissionBodyState = {
   requestID: string
@@ -79,7 +79,7 @@ export function createPermissionBodyState(requestID: string): PermissionBodyStat
 
 export function permissionOptions(stage: PermissionStage): PermissionOption[] {
   if (stage === "permission") {
-    return ["once", "always", "reject"]
+    return ["once", "always", "correct", "reject"]
   }
 
   if (stage === "always") {
@@ -87,6 +87,15 @@ export function permissionOptions(stage: PermissionStage): PermissionOption[] {
   }
 
   return []
+}
+
+// Plain descriptions for custom tools the human is asked about most.
+const knownTools: Record<string, string> = {
+  goal_resume: "Resume the session's autonomous goal",
+  goal_block: "Mark the session's goal as blocked, waiting on you",
+  goal_status: "Check the session's goal status",
+  get_goal: "Read the session's goal",
+  get_goal_history: "Read the session's goal history",
 }
 
 export function permissionInfo(request: PermissionRequest): PermissionInfo {
@@ -105,6 +114,18 @@ export function permissionInfo(request: PermissionRequest): PermissionInfo {
       icon: "←",
       title: `Access external directory ${toolPath(dir, { home: true })}`,
       lines: pats.map((item) => `- ${item}`),
+    }
+  }
+
+  // Custom tool dispatch asks as "tool_call"; the tool itself is named in
+  // metadata and patterns. Showing "Call tool tool_call" hid what was asked.
+  if (request.permission === "tool_call") {
+    const name = text(dict(request.metadata).tool) || pats[0] || "unknown tool"
+    const known = knownTools[name]
+    return {
+      icon: "⚙",
+      title: known ? `${known} (${name})` : `Call tool ${name}`,
+      lines: [`Tool: ${name}`],
     }
   }
 
@@ -138,6 +159,7 @@ export function permissionLabel(option: PermissionOption): string {
   if (option === "once") return "Allow once"
   if (option === "always") return "Allow always"
   if (option === "reject") return "Reject"
+  if (option === "correct") return "Do differently"
   if (option === "confirm") return "Confirm"
   return "Cancel"
 }
@@ -187,12 +209,12 @@ export function permissionRun(state: PermissionBodyState, requestID: string, opt
       }
     }
 
-    if (option === "reject") {
+    if (option === "reject" || option === "correct") {
       return {
         state: {
           ...state,
-          stage: "reject",
-          selected: "reject",
+          stage: option,
+          selected: option,
         },
       }
     }
@@ -228,6 +250,8 @@ export function permissionReject(state: PermissionBodyState, requestID: string):
     return undefined
   }
 
+  if (state.stage === "correct" && !state.message.trim()) return undefined
+
   return permissionReply(requestID, "reject", state.message)
 }
 
@@ -235,11 +259,12 @@ export function permissionCancel(state: PermissionBodyState): PermissionBodyStat
   return {
     ...state,
     stage: "permission",
-    selected: "reject",
+    selected: state.stage === "correct" ? "correct" : "reject",
   }
 }
 
 export function permissionEscape(state: PermissionBodyState): PermissionBodyState {
+  if (state.stage === "correct") return permissionCancel(state)
   if (state.stage === "always") {
     return {
       ...state,

@@ -2,6 +2,8 @@ import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import type {
   Hooks,
   PluginInput,
+  PermissionReviewInput,
+  PermissionReviewOutput,
   Plugin as PluginInstance,
   PluginModule,
   WorkspaceAdapter as PluginWorkspaceAdapter,
@@ -32,11 +34,19 @@ import { registerAdapter } from "@/control-plane/adapters"
 import type { WorkspaceAdapter } from "@/control-plane/types"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import { EventV2Bridge } from "@/event-v2-bridge"
+import { Permission } from "@/permission"
 import { InstallationChannel } from "@opencode-ai/core/installation/version"
 
 type State = {
   hooks: Hooks[]
+  origins: WeakMap<Hooks, ToolOrigin>
 }
+
+export type ToolOrigin =
+  | { source: "internal" }
+  | { source: "unknown" }
+  | { source: "file"; spec: string }
+  | { source: "npm"; spec: string; packageName: string; version: string; packageDirectory: string; entry: string }
 
 // Hook names that follow the (input, output) => Promise<void> trigger pattern
 type TriggerName = {
@@ -54,7 +64,11 @@ export interface Interface {
     output: Output,
   ) => Effect.Effect<Output>
   readonly list: () => Effect.Effect<Hooks[]>
+  readonly listWithOrigins: () => Effect.Effect<{ hooks: Hooks; origin: ToolOrigin }[]>
   readonly init: () => Effect.Effect<void>
+  readonly setPermissionModelReviewer: (
+    fn: (input: PermissionReviewInput) => Effect.Effect<PermissionReviewOutput, unknown>,
+  ) => Effect.Effect<void>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/Plugin") {}
@@ -111,16 +125,40 @@ function getLegacyPlugins(mod: Record<string, unknown>) {
   return result
 }
 
-async function applyPlugin(load: PluginLoader.Loaded, input: PluginInput, hooks: Hooks[]) {
+async function applyPlugin(
+  load: PluginLoader.Loaded,
+  input: PluginInput,
+  hooks: Hooks[],
+  origins: WeakMap<Hooks, ToolOrigin>,
+) {
+  const origin: ToolOrigin =
+    load.source === "npm" &&
+    load.pkg &&
+    typeof load.entry === "string" &&
+    typeof load.pkg.json.name === "string" &&
+    typeof load.pkg.json.version === "string"
+      ? {
+          source: "npm",
+          spec: load.spec,
+          packageName: load.pkg.json.name,
+          version: load.pkg.json.version,
+          packageDirectory: load.pkg.dir,
+          entry: load.entry,
+        }
+      : { source: "file", spec: load.spec }
   const plugin = readV1Plugin(load.mod, load.spec, "server", "detect")
   if (plugin) {
     await resolvePluginId(load.source, load.spec, load.target, readPluginId(plugin.id, load.spec), load.pkg)
-    hooks.push(await (plugin as PluginModule).server(input, load.options))
+    const hook = await (plugin as PluginModule).server(input, load.options)
+    hooks.push(hook)
+    origins.set(hook, origin)
     return
   }
 
   for (const server of getLegacyPlugins(load.mod)) {
-    hooks.push(await server(input, load.options))
+    const hook = await server(input, load.options)
+    hooks.push(hook)
+    origins.set(hook, origin)
   }
 }
 
@@ -130,10 +168,12 @@ const layer = Layer.effect(
     const events = yield* EventV2Bridge.Service
     const config = yield* Config.Service
     const flags = yield* RuntimeFlags.Service
+    let modelReviewer: ((input: PermissionReviewInput) => Effect.Effect<PermissionReviewOutput, unknown>) | undefined
 
     const state = yield* InstanceState.make<State>(
       Effect.fn("Plugin.state")(function* (ctx) {
         const hooks: Hooks[] = []
+        const origins = new WeakMap<Hooks, ToolOrigin>()
         const bridge = yield* EffectBridge.make()
 
         function publishPluginError(message: string) {
@@ -152,6 +192,10 @@ const layer = Layer.effect(
         const cfg = yield* config.get()
         const input: PluginInput = {
           client,
+          reviewPermission: (request) => {
+            if (!modelReviewer) return Promise.reject(new Error("Configured permission model is unavailable"))
+            return bridge.promise(modelReviewer(request))
+          },
           project: ctx.project,
           worktree: ctx.worktree,
           directory: ctx.directory,
@@ -175,7 +219,10 @@ const layer = Layer.effect(
             Effect.tapError((error) => Effect.logError("failed to load internal plugin", { name: plugin.name, error })),
             Effect.option,
           )
-          if (init._tag === "Some") hooks.push(init.value)
+          if (init._tag === "Some") {
+            hooks.push(init.value)
+            origins.set(init.value, { source: "internal" })
+          }
         }
 
         const plugins = flags.pure ? [] : (cfg.plugin_origins ?? [])
@@ -222,7 +269,7 @@ const layer = Layer.effect(
           // Keep plugin execution sequential so hook registration and execution
           // order remains deterministic across plugin runs.
           yield* Effect.tryPromise({
-            try: () => applyPlugin(load, input, hooks),
+            try: () => applyPlugin(load, input, hooks, origins),
             catch: (err) => {
               const message = errorMessage(err)
               return message
@@ -277,7 +324,7 @@ const layer = Layer.effect(
           ),
         )
 
-        return { hooks }
+        return { hooks, origins }
       }),
     )
 
@@ -301,18 +348,38 @@ const layer = Layer.effect(
       return s.hooks
     })
 
+    const listWithOrigins = Effect.fn("Plugin.listWithOrigins")(function* () {
+      const s = yield* InstanceState.get(state)
+      return s.hooks.map((hooks) => ({ hooks, origin: s.origins.get(hooks) ?? { source: "unknown" as const } }))
+    })
+
     const init = Effect.fn("Plugin.init")(function* () {
       yield* InstanceState.get(state)
     })
 
-    return Service.of({ trigger, list, init })
+    const setPermissionModelReviewer = (fn: NonNullable<typeof modelReviewer>) =>
+      Effect.sync(() => {
+        modelReviewer = fn
+      })
+
+    // Invoke the `permission.ask` hook, which is otherwise declared in the
+    // plugin API and never triggered. The dependency points plugin -> permission
+    // on purpose: the reverse edge would drag plugin loading into every graph
+    // that builds Permission on its own, which several tests do. The reviewer
+    // runs inside the permission service's ask flow, which already carries the
+    // instance context, so the trigger runs directly — it mutates `output` in
+    // place and asVoid drops the return value.
+    const permission = yield* Permission.Service
+    yield* permission.setReviewer((input, output) => trigger("permission.ask", input, output).pipe(Effect.asVoid))
+
+    return Service.of({ trigger, list, listWithOrigins, init, setPermissionModelReviewer })
   }),
 )
 
 export const node = LayerNode.make({
   service: Service,
   layer: layer,
-  deps: [EventV2Bridge.node, Config.node, RuntimeFlags.node],
+  deps: [EventV2Bridge.node, Config.node, RuntimeFlags.node, Permission.node],
 })
 
 export * as Plugin from "."
