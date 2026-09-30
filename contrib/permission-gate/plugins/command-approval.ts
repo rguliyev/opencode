@@ -977,6 +977,24 @@ function gcloudAuthStatusCheck(command: string) {
   )
 }
 
+// contrib/permission-gate/bin/google-api-get, installed in ~/.local/bin: a
+// GET to *.googleapis.com with the shared login's token, which it keeps in
+// memory and never prints. Trusted only when the installed file matches.
+const googleApiHelperSha256 = "3cb30a8da52bd91417f07ba697b440817b5fc0b182d13b23b03194623ca55899"
+const googleApiHelperPath = () =>
+  process.env.OPENCODE_GOOGLE_API_HELPER ?? path.join(homedir(), ".local/bin/google-api-get")
+
+function isPinnedGoogleApiHelper(file: string) {
+  try {
+    return (
+      realpathSync(file) === realpathSync(googleApiHelperPath()) &&
+      createHash("sha256").update(readFileSync(file)).digest("hex") === googleApiHelperSha256
+    )
+  } catch {
+    return false
+  }
+}
+
 // The pinned helper is verified by hash and described by command_evidence;
 // inspecting its own source (which fetches a token by design) as an agent
 // script would stop every call.
@@ -1007,6 +1025,12 @@ function grafanaHelperEvidence(args: string[]) {
 function ghApiEvidence(command: string) {
   const parts = commandParts(command)
   if (["grafana-query", grafanaHelperPath()].includes(parts.verb)) return grafanaHelperEvidence(parts.args)
+  if (["google-api-get", googleApiHelperPath()].includes(parts.verb.replace(/^~(?=\/)/, homedir())))
+    return isPinnedGoogleApiHelper(googleApiHelperPath()) &&
+      parts.args.length === 1 &&
+      /^https:\/\/[a-z0-9-]+(?:\.[a-z0-9-]+)*\.googleapis\.com\//.test(parts.args[0])
+      ? "google-api-get: verified local helper; a read-only GET to a googleapis.com URL with the shared gcloud login's token, which it never prints; it changes nothing"
+      : "google-api-get: not the gate's pinned helper or not a googleapis.com URL; treat it as unknown code"
   if (gcloudAuthStatusCheck(command))
     return "gcloud-remote-auth.sh status/verify: verified local helper; it only reports whether the shared gcloud login works and prints no token"
   // Chart and script validators read files and write nothing, unless told to
@@ -1153,6 +1177,7 @@ async function inspectScripts(command: string, cwd: string) {
   }
   for (const item of paths) {
     if (isPinnedGrafanaHelper(item.absolute)) continue
+    if (isPinnedGoogleApiHelper(item.absolute)) continue
     if (isPinnedGcloudAuthHelper(item.absolute) && gcloudAuthStatusCheck(command)) continue
     let file
     try {
@@ -2528,7 +2553,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
       "Standing human policy: editing files inside dedicated worktrees under /data/rguliyev/tmp/opencode/worktrees, including configuration, Terraform, and IAM files, is allowed when it serves the human's task; such edits change nothing live, and push, PR, apply, and deploy are gated separately. An instruction not to change configuration does not forbid worktree edits. Still ask for embedded credential literals, backdoor or exfiltration code, or edits outside worktrees.",
       "The attested goal-plugin tools get_goal, get_goal_history, and goal_status only read goal status and keep local bookkeeping (a persistence lease and state snapshot), and goal_block only pauses autonomous work to wait for the human; they are within any task. goal_resume restarts autonomous work and still needs a direct human request.",
       "A git push of a named feature branch, or gh pr create/edit/ready/comment (or a gh api PR title/body edit per command_evidence), may be allowed only when the direct human messages explicitly ask to push or open or update a PR for this work, at any point and not since revoked (asking for more changes does not revoke it; pushing the revised branch continues the request), or context.session_decisions shows the human approved pushing the same branch; otherwise ask. Pushes to shared branches, force pushes, and PR or remote merges are never yours to allow; a local git merge in a dedicated worktree is ordinary local work.",
-      "A read-only GET to *.googleapis.com that sends $(gcloud auth print-access-token) only as a Bearer header uses the human's login; allow it when it serves the task and prints no token. Ask for any other token handling. A grafana-query call verified by command_evidence is a read-only Grafana query; allow it for the task.",
+      "A read-only GET to *.googleapis.com that sends $(gcloud auth print-access-token) only as a Bearer header uses the human's login; allow it when it serves the task and prints no token. Ask for any other token handling. A grafana-query or google-api-get call verified by command_evidence is a read-only query; allow it for the task.",
       "Return allow ONLY when this exact action is clearly within the applicable direct human task and role policy, with no credential disclosure, regulated-data exposure, destructive effect, security-control change, production or unrelated shared-state mutation, opaque side effect, or human-only gate. Otherwise ask.",
       "An existing E2B sandbox identified by direct human messages for the current isolated test is task-local, not production or unrelated shared state: task credentials may be used only inside it, and restarting its test worker after a status report continues the testing instruction. This covers no new sandbox, service, or test expansion.",
       "Ask if the sandbox identity is not corroborated by direct human messages, the remote program's effects are unknown, credentials could leave that sandbox, or the action changes live Grafana, Slack, IAM, secrets, security controls, or production.",

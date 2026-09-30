@@ -1419,6 +1419,28 @@ test("shell segments get module evidence and self-contained segments are judged 
     try {
       expect(await grafanaEvidence(helper)).toContain("verified local helper")
       expect(await grafanaEvidence(helper, helper)).toContain("verified local helper")
+      // The pinned Google API helper is a read-only GET with a hidden token.
+      const apiHelper = path.join(import.meta.dir, "../bin/google-api-get")
+      const previousApiHelper = process.env.OPENCODE_GOOGLE_API_HELPER
+      process.env.OPENCODE_GOOGLE_API_HELPER = apiHelper
+      const apiGet = async (url: string) => {
+        const output = { status: "ask" }
+        const command = `${apiHelper} '${url}'`
+        await hooks["permission.ask"](
+          { permission: "bash", sessionID: "ses_go_module", patterns: [command], metadata: { command } },
+          output,
+        )
+        return { status: output.status, evidence: contexts[command]?.command_evidence }
+      }
+      const staging = await apiGet(
+        "https://monitoring.googleapis.com/v1/projects/e2b-staging/location/global/prometheus/api/v1/query?query=up",
+      )
+      expect(staging.status).toBe("allow")
+      expect(String(staging.evidence)).toContain("verified local helper")
+      expect(String((await apiGet("https://example.invalid/x")).evidence)).toContain("treat it as unknown code")
+      if (previousApiHelper === undefined) delete process.env.OPENCODE_GOOGLE_API_HELPER
+      else process.env.OPENCODE_GOOGLE_API_HELPER = previousApiHelper
+
       // The pinned gcloud login helper's status check reports only whether the
       // login works; its sign-in steps are still reviewed.
       const authHelper = path.join(import.meta.dir, "../bin/gcloud-remote-auth.sh")
@@ -2932,4 +2954,10 @@ test("the gate pins the gcloud login helper it ships", () => {
   const source = readFileSync(path.join(import.meta.dir, "../plugins/command-approval.ts"), "utf8")
   const helper = readFileSync(path.join(import.meta.dir, "../bin/gcloud-remote-auth.sh"))
   expect(source).toContain(`const gcloudAuthHelperSha256 = "${createHash("sha256").update(helper).digest("hex")}"`)
+})
+
+test("the gate pins the Google API helper it ships", () => {
+  const source = readFileSync(path.join(import.meta.dir, "../plugins/command-approval.ts"), "utf8")
+  const helper = readFileSync(path.join(import.meta.dir, "../bin/google-api-get"))
+  expect(source).toContain(`const googleApiHelperSha256 = "${createHash("sha256").update(helper).digest("hex")}"`)
 })

@@ -1,0 +1,69 @@
+#!/usr/bin/env python3
+"""Read-only Google Cloud API GET that never exposes its token.
+
+Usage:
+  google-api-get URL
+
+URL must be https://<service>.googleapis.com/... . The access token comes
+from the shared default gcloud login (`gcloud auth print-access-token`, no
+CLOUDSDK_CONFIG override), is kept in memory, sent only to that host, and
+never printed, logged, or written. Only GET is performed and redirects are
+not followed. The response body goes to stdout; HTTP errors go to stderr
+with a non-zero exit.
+
+Examples:
+  google-api-get 'https://monitoring.googleapis.com/v3/projects/e2b-staging/timeSeries?filter=...&interval.startTime=...&interval.endTime=...'
+  google-api-get 'https://monitoring.googleapis.com/v1/projects/e2b-staging/location/global/prometheus/api/v1/query?query=up'
+"""
+import os
+import re
+import subprocess
+import sys
+import urllib.error
+import urllib.request
+
+HOST = re.compile(r"^https://[a-z0-9-]+(?:\.[a-z0-9-]+)*\.googleapis\.com/[^\s]*$")
+TIMEOUT_SECONDS = 60
+
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    # urllib would forward the Authorization header to a redirect target on
+    # any host; refuse redirects so the token only ever reaches the named host.
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def fail(message: str) -> None:
+    print(f"google-api-get: {message}", file=sys.stderr)
+    sys.exit(2)
+
+
+def main() -> None:
+    if len(sys.argv) != 2 or sys.argv[1] in ("-h", "--help"):
+        print(__doc__.strip(), file=sys.stderr)
+        sys.exit(2)
+    url = sys.argv[1]
+    if not HOST.match(url):
+        fail("URL must be https://<service>.googleapis.com/...")
+    env = {k: v for k, v in os.environ.items() if k not in ("CLOUDSDK_CONFIG", "CLOUDSDK_AUTH_ACCESS_TOKEN_FILE")}
+    token = subprocess.run(
+        ["gcloud", "auth", "print-access-token"], capture_output=True, text=True, timeout=30, env=env
+    )
+    if token.returncode != 0 or not token.stdout.strip():
+        # gcloud's stderr names the failure (e.g. expired login), not the token.
+        fail("could not get a token from the shared gcloud login: " + token.stderr.strip()[-300:])
+    request = urllib.request.Request(
+        url, method="GET", headers={"Authorization": f"Bearer {token.stdout.strip()}", "Accept": "application/json"}
+    )
+    try:
+        with urllib.request.build_opener(NoRedirect).open(request, timeout=TIMEOUT_SECONDS) as response:
+            sys.stdout.buffer.write(response.read())
+    except urllib.error.HTTPError as error:
+        print(f"google-api-get: HTTP {error.code}: {error.read()[:2000].decode(errors='replace')}", file=sys.stderr)
+        sys.exit(1)
+    except urllib.error.URLError as error:
+        fail(f"request failed: {error.reason}")
+
+
+if __name__ == "__main__":
+    main()
