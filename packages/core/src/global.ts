@@ -8,10 +8,17 @@ import { Flag } from "./flag/flag"
 import { makeGlobalNode } from "./effect/app-node"
 
 const app = "opencode"
-const data = path.join(xdgData!, app)
-const cache = path.join(xdgCache!, app)
-const config = path.join(xdgConfig!, app)
-const state = path.join(xdgState!, app)
+export function resolveRuntimePaths(runtime?: string) {
+  if (runtime && !path.isAbsolute(runtime)) throw new Error("OPENCODE_HOME must be an absolute path")
+  return {
+    data: runtime ? path.join(runtime, "data") : path.join(xdgData!, app),
+    cache: runtime ? path.join(runtime, "cache") : path.join(xdgCache!, app),
+    config: runtime ? path.join(os.homedir(), ".opencode") : path.join(xdgConfig!, app),
+    state: runtime ? path.join(runtime, "state") : path.join(xdgState!, app),
+  }
+}
+
+const { data, cache, config, state } = resolveRuntimePaths(process.env.OPENCODE_HOME)
 const tmp = path.join(os.tmpdir(), app)
 
 const paths = {
