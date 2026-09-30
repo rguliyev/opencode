@@ -1561,6 +1561,15 @@ function executionAgent(input: PermissionInput) {
     : undefined
 }
 
+const readOnlyExternalRoots = () => [
+  "/data/rguliyev/src",
+  path.join(homedir(), ".local/bin"),
+  path.join(homedir(), ".config/opencode/skills"),
+  "/usr/bin",
+  "/usr/local/bin",
+  "/usr/share",
+]
+
 function finalReviewMayAutoAllowAction(
   action: ActionEvidence,
   context: ReviewContext,
@@ -1568,7 +1577,21 @@ function finalReviewMayAutoAllowAction(
   continuation: TaskContinuation = "absent",
 ) {
   if (action.permission === "task") return finalReviewMayAutoAllowTask(action, continuation)
-  if (action.permission === "external_directory") return false
+  if (action.permission === "external_directory") {
+    // A built-in read, glob, grep, or list outside the worktrees may reach a
+    // repository or helper-script directory; the read itself is reviewed
+    // separately. Data, credential, and config directories are not listed.
+    const resolved = action.metadata?.resolved_filepath
+    return (
+      ["read", "glob", "grep", "list"].includes(action.tool ?? "") &&
+      action.metadata?.core_trusted_builtin === true &&
+      typeof resolved === "string" &&
+      path.isAbsolute(resolved) &&
+      path.normalize(resolved) === resolved &&
+      readOnlyExternalRoots().some((root) => resolved === root || resolved.startsWith(root + path.sep)) &&
+      !sensitiveFilename(resolved)
+    )
+  }
   if (action.permission === "tool_call")
     return (
       !!action.tool &&

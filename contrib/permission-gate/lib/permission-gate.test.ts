@@ -2017,6 +2017,31 @@ test("configured OpenCode the final reviewer resolves Jev escalations with trust
     }
     expect(await listed("docs/tech-radar/cilium-2026-09-10.md")).toBe("allow")
     expect(await listed("people/jane_1985-03-12.pdf")).toBe("ask")
+    // A built-in read outside the worktrees may reach a helper-script
+    // directory; OpenCode's data directory and shell access may not.
+    const external = async (tool: string, target: string, callID: string) => {
+      await hooks["tool.execute.before"](
+        { tool, sessionID: "ses_final_review_test", callID },
+        { args: tool === "read" ? { filePath: target } : { command: `cat ${target}` } },
+      )
+      const output = { status: "ask" }
+      await hooks["permission.ask"](
+        {
+          permission: "external_directory",
+          sessionID: "ses_final_review_test",
+          patterns: [path.join(path.dirname(target), "*")],
+          metadata: { filepath: target, resolved_filepath: target, parentDir: path.dirname(target), core_trusted_builtin: true },
+          tool: { callID },
+        },
+        output,
+      )
+      return output.status
+    }
+    expect(await external("read", path.join(homedir(), ".local/bin/gcloud-remote-auth.sh"), "call_ext_read")).toBe("allow")
+    expect(
+      await external("read", path.join(homedir(), ".local/share/opencode/opencode.db"), "call_ext_db"),
+    ).toBe("ask")
+    expect(await external("bash", path.join(homedir(), ".local/bin/gcloud-remote-auth.sh"), "call_ext_bash")).toBe("ask")
     earlierUpdates = []
 
     const token = "sk-" + "C".repeat(40)
