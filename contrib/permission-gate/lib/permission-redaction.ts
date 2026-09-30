@@ -70,7 +70,7 @@ function sanitizeText(input: string): RedactionResult<string> {
     (prefix, secret) =>
       !/^%[-+ #0-9.]*[a-zA-Z]$/.test(secret) &&
       (/^https?:\/\//i.test(prefix) ||
-        !/(?:^|["'\s=,[(])(?:serviceAccount|user|group|domain|principal|principalSet|deleted):$/i.test(prefix)),
+        !/(?:^|["'`\s=,[(])(?:serviceAccount|user|group|domain|principal|principalSet|deleted):$/i.test(prefix)),
   )
   replaceValue(
     /(https:\/\/(?:hooks\.slack\.com\/services|(?:discord(?:app)?\.com)\/api\/webhooks)\/)([^\s'";|]{12,})/gi,
@@ -139,6 +139,10 @@ function sanitizeText(input: string): RedactionResult<string> {
       // A value with no letters or digits ("=== ClusterSecretStore ===") is
       // punctuation, not a credential.
       /[A-Za-z0-9]/.test(secret) &&
+      // Prose such as "needs the dev-scoped token: the adapter reads ..."
+      !/^(?:the|a|an|it|its|this|that|these|those|is|are|was|and|or|to|in|on|for|with|from|see|use|via|per|not|none|each|any|same)$/i.test(
+        secret,
+      ) &&
       !/(?:count|length|size|max|min|timeout|ttl)["']?\s*(?:=|:)/i.test(prefix) &&
       !(
         !/["']\s*$/.test(prefix) &&

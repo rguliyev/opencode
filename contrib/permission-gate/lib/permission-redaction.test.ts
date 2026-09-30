@@ -158,3 +158,13 @@ test("printf format verbs are not URL passwords", () => {
   expect(sanitizeReviewText(line).value).toBe(line)
   expect(sanitizeReviewText("https://admin:" + "S3cretValue9@db.example.invalid").value).toContain("[REDACTED:PASSWORD]")
 })
+
+test("prose after a secret-like key and backticked IAM members are not credentials", () => {
+  for (const line of [
+    "e2b-test.dev needs the dev-scoped token: the adapter reads its zone-owning secret",
+    "grant `group:data-readers@e2b.dev` to `roles/bigquery.dataViewer`",
+    "87. **`user:someone@e2b.dev` gets the role pair",
+  ])
+    expect(sanitizeReviewText(line).value).toBe(line)
+  expect(sanitizeReviewText("token: " + "abcDEF123456").value).toContain("[REDACTED:CREDENTIAL]")
+})
