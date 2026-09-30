@@ -141,6 +141,15 @@ function attemptsScopeSwitch(command: string) {
   )
 }
 
+// True when the command does not name a project, or names only the default
+// dev project, and does not try to switch credentials or project dynamically.
+// Any other explicit project fails closed.
+export function targetsOnlyDefaultProject(command: string) {
+  const policy = loadPolicy()
+  if (attemptsScopeSwitch(command)) return false
+  return [...explicitProjects(command)].every((project) => project === policy.default_project)
+}
+
 export function gcpScopeReviewMessage(command: string, sessions?: string[]) {
   const policy = loadPolicy(sessions)
   if (attemptsScopeSwitch(command)) {

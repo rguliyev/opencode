@@ -17,8 +17,12 @@ The files map to the user's OpenCode configuration as follows:
 
 The staged gate consults Jev through OpenRouter for Bash commands and other
 permission-checked actions. It sends every reviewable Bash or non-Bash action
-to the versioned local Kev v2 socket **before** Jev. Kev never grants
-permission. The available checkpoint was trained only on shell commands and
+to the versioned local Kev v2 socket and logs the reply when it arrives. The
+allow/ask decision does not wait for that reply. Kev never grants
+permission. A terraform or terragrunt apply/destroy is local-dev only inside
+a worktree under `/data/rguliyev/tmp/opencode/worktrees` when it names no GCP
+project or only the default dev project; Jev may allow that. Any other
+project, a credential switch, and every live kubectl mutation stay a human ask. The available checkpoint was trained only on shell commands and
 scripts; the v2 worker accepts full sanitized task/action context but returns
 `unsupported_action` for non-Bash rather than an uncalibrated probability.
 Contextual Bash scores are marked `shell_only_unvalidated_context` and remain

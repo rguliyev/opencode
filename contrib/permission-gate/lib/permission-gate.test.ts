@@ -273,8 +273,17 @@ test("Jev classifies non-Bash actions with redacted context", async () => {
       readOutput,
     )
     expect(readOutput.status).toBe("allow")
-    expect(connections).toBe(1)
-    expect(order).toEqual(["kev", "jev"])
+    await new Promise<void>((resolve, reject) => {
+      const start = Date.now()
+      const tick = () => {
+        if (connections >= 1 && kevRequests.length >= 1) return resolve()
+        if (Date.now() - start > 1000) return reject(new Error("Kev was not contacted"))
+        setTimeout(tick, 10)
+      }
+      tick()
+    })
+    expect(order).toContain("jev")
+    expect(order).toContain("kev")
     expect(kevRequests[0].version).toBe(2)
     expect(kevRequests[0].kind).toBe("action")
     expect(JSON.parse(kevRequests[0].state.evidence).permission).toBe("webfetch")
@@ -313,6 +322,15 @@ test("Jev classifies non-Bash actions with redacted context", async () => {
     expect(editOutput.status).toBe("ask")
     expect(JSON.stringify(seen[1])).not.toContain(token)
     expect(JSON.stringify(seen[1])).toContain("[REDACTED:CREDENTIAL]")
+    await new Promise<void>((resolve, reject) => {
+      const start = Date.now()
+      const tick = () => {
+        if (kevRequests.length >= 2) return resolve()
+        if (Date.now() - start > 1000) return reject(new Error("Kev did not receive the edit"))
+        setTimeout(tick, 10)
+      }
+      tick()
+    })
     expect(JSON.stringify(kevRequests[1])).not.toContain(token)
     expect(JSON.stringify(kevRequests[1])).toContain("[REDACTED:CREDENTIAL]")
 
@@ -353,8 +371,17 @@ test("Jev classifies non-Bash actions with redacted context", async () => {
     )
     expect(customOutput.status).toBe("ask")
     expect(seen).toHaveLength(3)
+    await new Promise<void>((resolve, reject) => {
+      const start = Date.now()
+      const tick = () => {
+        if (connections >= 3) return resolve()
+        if (Date.now() - start > 1000) return reject(new Error(`Kev connections ${connections} < 3`))
+        setTimeout(tick, 10)
+      }
+      tick()
+    })
     expect(connections).toBe(3)
-    expect(order.at(-1)).toBe("final_review")
+    expect(order).toContain("final_review")
 
     // The same live socket must still receive eligible Bash commands.
     bashDeny = true
@@ -376,8 +403,18 @@ test("Jev classifies non-Bash actions with redacted context", async () => {
     )
     expect(bashOutput.status).toBe("allow")
     expect(seen).toHaveLength(4)
+    await new Promise<void>((resolve, reject) => {
+      const start = Date.now()
+      const tick = () => {
+        if (connections >= 4 && kevRequests.length >= 4) return resolve()
+        if (Date.now() - start > 1000) return reject(new Error(`Kev connections ${connections}, requests ${kevRequests.length}`))
+        setTimeout(tick, 10)
+      }
+      tick()
+    })
     expect(connections).toBe(4)
-    expect(order).toEqual(["kev", "jev", "final_review"])
+    expect(order.filter((step) => step !== "kev")).toEqual(["jev", "final_review"])
+    expect(order).toContain("kev")
     expect(kevRequests[3].kind).toBe("bash")
     expect(kevRequests[3].state.context).toMatchObject({
       agent: "solo",
