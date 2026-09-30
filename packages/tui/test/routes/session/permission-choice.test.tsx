@@ -3,7 +3,7 @@ import { expect, test } from "bun:test"
 import { createDefaultOpenTuiKeymap } from "@opentui/keymap/opentui"
 import { testRender, useRenderer } from "@opentui/solid"
 import type { PermissionRequest } from "@opencode-ai/sdk/v2"
-import { onCleanup } from "solid-js"
+import { createSignal, onCleanup } from "solid-js"
 import { mkdir } from "node:fs/promises"
 import path from "node:path"
 import { tmpdir } from "../../fixture/fixture"
@@ -76,10 +76,13 @@ async function mount(
   await mkdir(state, { recursive: true })
   await Bun.write(path.join(state, "kv.json"), "{}")
   const replies: unknown[] = []
+  const [currentRequest, setCurrentRequest] = createSignal(
+    permissionRequest ?? request(reviewed, child, commands, total, offset, executed),
+  )
   const config = createTuiResolvedConfig()
   const fetch = (async (input: RequestInfo | URL) => {
     const value = input instanceof Request ? input : new Request(input)
-    if (new URL(value.url).pathname === "/permission/per_test/reply") {
+    if (["/permission/per_test/reply", "/permission/per_next/reply"].includes(new URL(value.url).pathname)) {
       replies.push(await value.json())
       return json(true)
     }
@@ -102,9 +105,7 @@ async function mount(
                   <ProjectProvider>
                     <SyncContext.Provider value={{ data: { part: {} } } as ReturnType<typeof useSync>}>
                       <LocationProvider>
-                        <PermissionPrompt
-                          request={permissionRequest ?? request(reviewed, child, commands, total, offset, executed)}
-                        />
+                        <PermissionPrompt request={currentRequest()} />
                       </LocationProvider>
                     </SyncContext.Provider>
                   </ProjectProvider>
@@ -121,6 +122,7 @@ async function mount(
   return {
     app,
     replies,
+    setRequest: setCurrentRequest,
     async cleanup() {
       app.renderer.destroy()
       await Bun.sleep(25)
@@ -313,6 +315,49 @@ test("single-command review does not offer Allow all", async () => {
   try {
     await waitFor(setup.app, "Allow this command")
     expect(setup.app.captureCharFrame()).not.toContain("Allow all")
+  } finally {
+    await setup.cleanup()
+  }
+})
+
+test("review options update when a multi-command request becomes a single command", async () => {
+  const setup = await mount(true, false, 110, 2)
+  try {
+    await waitFor(setup.app, "Allow all")
+    setup.app.mockInput.pressArrow("right")
+    await setup.app.renderOnce()
+    setup.setRequest({ ...request(true, false), id: "per_next" })
+    await waitFor(setup.app, "Allow this command")
+    expect(setup.app.captureCharFrame()).not.toContain("Allow all")
+    setup.app.mockInput.pressArrow("right")
+    await setup.app.renderOnce()
+    setup.app.mockInput.pressEnter()
+    await waitFor(setup.app, "Tell OpenCode what to do instead")
+    expect(setup.replies).toEqual([])
+  } finally {
+    await setup.cleanup()
+  }
+})
+
+test("review options update when a single-command request becomes multi-command", async () => {
+  const setup = await mount(true)
+  try {
+    await waitFor(setup.app, "Allow this command")
+    setup.setRequest({ ...request(true, false, 2), id: "per_next" })
+    await waitFor(setup.app, "Allow all")
+    setup.app.mockInput.pressArrow("right")
+    await setup.app.renderOnce()
+    setup.app.mockInput.pressEnter()
+    await waitForReply(setup.app, setup.replies)
+    expect(setup.replies).toEqual([
+      expect.objectContaining({
+        reply: "once",
+        commandFeedback: [
+          { index: 0, digest: "a".repeat(64), decision: "allow" },
+          { index: 1, digest: "b".repeat(64), decision: "allow" },
+        ],
+      }),
+    ])
   } finally {
     await setup.cleanup()
   }

@@ -721,10 +721,15 @@ function Prompt<const T extends Record<string, string>>(props: {
   const { theme } = useTheme()
   const tuiConfig = useTuiConfig()
   const dimensions = useTerminalDimensions()
-  const keys = Object.keys(props.options) as (keyof T)[]
+  const keys = createMemo(() => Object.keys(props.options) as (keyof T)[])
   const [store, setStore] = createStore({
-    selected: keys[0],
+    selected: keys()[0],
     expanded: false,
+  })
+  createEffect(() => {
+    const available = keys()
+    if (available.includes(store.selected)) return
+    setStore("selected", available[0])
   })
   const narrow = createMemo(() => dimensions().width < 80)
   const fullscreenHint = useCommandShortcut("permission.prompt.fullscreen")
@@ -757,8 +762,9 @@ function Prompt<const T extends Record<string, string>>(props: {
         desc: "Previous permission option",
         group: "Permission",
         cmd: () => {
-          const idx = keys.indexOf(store.selected)
-          const next = keys[(idx - 1 + keys.length) % keys.length]
+          const available = keys()
+          const idx = available.indexOf(store.selected)
+          const next = available[(idx - 1 + available.length) % available.length]
           setStore("selected", next)
         },
       },
@@ -767,8 +773,9 @@ function Prompt<const T extends Record<string, string>>(props: {
         desc: "Previous permission option",
         group: "Permission",
         cmd: () => {
-          const idx = keys.indexOf(store.selected)
-          const next = keys[(idx - 1 + keys.length) % keys.length]
+          const available = keys()
+          const idx = available.indexOf(store.selected)
+          const next = available[(idx - 1 + available.length) % available.length]
           setStore("selected", next)
         },
       },
@@ -777,8 +784,9 @@ function Prompt<const T extends Record<string, string>>(props: {
         desc: "Next permission option",
         group: "Permission",
         cmd: () => {
-          const idx = keys.indexOf(store.selected)
-          const next = keys[(idx + 1) % keys.length]
+          const available = keys()
+          const idx = available.indexOf(store.selected)
+          const next = available[(idx + 1) % available.length]
           setStore("selected", next)
         },
       },
@@ -787,8 +795,9 @@ function Prompt<const T extends Record<string, string>>(props: {
         desc: "Next permission option",
         group: "Permission",
         cmd: () => {
-          const idx = keys.indexOf(store.selected)
-          const next = keys[(idx + 1) % keys.length]
+          const available = keys()
+          const idx = available.indexOf(store.selected)
+          const next = available[(idx + 1) % available.length]
           setStore("selected", next)
         },
       },
@@ -862,7 +871,7 @@ function Prompt<const T extends Record<string, string>>(props: {
         alignItems={narrow() ? "flex-start" : "center"}
       >
         <box flexDirection="row" gap={1} flexShrink={0}>
-          <For each={keys}>
+          <For each={keys()}>
             {(option) => (
               <box
                 paddingLeft={1}
