@@ -95,6 +95,8 @@ const layer = Layer.effect(
       const { approved, pending } = yield* InstanceState.get(state)
       const { ruleset, ...request } = input
       let needsAsk = false
+      // Patterns allowed only by the human's own "always" answers.
+      let humanApproved = request.patterns.length > 0
 
       for (const pattern of request.patterns) {
         const configured = evaluate(request.permission, pattern, ruleset)
@@ -111,9 +113,17 @@ const layer = Layer.effect(
             ruleset: ruleset.filter((rule) => Wildcard.match(request.permission, rule.permission)),
           })
         }
-        if (rule.action === "allow") continue
+        if (rule.action === "allow") {
+          if (configured.action === "allow") humanApproved = false
+          continue
+        }
+        humanApproved = false
         needsAsk = true
       }
+      // The human answered "always" for exactly these patterns in this
+      // instance; a reviewer turning that back into a prompt made "always"
+      // meaningless. Configured denies were already enforced above.
+      if (humanApproved) return
 
       const id = request.id ?? PermissionV1.ID.ascending()
       // The reviewer may replace the effective decision. It sees the id the real

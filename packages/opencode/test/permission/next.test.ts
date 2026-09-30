@@ -812,6 +812,40 @@ it.instance(
 )
 
 it.instance(
+  "ask - a human's always answer is not overridden by the reviewer",
+  () =>
+    Effect.gen(function* () {
+      const permission = yield* Permission.Service
+      let reviews = 0
+      yield* permission.setReviewer((_input, output) =>
+        Effect.sync(() => {
+          reviews++
+          output.status = "ask"
+        }),
+      )
+      const request = {
+        sessionID: SessionID.make("session_test"),
+        permission: "external_directory",
+        patterns: ["/data/example/bin/*"],
+        metadata: {},
+        always: ["/data/example/bin/*"],
+        ruleset: [],
+      }
+      const first = yield* ask({ ...request, id: PermissionV1.ID.make("per_always_first") }).pipe(Effect.forkScoped)
+      const [pending] = yield* waitForPending(1)
+      yield* reply({ requestID: pending.id, reply: "always", origin: "human" })
+      yield* Fiber.join(first)
+      expect(reviews).toBe(1)
+
+      // The same pattern again completes without a prompt or another review.
+      yield* ask({ ...request, id: PermissionV1.ID.make("per_always_second") })
+      expect(reviews).toBe(1)
+      expect(yield* permission.list()).toHaveLength(0)
+    }),
+  { git: true },
+)
+
+it.instance(
   "reply - records per-command human correction",
   () =>
     Effect.gen(function* () {
