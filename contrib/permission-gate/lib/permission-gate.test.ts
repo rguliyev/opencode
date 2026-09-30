@@ -1656,7 +1656,7 @@ test("configured OpenCode the final reviewer resolves Jev escalations with trust
       expect(input.system).toContain("last automatic reviewer")
       expect(input.system).toContain("a shell command, read, or fetch never launches a subagent")
       expect(input.system).toContain("An existing E2B sandbox identified by direct human messages")
-      expect(input.system).toContain("continues the explicit testing instruction")
+      expect(input.system).toContain("continues the testing instruction")
       expect(input.system).toContain("Ask if the sandbox identity is not corroborated by direct human messages")
       expect(input.system).toContain("the remote program's effects are unknown")
       expect(input.system).toContain("independently judged this exact action or command to be read-only in effect")
