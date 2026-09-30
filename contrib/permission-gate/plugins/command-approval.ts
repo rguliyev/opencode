@@ -161,6 +161,13 @@ const localGitRolePolicy =
 // A GET to GitHub or another API was read as a forbidden "download".
 const readOnlyRolePolicy =
   "Read-only inspection only; no edits, builds, tests, delegation, state changes, or downloading and running code. Read-only queries to remote services, such as GET requests, gh pr view/diff/list, gh run view, and gh api GET calls, are allowed inspection. Saving read-only output to scratch files directly under /tmp or /data/rguliyev/tmp/opencode (outside worktrees) is allowed."
+// The config tree is root-owned and immutable. A model may still request a
+// privileged shell command to change it, so formerly denied references must
+// always reach the human rather than becoming an automatic model approval.
+const protectedConfigReference = (value: string) =>
+  /(?:^|[\/~])\.opencode(?:[\/\s]|$)|\/\.config\/opencode(?:\/|$)|\b(?:opencode\.jsonc|command-approval\.ts)\b/i.test(
+    value,
+  )
 const orchestratorDelegationPolicy =
   "Delegating the human's current task to known subagents (explore, researcher, reviewer, deep-reviewer, implementer, deep-implementer), including in the background, is this role's ordinary work and needs no separate human instruction; each subagent's later tool actions receive separate permission checks."
 const configuredExternalRoot = "/data/rguliyev/tmp/opencode"
@@ -1786,6 +1793,7 @@ const plainReasons: [RegExp, string][] = [
   [/^token-read:/, "It calls a Google API with your gcloud login."],
   [/^(?:sensitive file or search target|sensitive matched path)/, "It touches a file whose name suggests secrets or personal data."],
   [/^human-only policy or data change may apply/, "It edits a security, permission, or data-migration file outside a dedicated worktree."],
+  [/^protected OpenCode configuration/, "It touches the protected OpenCode configuration; only you can approve this."],
   [/^referenced shell script loads another file/, "It runs a script that loads another file the gate cannot inspect."],
   [/^no script evidence: script in a dedicated worktree sources/, "It runs a worktree script that sources a file generated at run time, which the gate cannot read in advance."],
   [/^no script evidence/, "It runs a script the gate could not read."],
@@ -2927,6 +2935,12 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
     // Keep the reason through final review so neither Jev nor Gemini can
     // auto-approve a read-only agent's mutation.
     if (roleRestricted) reasons.push("read-only agent requested a non-read-only action")
+    if (
+      (input.permission === "edit" &&
+        [...patterns, metadata.filepath].some((value) => typeof value === "string" && protectedConfigReference(value))) ||
+      (input.permission === "tool_call" && protectedConfigReference(raw))
+    )
+      reasons.push("protected OpenCode configuration")
     // Only high-precision detections force a human: known token formats,
     // keys, JWTs, URL passwords, auth headers, and credential flags. A broad
     // `secret = "..."` assignment is still hidden from reviewers, but Terraform
@@ -3519,6 +3533,8 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
               }
 
           const reasons: string[] = []
+          if (protectedConfigReference(command) || inspection.scripts.some((script) => protectedConfigReference(script.content)))
+            reasons.push("protected OpenCode configuration")
           if (sensitiveFullCommand) reasons.push("credential-like literal in full Bash call")
           if (redact(command) !== command || containsCredentialLiteral(command))
             reasons.push("credential-like literal in command")

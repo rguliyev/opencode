@@ -2679,6 +2679,7 @@ test("configured OpenCode the final reviewer resolves Jev escalations with trust
       "git push origin HEAD",
       "git push",
       "gh pr merge 12",
+      "sudo chattr -i /data/rguliyev/.opencode",
     ])
       expect(await shell(command)).toBe("ask")
     finalReviewContent = JSON.stringify({ choice: "ask", reason: "No push was requested." })
@@ -2767,6 +2768,20 @@ test("configured OpenCode the final reviewer resolves Jev escalations with trust
     expect(seen.slice(beforeResearcherEdit)).toEqual(["jev", "final_review"])
     expect((finalReviewState?.context as { local_rules?: string[] })?.local_rules).toContain(
       "read-only agent requested a non-read-only action",
+    )
+    const protectedEdit = { status: "allow" }
+    await hooks["permission.ask"](
+      {
+        permission: "edit",
+        sessionID: "ses_final_review_test",
+        patterns: ["/data/rguliyev/.opencode/opencode.jsonc"],
+        metadata: { filepath: "/data/rguliyev/.opencode/opencode.jsonc", diff: "+note" },
+      },
+      protectedEdit,
+    )
+    expect(protectedEdit.status).toBe("ask")
+    expect((finalReviewState?.context as { local_rules?: string[] })?.local_rules).toContain(
+      "protected OpenCode configuration",
     )
   } finally {
     globalThis.fetch = previousFetch
