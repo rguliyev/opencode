@@ -39,6 +39,7 @@ import {
   reconnectRetryable,
   touchPending,
 } from "./reconnect-state"
+import { partForDisplay } from "./part-display"
 
 const emptyConsoleState: ConsoleState = {
   consoleManagedProviders: [],
@@ -272,7 +273,8 @@ export const {
         touchPending(touchedPermissions, event.properties.sessionID, event.properties.id)
       if (event.type === "permission.replied")
         touchPending(touchedPermissions, event.properties.sessionID, event.properties.requestID)
-      if (event.type === "question.asked") touchPending(touchedQuestions, event.properties.sessionID, event.properties.id)
+      if (event.type === "question.asked")
+        touchPending(touchedQuestions, event.properties.sessionID, event.properties.id)
       if (event.type === "question.replied" || event.type === "question.rejected")
         touchPending(touchedQuestions, event.properties.sessionID, event.properties.requestID)
       if (reconnectEpoch > 0) {
@@ -535,21 +537,22 @@ export const {
         }
         case "message.part.updated": {
           touchPart(event.properties.part.sessionID, event.properties.part.id)
-          const parts = store.part[event.properties.part.messageID]
+          const part = partForDisplay(event.properties.part)
+          const parts = store.part[part.messageID]
           if (!parts) {
-            setStore("part", event.properties.part.messageID, [event.properties.part])
+            setStore("part", part.messageID, [part])
             break
           }
-          const result = search(parts, event.properties.part.id, (part) => part.id)
+          const result = search(parts, part.id, (item) => item.id)
           if (result.found) {
-            setStore("part", event.properties.part.messageID, result.index, reconcile(event.properties.part))
+            setStore("part", part.messageID, result.index, reconcile(part))
             break
           }
           setStore(
             "part",
-            event.properties.part.messageID,
+            part.messageID,
             produce((draft) => {
-              draft.splice(result.index, 0, event.properties.part)
+              draft.splice(result.index, 0, part)
             }),
           )
           break
@@ -814,7 +817,7 @@ export const {
                     ) {
                       return [current]
                     }
-                    return [part]
+                    return [partForDisplay(part)]
                   })
                   parts.push(
                     ...currentParts.filter(

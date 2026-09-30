@@ -69,6 +69,7 @@ async function mount(
   total = commands,
   offset = 0,
   executed = total,
+  permissionRequest?: PermissionRequest,
 ) {
   const tmp = await tmpdir()
   const state = path.join(tmp.path, "state")
@@ -101,7 +102,9 @@ async function mount(
                   <ProjectProvider>
                     <SyncContext.Provider value={{ data: { part: {} } } as ReturnType<typeof useSync>}>
                       <LocationProvider>
-                        <PermissionPrompt request={request(reviewed, child, commands, total, offset, executed)} />
+                        <PermissionPrompt
+                          request={permissionRequest ?? request(reviewed, child, commands, total, offset, executed)}
+                        />
                       </LocationProvider>
                     </SyncContext.Provider>
                   </ProjectProvider>
@@ -125,6 +128,26 @@ async function mount(
     },
   }
 }
+
+test("large deletion permission remains keyboard-responsive without rendering the full diff", async () => {
+  const setup = await mount(false, false, 110, 1, 1, 0, 1, {
+    id: "per_test",
+    sessionID: "ses_parent",
+    permission: "edit",
+    patterns: ["generated.js"],
+    always: ["*"],
+    metadata: { filepath: "generated.js", diff: "-generated content\n".repeat(18_840) },
+  } as PermissionRequest)
+  try {
+    await waitFor(setup.app, "Large diff preview omitted")
+    expect(setup.app.captureCharFrame()).toContain("Review the full patch")
+    setup.app.mockInput.pressEnter()
+    await waitForReply(setup.app, setup.replies)
+    expect(setup.replies).toEqual([expect.objectContaining({ reply: "once" })])
+  } finally {
+    await setup.cleanup()
+  }
+})
 
 for (const reviewed of [false, true]) {
   for (const child of [false, true]) {

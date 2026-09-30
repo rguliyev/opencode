@@ -15,6 +15,8 @@ import { FileSystem } from "@opencode-ai/core/filesystem"
 import { Format } from "../format"
 import * as Bom from "@/util/bom"
 
+const MAX_RESULT_DIFF_CHARACTERS = 128_000
+
 export const Parameters = Schema.Struct({
   patchText: Schema.String.annotate({ description: "The full patch text that describes all changes to be made" }),
 })
@@ -295,7 +297,10 @@ export const ApplyPatchTool = Tool.define(
       return {
         title: output,
         metadata: {
-          diff: totalDiff,
+          // The complete per-file patches remain in files. Avoid persisting a
+          // second copy of a large combined diff in every session message.
+          diff: totalDiff.length > MAX_RESULT_DIFF_CHARACTERS ? "" : totalDiff,
+          ...(totalDiff.length > MAX_RESULT_DIFF_CHARACTERS ? { diffOmitted: true } : {}),
           files,
           diagnostics,
         },

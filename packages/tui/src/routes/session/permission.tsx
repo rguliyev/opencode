@@ -16,6 +16,7 @@ import { getScrollAcceleration } from "../../util/scroll"
 import { useTuiConfig } from "../../config"
 import { OPENCODE_BASE_MODE, useBindings, useCommandShortcut } from "../../keymap"
 import { usePathFormatter } from "../../context/path-format"
+import { oversizedDiff } from "../../util/diff-preview"
 
 type PermissionStage = "permission" | "always" | "correct"
 type CommandFeedback = { index: number; digest: string; decision: "allow" | "reject" }
@@ -36,6 +37,7 @@ function EditBody(props: { request: PermissionRequest }) {
     const value = props.request.metadata?.diff
     return typeof value === "string" ? value : ""
   })
+  const omitted = createMemo(() => oversizedDiff(diff()))
 
   const view = createMemo(() => {
     const diffStyle = config.diff_style
@@ -48,7 +50,7 @@ function EditBody(props: { request: PermissionRequest }) {
 
   return (
     <box flexDirection="column" gap={1}>
-      <Show when={diff()}>
+      <Show when={diff() && !omitted()}>
         <scrollbox
           height="100%"
           scrollAcceleration={scrollAcceleration()}
@@ -79,6 +81,13 @@ function EditBody(props: { request: PermissionRequest }) {
             removedLineNumberBg={theme.diffRemovedLineNumberBg}
           />
         </scrollbox>
+      </Show>
+      <Show when={omitted()}>
+        <box paddingLeft={1} gap={1} flexDirection="column">
+          <text fg={theme.warning}>Large diff preview omitted ({diff().length.toLocaleString()} characters).</text>
+          <text fg={theme.textMuted}>Review the full patch outside this TUI before allowing.</text>
+          <text fg={theme.textMuted}>{filepath()}</text>
+        </box>
       </Show>
       <Show when={!diff()}>
         <box paddingLeft={1}>

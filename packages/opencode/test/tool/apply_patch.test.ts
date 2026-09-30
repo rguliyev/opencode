@@ -204,6 +204,24 @@ describe("tool.apply_patch freeform", () => {
     { git: true },
   )
 
+  it.instance("keeps a large deletion in permission review without duplicating it in the result", () =>
+    Effect.gen(function* () {
+      const test = yield* TestInstance
+      const { ctx, calls } = makeCtx()
+      const target = path.join(test.directory, "generated.js")
+      yield* writeText(target, "generated content\n".repeat(18_840))
+
+      const result = yield* execute({ patchText: "*** Begin Patch\n*** Delete File: generated.js\n*** End Patch" }, ctx)
+
+      expect(calls[0].metadata.diff.length).toBeGreaterThan(128_000)
+      expect(calls[0].metadata.files[0].patch).toContain("-generated content")
+      expect(result.metadata.diff).toBe("")
+      expect(result.metadata.diffOmitted).toBe(true)
+      expect(result.metadata.files[0].patch).toBe(calls[0].metadata.files[0].patch)
+      yield* expectReadFailure(target)
+    }),
+  )
+
   it.instance("applies multiple hunks to one file", () =>
     Effect.gen(function* () {
       const test = yield* TestInstance

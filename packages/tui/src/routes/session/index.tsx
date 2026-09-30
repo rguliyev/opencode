@@ -56,6 +56,7 @@ import { DialogSessionRename } from "../../component/dialog-session-rename"
 import { Sidebar } from "./sidebar"
 import { SubagentFooter } from "./subagent-footer.tsx"
 import { filetype } from "../../util/filetype"
+import { oversizedDiff } from "../../util/diff-preview"
 import parsers from "../../parsers-config"
 import { errorMessage } from "../../util/error"
 import { Toast, useToast } from "../../ui/toast"
@@ -2418,25 +2419,32 @@ function Edit(props: ToolProps) {
       <Match when={stringValue(props.metadata.diff) !== undefined}>
         <BlockTool title={"← Edit " + pathFormatter.format(stringValue(props.input.filePath))} part={props.part}>
           <box paddingLeft={1}>
-            <diff
-              diff={diffContent()}
-              view={view()}
-              filetype={ft()}
-              syntaxStyle={syntax()}
-              showLineNumbers={true}
-              width="100%"
-              wrapMode={ctx.diffWrapMode()}
-              fg={theme.text}
-              addedBg={theme.diffAddedBg}
-              removedBg={theme.diffRemovedBg}
-              contextBg={theme.diffContextBg}
-              addedSignColor={theme.diffHighlightAdded}
-              removedSignColor={theme.diffHighlightRemoved}
-              lineNumberFg={theme.diffLineNumber}
-              lineNumberBg={theme.diffContextBg}
-              addedLineNumberBg={theme.diffAddedLineNumberBg}
-              removedLineNumberBg={theme.diffRemovedLineNumberBg}
-            />
+            <Show when={oversizedDiff(diffContent())}>
+              <text fg={theme.textMuted}>
+                Large diff preview omitted ({diffContent().length.toLocaleString()} characters).
+              </text>
+            </Show>
+            <Show when={!oversizedDiff(diffContent())}>
+              <diff
+                diff={diffContent()}
+                view={view()}
+                filetype={ft()}
+                syntaxStyle={syntax()}
+                showLineNumbers={true}
+                width="100%"
+                wrapMode={ctx.diffWrapMode()}
+                fg={theme.text}
+                addedBg={theme.diffAddedBg}
+                removedBg={theme.diffRemovedBg}
+                contextBg={theme.diffContextBg}
+                addedSignColor={theme.diffHighlightAdded}
+                removedSignColor={theme.diffHighlightRemoved}
+                lineNumberFg={theme.diffLineNumber}
+                lineNumberBg={theme.diffContextBg}
+                addedLineNumberBg={theme.diffAddedLineNumberBg}
+                removedLineNumberBg={theme.diffRemovedLineNumberBg}
+              />
+            </Show>
           </box>
           <Diagnostics diagnostics={props.metadata.diagnostics} filePath={stringValue(props.input.filePath) ?? ""} />
         </BlockTool>
@@ -2466,25 +2474,30 @@ function ApplyPatch(props: ToolProps) {
   function Diff(p: { diff: string; filePath: string }) {
     return (
       <box paddingLeft={1}>
-        <diff
-          diff={p.diff}
-          view={view()}
-          filetype={filetype(p.filePath)}
-          syntaxStyle={syntax()}
-          showLineNumbers={true}
-          width="100%"
-          wrapMode={ctx.diffWrapMode()}
-          fg={theme.text}
-          addedBg={theme.diffAddedBg}
-          removedBg={theme.diffRemovedBg}
-          contextBg={theme.diffContextBg}
-          addedSignColor={theme.diffHighlightAdded}
-          removedSignColor={theme.diffHighlightRemoved}
-          lineNumberFg={theme.diffLineNumber}
-          lineNumberBg={theme.diffContextBg}
-          addedLineNumberBg={theme.diffAddedLineNumberBg}
-          removedLineNumberBg={theme.diffRemovedLineNumberBg}
-        />
+        <Show when={oversizedDiff(p.diff)}>
+          <text fg={theme.textMuted}>Large diff preview omitted ({p.diff.length.toLocaleString()} characters).</text>
+        </Show>
+        <Show when={!oversizedDiff(p.diff)}>
+          <diff
+            diff={p.diff}
+            view={view()}
+            filetype={filetype(p.filePath)}
+            syntaxStyle={syntax()}
+            showLineNumbers={true}
+            width="100%"
+            wrapMode={ctx.diffWrapMode()}
+            fg={theme.text}
+            addedBg={theme.diffAddedBg}
+            removedBg={theme.diffRemovedBg}
+            contextBg={theme.diffContextBg}
+            addedSignColor={theme.diffHighlightAdded}
+            removedSignColor={theme.diffHighlightRemoved}
+            lineNumberFg={theme.diffLineNumber}
+            lineNumberBg={theme.diffContextBg}
+            addedLineNumberBg={theme.diffAddedLineNumberBg}
+            removedLineNumberBg={theme.diffRemovedLineNumberBg}
+          />
+        </Show>
       </box>
     )
   }
