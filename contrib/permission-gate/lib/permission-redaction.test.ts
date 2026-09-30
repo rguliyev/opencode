@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs"
+import path from "node:path"
 import { expect, test } from "bun:test"
 import { sanitizeReviewText, sanitizeReviewValue } from "./permission-redaction"
 
@@ -167,4 +169,13 @@ test("prose after a secret-like key and backticked IAM members are not credentia
   ])
     expect(sanitizeReviewText(line).value).toBe(line)
   expect(sanitizeReviewText("token: " + "abcDEF123456").value).toContain("[REDACTED:CREDENTIAL]")
+})
+
+test("function calls and template placeholders are not credential values", () => {
+  for (const line of ["    token = subprocess.run(", 'f"--secret={SECRETS[host]}"', "password = getpass.getpass()"])
+    expect(sanitizeReviewText(line).value).toBe(line)
+  // The shipped Grafana helper handles its token only in code.
+  const helper = readFileSync(path.join(import.meta.dir, "../bin/grafana-query"), "utf8")
+  expect(sanitizeReviewText(helper).kinds).toEqual([])
+  expect(sanitizeReviewText("token = " + "abcDEF123456").value).toContain("[REDACTED:CREDENTIAL]")
 })

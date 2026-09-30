@@ -459,7 +459,9 @@ function containsCredentialLiteralBase(command: string) {
     /["'](?:api_?key|access_?token|auth_?token|password|passwd|secret|client_?secret|private_?key)["']\s*:\s*["'](?!(?:[a-z]+[-_])*(?:fake|test|dummy|example|placeholder|sample|mock|changeme)(?:[-_][a-z]+)*["'])[^"']{8,}["']/i.test(
       command,
     ) ||
-    /--(?:api[-_]?key|access[-_]?token|auth[-_]?token|oauth2[-_]?bearer|password|passwd|secret|client[-_]?secret|private[-_]?key|user|userpwd)(?:=|\s+)["']?[^\s'";|]{8,}/i.test(
+    // A value that is a placeholder or expansion ({SECRETS[host]}, $VAR,
+    // $(cmd)) names where the secret comes from; it is not the secret.
+    /--(?:api[-_]?key|access[-_]?token|auth[-_]?token|oauth2[-_]?bearer|password|passwd|secret|client[-_]?secret|private[-_]?key|user|userpwd)(?:=|\s+)["']?(?![{$(])[^\s'";|]{8,}/i.test(
       command,
     ) ||
     /\bcurl\b[^\n;|&]*\s-u\s+["']?[^\s'";|]{3,}:[^\s'";|]{3,}/i.test(command) ||

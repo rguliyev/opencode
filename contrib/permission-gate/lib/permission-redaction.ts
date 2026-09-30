@@ -9,8 +9,10 @@ const marker = (kind: string) => `[REDACTED:${kind}]`
 const markerPattern = /\[REDACTED:[A-Z_]+\]/g
 // Values that name where a secret comes from rather than containing it,
 // including Terraform references such as data.google_secret_manager_*.
+// A function call (`token = subprocess.run(`) or a template placeholder
+// (`f"--secret={SECRETS[host]}"`, `{token}`) is code, not a literal value.
 const reference =
-  /^(?:\$|process\.env\b|os\.environ\b|os\.getenv\b|getenv\(|env\(|\[REDACTED:|(?:data|var|local|module|dependency|include|each|self)\.[A-Za-z_])/i
+  /^(?:\$|process\.env\b|os\.environ\b|os\.getenv\b|getenv\(|env\(|\[REDACTED:|(?:data|var|local|module|dependency|include|each|self)\.[A-Za-z_]|[A-Za-z_][A-Za-z0-9_.]*\(|\{[A-Za-z_])/i
 
 // tokenFile: /var/run/secrets/.../token names where a credential is read
 // from; the path is not the credential.
