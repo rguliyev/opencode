@@ -614,7 +614,22 @@ function segmentRequiresHumanOperation(raw: string) {
 // `if grep -Eq 'secondary|mkfs.xfs' "$manifest"; then exit 1; fi` in a test
 // is a search, while a bare `mkfs.xfs /dev/sdb` line still stops.
 function scriptRequiresHumanOperation(content: string) {
-  return splitSegments(content).some(segmentRequiresHumanOperation)
+  // `tmp=$(mktemp -d ...)` ... `trap 'rm -rf "$tmp"' EXIT` removes only the
+  // directory this script just created; that cleanup is not a human-only
+  // delete. Any other rm -rf target is still checked.
+  const ownTemp = new Set(
+    [...content.matchAll(/(?:^|[\s;&(])([A-Za-z_][A-Za-z0-9_]*)=["']?\$\(mktemp\s+-d\b[^)\n]*\)["']?/g)]
+      .map((match) => match[1])
+      // Only a variable assigned once, by mktemp; a later reassignment could
+      // point it anywhere.
+      .filter((name) => (content.match(new RegExp(`(?:^|[\\s;&(])(?:export\\s+|local\\s+|readonly\\s+)?${name}=`, "g")) ?? []).length === 1),
+  )
+  const checked = ownTemp.size
+    ? content.replace(/\brm\s+-(?:rf|fr|r)\s+"?\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?"?(?=[\s;'"&|)]|$)/g, (found, name) =>
+        ownTemp.has(name) ? "true" : found,
+      )
+    : content
+  return splitSegments(checked).some(segmentRequiresHumanOperation)
 }
 
 function infraTargetClass(command: string, workdir: string): "local-dev" | "production" | undefined {

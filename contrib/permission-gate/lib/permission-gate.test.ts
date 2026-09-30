@@ -1464,6 +1464,21 @@ test("shell segments get module evidence and self-contained segments are judged 
     expect(await runScript("render-test.sh")).toBe("allow")
     delete process.env.OPENCODE_GATE_WORKTREE_ROOT
 
+    // A script removing the temp directory it created is cleanup; removing
+    // anything else, or a reassigned variable, is not.
+    writeFileSync(
+      path.join(directory, "temp-cleanup.sh"),
+      '#!/usr/bin/env bash\ntmp=$(mktemp -d "${TMPDIR:-/tmp}/t.XXXXXX")\ntrap \'rm -rf "$tmp"\' EXIT\necho ok\n',
+    )
+    writeFileSync(
+      path.join(directory, "temp-reassigned.sh"),
+      '#!/usr/bin/env bash\ntmp=$(mktemp -d)\ntmp=/data/rguliyev/src\nrm -rf "$tmp"\n',
+    )
+    writeFileSync(path.join(directory, "other-delete.sh"), '#!/usr/bin/env bash\nrm -rf "$HOME/work"\n')
+    expect(await runScript("temp-cleanup.sh")).toBe("allow")
+    expect(await runScript("temp-reassigned.sh")).toBe("ask")
+    expect(await runScript("other-delete.sh")).toBe("ask")
+
     // A script that searches for "mkfs" is a check; one that runs it is not.
     expect(await runScript("grep-check.sh")).toBe("allow")
     expect(await runScript("format.sh")).toBe("ask")
