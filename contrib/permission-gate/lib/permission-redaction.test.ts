@@ -183,5 +183,7 @@ test("function calls and template placeholders are not credential values", () =>
 test("jq field paths after a token-like key are not credentials", () => {
   const line = "jq '{sa:.spec.template.spec.serviceAccountName,automountServiceAccountToken:.spec.template.spec.automountServiceAccountToken}'"
   expect(sanitizeReviewText(line).value).toBe(line)
+  const bracketed = "jq '{tokenVolume:[.spec.template.spec.volumes[]|select(.projected.sources)]}'"
+  expect(sanitizeReviewText(bracketed).value).toBe(bracketed)
   expect(sanitizeReviewText("token: " + ".abcDEF123456").value).toContain("[REDACTED:CREDENTIAL]")
 })

@@ -13,7 +13,7 @@ const markerPattern = /\[REDACTED:[A-Z_]+\]/g
 // (`f"--secret={SECRETS[host]}"`, `{token}`), or a jq/JSON path
 // (`automountServiceAccountToken:.spec.template...`) is code, not a value.
 const reference =
-  /^(?:\$|process\.env\b|os\.environ\b|os\.getenv\b|getenv\(|env\(|\[REDACTED:|(?:data|var|local|module|dependency|include|each|self)\.[A-Za-z_]|[A-Za-z_][A-Za-z0-9_.]*\(|\{[A-Za-z_]|\.[A-Za-z_][A-Za-z0-9_]*(?:\.|\[))/i
+  /^(?:\$|process\.env\b|os\.environ\b|os\.getenv\b|getenv\(|env\(|\[REDACTED:|(?:data|var|local|module|dependency|include|each|self)\.[A-Za-z_]|[A-Za-z_][A-Za-z0-9_.]*\(|\{[A-Za-z_]|[[(]*\.[A-Za-z_][A-Za-z0-9_]*(?:\.|\[))/i
 
 // tokenFile: /var/run/secrets/.../token names where a credential is read
 // from; the path is not the credential.
