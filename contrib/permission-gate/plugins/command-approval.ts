@@ -946,6 +946,20 @@ function grafanaHelperPath() {
   return process.env.OPENCODE_GRAFANA_HELPER ?? path.join(homedir(), ".local/bin/grafana-query")
 }
 
+// The pinned helper is verified by hash and described by command_evidence;
+// inspecting its own source (which fetches a token by design) as an agent
+// script would stop every call.
+function isPinnedGrafanaHelper(file: string) {
+  try {
+    return (
+      realpathSync(file) === realpathSync(grafanaHelperPath()) &&
+      createHash("sha256").update(readFileSync(file)).digest("hex") === grafanaHelperSha256
+    )
+  } catch {
+    return false
+  }
+}
+
 function grafanaHelperEvidence(args: string[]) {
   let installed: string | undefined
   try {
@@ -1105,6 +1119,7 @@ async function inspectScripts(command: string, cwd: string) {
     return { error: "script workdir could not be verified", scripts }
   }
   for (const item of paths) {
+    if (isPinnedGrafanaHelper(item.absolute)) continue
     let file
     try {
       // bunx -> bun, and every version manager, installs tools as symlinks. What

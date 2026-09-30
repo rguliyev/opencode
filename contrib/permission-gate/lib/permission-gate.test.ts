@@ -1419,6 +1419,18 @@ test("shell segments get module evidence and self-contained segments are judged 
     try {
       expect(await grafanaEvidence(helper)).toContain("verified local helper")
       expect(await grafanaEvidence(helper, helper)).toContain("verified local helper")
+      // Calling the pinned helper by path is not blocked by its own source.
+      const helperRun = { status: "ask" }
+      await hooks["permission.ask"](
+        {
+          permission: "bash",
+          sessionID: "ses_go_module",
+          patterns: [`${helper} e2bstg.grafana.net GET /api/health`],
+          metadata: { command: `${helper} e2bstg.grafana.net GET /api/health` },
+        },
+        helperRun,
+      )
+      expect(helperRun.status).toBe("allow")
       expect(await grafanaEvidence(helper, tampered)).toBeUndefined()
       expect(await grafanaEvidence(tampered)).toContain("does not match the gate's pinned version")
     } finally {
