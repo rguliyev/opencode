@@ -1589,7 +1589,9 @@ function finalReviewMayAutoAllowAction(
     pattern.split("/").includes("..")
   )
     return false
-  if (!Array.isArray(matchedPaths) || action.metadata.truncated !== false) return false
+  // A truncated listing shows the agent only the paths checked below; the
+  // names past the limit are never returned, so truncation discloses nothing.
+  if (!Array.isArray(matchedPaths) || typeof action.metadata.truncated !== "boolean") return false
   if (action.metadata.match_count !== matchedPaths.length) return false
   if (
     matchedPaths.some((file) => {

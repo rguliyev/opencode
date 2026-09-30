@@ -2449,9 +2449,17 @@ test("configured OpenCode the final reviewer resolves Jev escalations with trust
     )
     expect(untrustedTool.status).toBe("ask")
 
-    const truncated = { status: "allow" }
+    // A truncated listing returns only the checked paths, so it may be
+    // approved; a missing truncation flag still may not.
+    const truncated = { status: "ask" }
     await hooks["permission.ask"]({ ...request, metadata: { ...request.metadata, truncated: true } }, truncated)
-    expect(truncated.status).toBe("ask")
+    expect(truncated.status).toBe("allow")
+    const unknownTruncation = { status: "allow" }
+    await hooks["permission.ask"](
+      { ...request, metadata: { ...request.metadata, truncated: "unknown" } },
+      unknownTruncation,
+    )
+    expect(unknownTruncation.status).toBe("ask")
 
     const beforeSensitive = seen.length
     const sensitiveMatch = { status: "allow" }
