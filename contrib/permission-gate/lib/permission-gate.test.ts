@@ -1250,6 +1250,11 @@ test("shell segments get module evidence and self-contained segments are judged 
   writeFileSync(path.join(directory, "secret-env.sh"), `export GH_TOKEN=ghp_${"R".repeat(36)}\n`)
   writeFileSync(path.join(directory, "run-secret.sh"), `#!/usr/bin/env bash\nsource ${path.join(directory, "secret-env.sh")}\n`)
   writeFileSync(path.join(directory, "run-dynamic.sh"), '#!/usr/bin/env bash\nsource "$ENV_FILE"\n')
+  writeFileSync(
+    path.join(directory, "grep-check.sh"),
+    "#!/usr/bin/env bash\nif grep -Eq 'secondary-disks|mkfs.xfs|disk_image' \"$1\"; then exit 1; fi\n",
+  )
+  writeFileSync(path.join(directory, "format.sh"), "#!/usr/bin/env bash\nif true; then mkfs.xfs /dev/sdb; fi\n")
   const previousFetch = globalThis.fetch
   const previousStateHome = process.env.XDG_STATE_HOME
   const previousKevSocket = process.env.OPENCODE_KEV_SOCKET
@@ -1410,6 +1415,9 @@ test("shell segments get module evidence and self-contained segments are judged 
     // A syntax check runs nothing, so what the script would load does not matter.
     expect(await runScript("run-dynamic.sh", "-n ")).toBe("allow")
     expect(await runScript("run-dynamic.sh", "-e ")).toBe("ask")
+    // A script that searches for "mkfs" is a check; one that runs it is not.
+    expect(await runScript("grep-check.sh")).toBe("allow")
+    expect(await runScript("format.sh")).toBe("ask")
   } finally {
     globalThis.fetch = previousFetch
     if (previousStateHome === undefined) delete process.env.XDG_STATE_HOME

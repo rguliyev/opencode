@@ -591,8 +591,11 @@ function readOnlyGoogleApiTokenCall(command: string, fullCommand: unknown) {
 // else that can execute its input keep the full check.
 const textOnlyTools = new Set(["grep", "egrep", "fgrep", "rg", "ag", "echo", "printf", "jq", "yq", "wc", "head", "tail"])
 
-function segmentRequiresHumanOperation(segment: string) {
-  if (!textOnlyTools.has(executableName(commandParts(segment).verb))) return requiresHumanOperation(segment)
+function segmentRequiresHumanOperation(raw: string) {
+  // `if grep -q 'mkfs' f; then` runs grep; shell keywords are not the command.
+  const segment = raw.replace(/^(?:(?:if|then|elif|else|while|until|do|!|\{|\()\s+)+/, "")
+  if (!textOnlyTools.has(executableName(commandParts(segment).verb)))
+    return requiresHumanOperation(raw) || requiresHumanOperation(segment)
   // Single-quoted text never expands; double-quoted text can hide $(...) or
   // backticks, so only substitution-free double quotes are blanked.
   return requiresHumanOperation(
@@ -600,6 +603,13 @@ function segmentRequiresHumanOperation(segment: string) {
       quoted.startsWith("'") || !/\$\(|`/.test(quoted) ? '""' : quoted,
     ),
   )
+}
+
+// Scripts are checked segment by segment with the same rule as commands, so
+// `if grep -Eq 'secondary|mkfs.xfs' "$manifest"; then exit 1; fi` in a test
+// is a search, while a bare `mkfs.xfs /dev/sdb` line still stops.
+function scriptRequiresHumanOperation(content: string) {
+  return splitSegments(content).some(segmentRequiresHumanOperation)
 }
 
 function requiresHumanOperation(command: string) {
@@ -3344,7 +3354,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
           const scopes = [gcpScopeReviewMessage(hardChecked, sessions), awsScopeReviewMessage(hardChecked, sessions)]
           for (const script of inspection.scripts) {
             if (requiresHuman(script.content)) reasons.push("script credential or secret access")
-            if (requiresHumanOperation(script.content)) reasons.push("script human-only operation")
+            if (scriptRequiresHumanOperation(script.content)) reasons.push("script human-only operation")
             scopes.push(
               gcpScopeReviewMessage(script.content, sessions),
               awsScopeReviewMessage(script.content, sessions),
