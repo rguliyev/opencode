@@ -5,8 +5,8 @@ Usage:
   google-api-get URL
 
 URL must be https://<service>.googleapis.com/... . The access token comes
-from the shared default gcloud login (`gcloud auth print-access-token`, no
-CLOUDSDK_CONFIG override), is kept in memory, sent only to that host, and
+from the shared OpenCode gcloud login
+(/data/rguliyev/tmp/opencode/gcloud-remote-auth/config), is kept in memory, sent only to that host, and
 never printed, logged, or written. Only GET is performed and redirects are
 not followed. The response body goes to stdout; HTTP errors go to stderr
 with a non-zero exit.
@@ -24,6 +24,7 @@ import urllib.request
 
 HOST = re.compile(r"^https://[a-z0-9-]+(?:\.[a-z0-9-]+)*\.googleapis\.com/[^\s]*$")
 TIMEOUT_SECONDS = 60
+SHARED_CONFIG = "/data/rguliyev/tmp/opencode/gcloud-remote-auth/config"
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -45,7 +46,9 @@ def main() -> None:
     url = sys.argv[1]
     if not HOST.match(url):
         fail("URL must be https://<service>.googleapis.com/...")
-    env = {k: v for k, v in os.environ.items() if k not in ("CLOUDSDK_CONFIG", "CLOUDSDK_AUTH_ACCESS_TOKEN_FILE")}
+    # Always the shared OpenCode login, whatever the caller's environment says.
+    env = {k: v for k, v in os.environ.items() if k != "CLOUDSDK_AUTH_ACCESS_TOKEN_FILE"}
+    env["CLOUDSDK_CONFIG"] = SHARED_CONFIG
     token = subprocess.run(
         ["gcloud", "auth", "print-access-token"], capture_output=True, text=True, timeout=30, env=env
     )

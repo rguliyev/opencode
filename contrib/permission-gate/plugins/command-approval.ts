@@ -980,7 +980,7 @@ function gcloudAuthStatusCheck(command: string) {
 // contrib/permission-gate/bin/google-api-get, installed in ~/.local/bin: a
 // GET to *.googleapis.com with the shared login's token, which it keeps in
 // memory and never prints. Trusted only when the installed file matches.
-const googleApiHelperSha256 = "3cb30a8da52bd91417f07ba697b440817b5fc0b182d13b23b03194623ca55899"
+const googleApiHelperSha256 = "73c41f6c3793a098582ae762353977e0d719d9599c54806671ee6b6216b34eb9"
 const googleApiHelperPath = () =>
   process.env.OPENCODE_GOOGLE_API_HELPER ?? path.join(homedir(), ".local/bin/google-api-get")
 
