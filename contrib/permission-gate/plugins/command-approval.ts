@@ -1534,25 +1534,29 @@ function stringLeaves(value: unknown, depth = 0): string[] {
 // first, then the largest script bodies, and mark what was left out so the
 // reviewer knows the evidence is incomplete.
 const maxReviewStateChars = 120_000
+// Jev rejects dense real text well below that ("max_tokens_exceeded" at
+// ~100 KB of one session's history, fine at ~80 KB), so its state is
+// trimmed the same way to a smaller budget.
+const maxJevStateChars = 70_000
 
-function fitReviewState(state: unknown): unknown {
+function fitReviewState(state: unknown, limit = maxReviewStateChars): unknown {
   const size = (value: unknown) => JSON.stringify(value).length
-  if (!isRecord(state) || size(state) <= maxReviewStateChars) return state
+  if (!isRecord(state) || size(state) <= limit) return state
   const fitted = structuredClone(state)
   const context = isRecord(fitted.context) ? fitted.context : undefined
   const messages = context && Array.isArray(context.human_messages) ? context.human_messages : undefined
   let dropped = 0
-  while (messages && messages.length > 1 && size(fitted) > maxReviewStateChars) {
+  while (messages && messages.length > 1 && size(fitted) > limit) {
     messages.shift()
     dropped++
   }
   if (context && dropped) context.human_messages_omitted = `${dropped} oldest message(s) omitted to fit the review budget`
   const scripts = Array.isArray(fitted.scripts) ? fitted.scripts.filter(isRecord) : []
   for (const script of scripts.toSorted((a, b) => String(b.content ?? "").length - String(a.content ?? "").length)) {
-    if (size(fitted) <= maxReviewStateChars) break
+    if (size(fitted) <= limit) break
     script.content = `[omitted: ${String(script.content ?? "").length} characters exceed the review budget]`
   }
-  return size(fitted) <= maxReviewStateChars ? fitted : { evidence_status: "withheld_by_size_budget" }
+  return size(fitted) <= limit ? fitted : { evidence_status: "withheld_by_size_budget" }
 }
 
 // Jev rejects a request containing a lone UTF-16 surrogate ("Request
@@ -2402,10 +2406,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
     const payload = JSON.stringify(
       wellFormed({
         model: requestedModel,
-        state: {
-          ...reviewState.value,
-          redactions: reviewState.kinds,
-        },
+        state: fitReviewState({ ...reviewState.value, redactions: reviewState.kinds }, maxJevStateChars),
         questions,
       }),
     )

@@ -2738,12 +2738,14 @@ test("a large script with a long human history still fits core's review budget",
     message(`msg_budget_${index}`, "user", `Render and test the chart, step ${index}. ` + "context ".repeat(2_500)),
   )
   let reviewed: Record<string, unknown> | undefined
-  globalThis.fetch = async (input) => {
+  let jevStateChars = 0
+  globalThis.fetch = async (input, init) => {
     const url = String(input)
     if (url.includes("/session/ses_budget/message?")) return Response.json(history)
     if (url.startsWith("http://gate.test/session/"))
       return Response.json({ id: "ses_budget", directory, agent: "implementer", title: "Render chart" })
     if (url === "https://openrouter.ai/api/alpha/decisions") {
+      jevStateChars = JSON.stringify(JSON.parse(String(init?.body)).state).length
       const answers: Record<string, unknown> = {
         verdict: { type: "choice", choice: "deny", confidence: 0.5, probabilities: { allow: 0.4, deny: 0.6 } },
       }
@@ -2766,6 +2768,9 @@ test("a large script with a long human history still fits core's review budget",
     )
     expect(output.status).toBe("allow")
     expect(JSON.stringify(reviewed).length).toBeLessThanOrEqual(128_000)
+    // Jev's own, smaller budget holds too.
+    expect(jevStateChars).toBeGreaterThan(0)
+    expect(jevStateChars).toBeLessThanOrEqual(70_000)
     const context = (reviewed?.context ?? {}) as Record<string, unknown>
     expect(String(context.human_messages_omitted)).toContain("oldest message(s) omitted")
     expect(JSON.stringify(context.human_messages)).toContain("step 3")
