@@ -317,6 +317,7 @@ const killSwitchEnabled = () => {
 // Scripts outside the workdir are read like any other; only non-text or oversized
 // targets (tools on PATH) are skipped. Jev judges those from the command
 // text alone (`bash ./deploy-prod.sh` -> deny 0.99), so this is a note, not a stop.
+const worktreeRoot = () => process.env.OPENCODE_GATE_WORKTREE_ROOT ?? "/data/rguliyev/tmp/opencode/worktrees/"
 const hardInspectionFailures = ["credential-like content", "loads another file"]
 const isHardInspectionFailure = (reason: string) => hardInspectionFailures.some((x) => reason.includes(x))
 
@@ -1079,6 +1080,7 @@ async function inspectScripts(command: string, cwd: string) {
   const scripts: ScriptEvidence[] = []
   const checks: ScriptCheck[] = []
   let total = 0
+  let worktreeNote: string | undefined
   let root: string
   try {
     root = await realpath(cwd)
@@ -1134,11 +1136,21 @@ async function inspectScripts(command: string, cwd: string) {
         }
       }
       const content = contentBytes.toString("utf8")
+      const scriptReal = target
       // A literal absolute source target is inspected like the script itself;
-      // anything dynamic or relative could load unseen code and still stops.
+      // anything dynamic or relative could load unseen code and still stops,
+      // except in a dedicated worktree: a test there that sources a file it
+      // renders from the worktree's own chart is repo code, so the final
+      // reviewer may judge it with the script it can see.
       for (const sourced of shellSources(item.shown, content)) {
         const target = sourced.replace(/^(["'])(.*)\1$/, "$2")
-        if (!path.isAbsolute(target) || /[$`*?[\]{}~"']/.test(target) || path.normalize(target) !== target)
+        const dynamic =
+          !path.isAbsolute(target) || /[$`*?[\]{}~"']/.test(target) || path.normalize(target) !== target
+        if (dynamic && scriptReal.startsWith(worktreeRoot())) {
+          worktreeNote = `script in a dedicated worktree sources a generated or dynamic file the gate could not read (${sourced.slice(0, 120)})`
+          continue
+        }
+        if (dynamic)
           return {
             error: "referenced shell script loads another file",
             scripts: [] as ScriptEvidence[],
@@ -1183,7 +1195,7 @@ async function inspectScripts(command: string, cwd: string) {
       await file?.close()
     }
   }
-  return { scripts, checks }
+  return { scripts, checks, ...(worktreeNote ? { error: worktreeNote } : {}) }
 }
 
 async function scriptsUnchanged(checks: ScriptCheck[]) {
@@ -1642,6 +1654,7 @@ const plainReasons: [RegExp, string][] = [
   [/^(?:sensitive file or search target|sensitive matched path)/, "It touches a file whose name suggests secrets or personal data."],
   [/^human-only policy or data change may apply/, "It edits a security, permission, or data-migration file outside a dedicated worktree."],
   [/^referenced shell script loads another file/, "It runs a script that loads another file the gate cannot inspect."],
+  [/^no script evidence: script in a dedicated worktree sources/, "It runs a worktree script that sources a file generated at run time, which the gate cannot read in advance."],
   [/^no script evidence/, "It runs a script the gate could not read."],
   [/^task continuation lineage unverified/, "It continues a subagent the gate could not confirm belongs to this session."],
   [/^review failed/, "The automatic review failed."],

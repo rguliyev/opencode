@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test"
 import { createHash } from "node:crypto"
 import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
+import { realpath } from "node:fs/promises"
 import { createServer } from "node:net"
 import { homedir, tmpdir } from "node:os"
 import path from "node:path"
@@ -1452,6 +1453,17 @@ test("shell segments get module evidence and self-contained segments are judged 
     // A syntax check runs nothing, so what the script would load does not matter.
     expect(await runScript("run-dynamic.sh", "-n ")).toBe("allow")
     expect(await runScript("run-dynamic.sh", "-e ")).toBe("ask")
+    // A worktree test that sources a file it renders at run time is judged by
+    // the final reviewer with the script it can see; elsewhere it still stops.
+    writeFileSync(
+      path.join(directory, "render-test.sh"),
+      '#!/usr/bin/env bash\ntmp=$(mktemp -d)\nhelm template x charts/x > "$tmp/functions.sh"\nsource "$tmp/functions.sh"\n',
+    )
+    expect(await runScript("render-test.sh")).toBe("ask")
+    process.env.OPENCODE_GATE_WORKTREE_ROOT = (await realpath(directory)) + "/"
+    expect(await runScript("render-test.sh")).toBe("allow")
+    delete process.env.OPENCODE_GATE_WORKTREE_ROOT
+
     // A script that searches for "mkfs" is a check; one that runs it is not.
     expect(await runScript("grep-check.sh")).toBe("allow")
     expect(await runScript("format.sh")).toBe("ask")
