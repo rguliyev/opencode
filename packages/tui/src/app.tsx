@@ -86,6 +86,7 @@ import * as TuiAudio from "./audio"
 import { win32DisableProcessedInput, win32FlushInputBuffer } from "./terminal-win32"
 import { destroyRenderer } from "./util/renderer"
 import { cliErrorMessage, errorFormat } from "./util/error"
+import { createItermPermissionIndicator, hasPendingPermission } from "./terminal-status"
 
 registerOpencodeSpinner()
 
@@ -450,6 +451,20 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
   const [pasteSummaryEnabled, setPasteSummaryEnabled] = createSignal(
     kv.get("paste_summary_enabled", !sync.data.config.experimental?.disable_paste_summary),
   )
+
+  const permissionIndicator = createItermPermissionIndicator({
+    env: { TERM_PROGRAM: process.env.TERM_PROGRAM, TMUX: process.env.TMUX, STY: process.env.STY },
+    isTTY: process.stdout.isTTY,
+    write: (value) => process.stdout.write(value),
+  })
+  createEffect(() => {
+    const current = route.data
+    permissionIndicator.set(
+      current.type === "session" &&
+        hasPendingPermission(current.sessionID, sync.data.session, sync.data.permission),
+    )
+  })
+  onCleanup(() => permissionIndicator.dispose())
 
   // Update terminal window title based on current route and session
   createEffect(() => {
