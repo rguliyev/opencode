@@ -1538,6 +1538,18 @@ function fitReviewState(state: unknown): unknown {
   return size(fitted) <= maxReviewStateChars ? fitted : { evidence_status: "withheld_by_size_budget" }
 }
 
+// Jev rejects a request containing a lone UTF-16 surrogate ("Request
+// contains invalid Unicode text", HTTP 400), which a message cut mid-emoji
+// produces; every review in that session then fell back to the human.
+// Replace lone surrogates with U+FFFD before anything leaves the gate.
+function wellFormed<T>(value: T): T {
+  if (typeof value === "string") return value.toWellFormed() as T
+  if (Array.isArray(value)) return value.map(wellFormed) as T
+  if (value && typeof value === "object")
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, wellFormed(item)])) as T
+  return value
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value)
 }
@@ -2347,14 +2359,16 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
         type: "noul",
         instructions: action ? reviewerActionMutationQuestion : reviewerMutationQuestion,
       }
-    const payload = JSON.stringify({
-      model: requestedModel,
-      state: {
-        ...reviewState.value,
-        redactions: reviewState.kinds,
-      },
-      questions,
-    })
+    const payload = JSON.stringify(
+      wellFormed({
+        model: requestedModel,
+        state: {
+          ...reviewState.value,
+          redactions: reviewState.kinds,
+        },
+        questions,
+      }),
+    )
     let failure = needsReview("OpenRouter review failed or timed out")
     for (let attempt = 0; attempt < 2; attempt++) {
       const controller = new AbortController()
@@ -2467,7 +2481,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
         if (signal.aborted) onAbort()
       })
       const answer = await Promise.race([
-        Promise.resolve().then(() => reviewPermission({ system, state: JSON.stringify(safeState), signal })),
+        Promise.resolve().then(() => reviewPermission({ system, state: JSON.stringify(wellFormed(safeState)), signal })),
         deadline,
       ]).finally(() => {
         if (onAbort) signal.removeEventListener("abort", onAbort)

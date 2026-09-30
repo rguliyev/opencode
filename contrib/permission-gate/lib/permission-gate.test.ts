@@ -2807,3 +2807,61 @@ test("the gate pins the grafana-query helper it ships", () => {
   const helper = readFileSync(path.join(import.meta.dir, "../bin/grafana-query"))
   expect(source).toContain(`const grafanaHelperSha256 = "${createHash("sha256").update(helper).digest("hex")}"`)
 })
+
+test("a message cut mid-emoji does not break the reviewers' requests", async () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "permission-unicode-"))
+  const previousFetch = globalThis.fetch
+  const previousStateHome = process.env.XDG_STATE_HOME
+  const previousKevSocket = process.env.OPENCODE_KEV_SOCKET
+  process.env.XDG_STATE_HOME = "/dev/null"
+  process.env.OPENCODE_KEV_SOCKET = "/dev/null/no-kev-socket"
+  const wellFormedStrings = (value: unknown): boolean =>
+    typeof value === "string"
+      ? value.isWellFormed()
+      : Array.isArray(value)
+        ? value.every(wellFormedStrings)
+        : value && typeof value === "object"
+          ? Object.values(value).every(wellFormedStrings)
+          : true
+  let jevBodyWellFormed: boolean | undefined
+  let reviewStateWellFormed: boolean | undefined
+  globalThis.fetch = async (input, init) => {
+    const url = String(input)
+    if (url.includes("/session/ses_unicode/message?"))
+      return Response.json([message("msg_unicode", "user", "Check the chart " + "😀".slice(0, 1) + " quickly.")])
+    if (url.startsWith("http://gate.test/session/"))
+      return Response.json({ id: "ses_unicode", directory, agent: "implementer", title: "Chart" })
+    if (url === "https://openrouter.ai/api/alpha/decisions") {
+      jevBodyWellFormed = wellFormedStrings(JSON.parse(String(init?.body)))
+      const answers: Record<string, unknown> = {
+        verdict: { type: "choice", choice: "deny", confidence: 0.5, probabilities: { allow: 0.4, deny: 0.6 } },
+      }
+      for (const id of ["secrets", "remote_code", "security_control", "offensive", "shared_state", "system_state"])
+        answers[id] = { type: "noul", noul: 0.01 }
+      return Response.json({ model: "typesafe/jev-1.13", answers })
+    }
+    throw new Error(`Unexpected fetch: ${url}`)
+  }
+  try {
+    const hooks = await gateForTest(directory, "implementer", async (input) => {
+      reviewStateWellFormed = wellFormedStrings(JSON.parse(input.state))
+      return { model: "google/gemini-3.8-flash", choice: "allow", reason: "Local check for the task." }
+    })
+    await hooks.provider.models({ models: {} }, { auth: { type: "api", key: "fake-test-key" } })
+    const output = { status: "ask" }
+    await hooks["permission.ask"](
+      { permission: "bash", sessionID: "ses_unicode", patterns: ["ls charts"], metadata: { command: "ls charts" } },
+      output,
+    )
+    expect(jevBodyWellFormed).toBe(true)
+    expect(reviewStateWellFormed).toBe(true)
+    expect(output.status).toBe("allow")
+  } finally {
+    globalThis.fetch = previousFetch
+    if (previousStateHome === undefined) delete process.env.XDG_STATE_HOME
+    else process.env.XDG_STATE_HOME = previousStateHome
+    if (previousKevSocket === undefined) delete process.env.OPENCODE_KEV_SOCKET
+    else process.env.OPENCODE_KEV_SOCKET = previousKevSocket
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
