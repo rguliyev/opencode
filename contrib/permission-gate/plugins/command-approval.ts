@@ -174,11 +174,13 @@ const configuredExternalRoot = "/data/rguliyev/tmp/opencode"
 const worktreesRoot = path.join(configuredExternalRoot, "worktrees")
 // OpenCode core allows its own truncated tool-output files for every agent;
 // they are this session's already-reviewed outputs, not new external data.
-const toolOutputRoot = path.join(
-  process.env.XDG_DATA_HOME || path.join(homedir(), ".local", "share"),
-  "opencode",
-  "tool-output",
-)
+// With OPENCODE_HOME set, core keeps its data (tool output, auth, database)
+// under $OPENCODE_HOME/data instead of the XDG data directory.
+const opencodeDataDir = () =>
+  process.env.OPENCODE_HOME
+    ? path.join(process.env.OPENCODE_HOME, "data")
+    : path.join(process.env.XDG_DATA_HOME || path.join(homedir(), ".local", "share"), "opencode")
+const toolOutputRoot = () => path.join(opencodeDataDir(), "tool-output")
 const goalPackageDigest = "daf6520e862d601adc423f44249ec913661769401e508c78ccb92ea0259c9da4"
 const goalPackageManifestDigest = "57d32040eb0e0ab2300ca50730719456ae12835b8caf2a03c88a4b97dd2cac94"
 const goalSourceFiles = [
@@ -258,7 +260,7 @@ async function configuredExternalPatternAllowed(pattern: unknown) {
     path.posix.normalize(pattern) !== pattern
   )
     return false
-  const configured = [configuredExternalRoot, toolOutputRoot].find((root) => pattern.startsWith(root + path.sep))
+  const configured = [configuredExternalRoot, toolOutputRoot()].find((root) => pattern.startsWith(root + path.sep))
   if (!configured) return false
   // An agent creating a new directory asks for it before it exists. Resolve
   // the nearest existing ancestor; components that do not exist yet cannot
@@ -936,23 +938,27 @@ function lstatSyncSafe(file: string) {
   }
 }
 
-// contrib/permission-gate/bin/grafana-query, installed in ~/.local/bin. It
+// OpenCode's operational scripts, including the pinned helpers below, live
+// here since the runtime moved under OPENCODE_HOME.
+const opencodeScripts = "/data/rguliyev/opencode/scripts"
+
+// contrib/permission-gate/bin/grafana-query, installed in /data/rguliyev/opencode/scripts. It
 // reads the Grafana instance token itself and never prints it, so a query
 // through it involves no credential handling by the agent. The gate trusts
 // it only when the installed file matches this hash.
 const grafanaHelperSha256 = "c5d5277d4ee3c863e255b2def44cc6d36a22389b32c4544bf15ff4b60a348cff"
 
 function grafanaHelperPath() {
-  return process.env.OPENCODE_GRAFANA_HELPER ?? path.join(homedir(), ".local/bin/grafana-query")
+  return process.env.OPENCODE_GRAFANA_HELPER ?? path.join(opencodeScripts, "grafana-query")
 }
 
 // contrib/permission-gate/bin/gcloud-remote-auth.sh, installed in
-// ~/.local/bin. Its status and verify subcommands only report whether the
+// /data/rguliyev/opencode/scripts. Its status and verify subcommands only report whether the
 // shared login works (tokens go to /dev/null); start, code, and clean still
 // get full review. Trusted only when the installed file matches this hash.
 const gcloudAuthHelperSha256 = "442d040ce55a2d0c12bd8817e4cd7e0e13465536b56405b5bbe03066ca25452e"
 const gcloudAuthHelperPath = () =>
-  process.env.OPENCODE_GCLOUD_AUTH_HELPER ?? path.join(homedir(), ".local/bin/gcloud-remote-auth.sh")
+  process.env.OPENCODE_GCLOUD_AUTH_HELPER ?? path.join(opencodeScripts, "gcloud-remote-auth.sh")
 
 function isPinnedGcloudAuthHelper(file: string) {
   try {
@@ -977,12 +983,12 @@ function gcloudAuthStatusCheck(command: string) {
   )
 }
 
-// contrib/permission-gate/bin/google-api-get, installed in ~/.local/bin: a
+// contrib/permission-gate/bin/google-api-get, installed in /data/rguliyev/opencode/scripts: a
 // GET to *.googleapis.com with the shared login's token, which it keeps in
 // memory and never prints. Trusted only when the installed file matches.
 const googleApiHelperSha256 = "73c41f6c3793a098582ae762353977e0d719d9599c54806671ee6b6216b34eb9"
 const googleApiHelperPath = () =>
-  process.env.OPENCODE_GOOGLE_API_HELPER ?? path.join(homedir(), ".local/bin/google-api-get")
+  process.env.OPENCODE_GOOGLE_API_HELPER ?? path.join(opencodeScripts, "google-api-get")
 
 function isPinnedGoogleApiHelper(file: string) {
   try {
@@ -1477,7 +1483,7 @@ function targetFacts(target: string, real: string | undefined, workdir: string) 
   const within = (root: string) => resolved === root || resolved.startsWith(root + path.sep)
   return [
     within(workdir) ? "within_workdir" : "outside_workdir",
-    ...(within(toolOutputRoot) ? ["opencode_tool_output"] : []),
+    ...(within(toolOutputRoot()) ? ["opencode_tool_output"] : []),
     ...(within(configuredExternalRoot) ? ["configured_tmp_root"] : []),
     ...(within(homedir()) ? [] : ["outside_home"]),
     ...(real && real !== target ? ["symlink_resolved"] : []),
@@ -1834,8 +1840,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
   function openRouterKey() {
     if (apiKey) return apiKey
     try {
-      const dataHome = process.env.XDG_DATA_HOME ?? path.join(homedir(), ".local", "share")
-      const authFile = process.env.OPENCODE_GATE_AUTH_FILE ?? path.join(dataHome, "opencode", "auth.json")
+      const authFile = process.env.OPENCODE_GATE_AUTH_FILE ?? path.join(opencodeDataDir(), "auth.json")
       const entry = JSON.parse(readFileSync(authFile, "utf8"))?.openrouter
       if (entry?.type === "api" && typeof entry.key === "string" && entry.key) apiKey = entry.key
     } catch {}
@@ -2145,7 +2150,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
   // the same local DB in that case; never open it for writing or send raw
   // attachment data to a reviewer. The server still verifies session lineage.
   async function databaseUserMessages(root: string, feedbackSessions: string[] = []) {
-    const dataDir = path.join(process.env.XDG_DATA_HOME || path.join(homedir(), ".local", "share"), "opencode")
+    const dataDir = opencodeDataDir()
     const configured = process.env.OPENCODE_DB
     if (configured === ":memory:") return { status: "not_found" as const }
     let candidates: string[]

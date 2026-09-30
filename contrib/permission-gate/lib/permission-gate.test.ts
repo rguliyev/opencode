@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { createHash } from "node:crypto"
-import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { realpath } from "node:fs/promises"
 import { createServer } from "node:net"
 import { homedir, tmpdir } from "node:os"
@@ -1624,7 +1624,12 @@ test("configured external-directory allow does not follow a symlink outside the 
 
     // OpenCode core's own allow for its tool-output files is preserved; a
     // neighbouring data directory is not.
-    const dataDir = path.join(process.env.XDG_DATA_HOME || path.join(homedir(), ".local", "share"), "opencode")
+    // A self-contained OpenCode home, so the machine's own layout is not used.
+    const opencodeHome = mkdtempSync("/tmp/permission-opencode-home-")
+    const previousOpencodeHome = process.env.OPENCODE_HOME
+    process.env.OPENCODE_HOME = opencodeHome
+    const dataDir = path.join(opencodeHome, "data")
+    mkdirSync(path.join(dataDir, "tool-output"), { recursive: true })
     const toolOutput = { status: "allow" }
     await hooks["permission.ask"](
       {
@@ -1647,6 +1652,9 @@ test("configured external-directory allow does not follow a symlink outside the 
       dataSibling,
     )
     expect(dataSibling.status).toBe("ask")
+    if (previousOpencodeHome === undefined) delete process.env.OPENCODE_HOME
+    else process.env.OPENCODE_HOME = previousOpencodeHome
+    rmSync(opencodeHome, { recursive: true, force: true })
   } finally {
     globalThis.fetch = previousFetch
     if (previousStateHome === undefined) delete process.env.XDG_STATE_HOME
