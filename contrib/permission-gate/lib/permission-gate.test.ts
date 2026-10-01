@@ -2361,6 +2361,22 @@ test("configured OpenCode the final reviewer resolves Jev escalations with trust
     const grepAllowed = { status: "ask" }
     await hooks["permission.ask"](grepRequest, grepAllowed)
     expect(grepAllowed.status).toBe("allow")
+    // A search pattern naming Google APIs is text to find, not credential access.
+    await hooks["tool.execute.before"](
+      { tool: "grep", sessionID: "ses_final_review_test", callID: "call_final_review_grep_gapi" },
+      { args: { pattern: "monitoring.googleapis.com|KEDA", path: "src", include: "*.sh" } },
+    )
+    const grepGoogleApis = { status: "ask" }
+    await hooks["permission.ask"](
+      {
+        ...grepRequest,
+        patterns: ["monitoring.googleapis.com|KEDA"],
+        metadata: { ...grepRequest.metadata, pattern: "monitoring.googleapis.com|KEDA", include: "*.sh" },
+        tool: { callID: "call_final_review_grep_gapi" },
+      },
+      grepGoogleApis,
+    )
+    expect(grepGoogleApis.status).toBe("allow")
     expect((finalReviewState?.action as { search?: { requested_path?: string } })?.search?.requested_path).toBe(
       path.join(directory, "src"),
     )
