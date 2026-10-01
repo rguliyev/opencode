@@ -2,7 +2,7 @@
 """Read-only Google Cloud API GET that never exposes its token.
 
 Usage:
-  google-api-get URL
+  google-api-get URL [--param NAME=VALUE]...
 
 URL must be https://<service>.googleapis.com/... . The access token comes
 from the shared OpenCode gcloud login
@@ -11,7 +11,11 @@ never printed, logged, or written. Only GET is performed and redirects are
 not followed. The response body goes to stdout; HTTP errors go to stderr
 with a non-zero exit.
 
+Each --param is URL-encoded and appended to the query string, so PromQL or
+Monitoring filters need no hand encoding.
+
 Examples:
+  google-api-get 'https://monitoring.googleapis.com/v1/projects/e2b-staging/location/global/prometheus/api/v1/query' --param 'query=sum(kube_node_info{cluster="e2b-staging"})'
   google-api-get 'https://monitoring.googleapis.com/v3/projects/e2b-staging/timeSeries?filter=...&interval.startTime=...&interval.endTime=...'
   google-api-get 'https://monitoring.googleapis.com/v1/projects/e2b-staging/location/global/prometheus/api/v1/query?query=up'
 """
@@ -20,6 +24,7 @@ import re
 import subprocess
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 
 HOST = re.compile(r"^https://[a-z0-9-]+(?:\.[a-z0-9-]+)*\.googleapis\.com/[^\s]*$")
@@ -40,10 +45,17 @@ def fail(message: str) -> None:
 
 
 def main() -> None:
-    if len(sys.argv) != 2 or sys.argv[1] in ("-h", "--help"):
+    args = sys.argv[1:]
+    if not args or args[0] in ("-h", "--help") or len(args) % 2 != 1:
         print(__doc__.strip(), file=sys.stderr)
         sys.exit(2)
-    url = sys.argv[1]
+    url, params = args[0], []
+    for flag, pair in zip(args[1::2], args[2::2]):
+        if flag != "--param" or "=" not in pair:
+            fail("expected --param NAME=VALUE")
+        params.append(tuple(pair.split("=", 1)))
+    if params:
+        url += ("&" if "?" in url else "?") + urllib.parse.urlencode(params)
     if not HOST.match(url):
         fail("URL must be https://<service>.googleapis.com/...")
     # Always the shared OpenCode login, whatever the caller's environment says.

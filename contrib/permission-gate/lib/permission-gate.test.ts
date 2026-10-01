@@ -1446,9 +1446,8 @@ test("shell segments get module evidence and self-contained segments are judged 
       const apiHelper = path.join(import.meta.dir, "../bin/google-api-get")
       const previousApiHelper = process.env.OPENCODE_GOOGLE_API_HELPER
       process.env.OPENCODE_GOOGLE_API_HELPER = apiHelper
-      const apiGet = async (url: string) => {
+      const apiGet = async (url: string, extra = "", command = `${apiHelper} '${url}'${extra}`) => {
         const output = { status: "ask" }
-        const command = `${apiHelper} '${url}'`
         await hooks["permission.ask"](
           { permission: "bash", sessionID: "ses_go_module", patterns: [command], metadata: { command } },
           output,
@@ -1461,6 +1460,15 @@ test("shell segments get module evidence and self-contained segments are judged 
       expect(staging.status).toBe("allow")
       expect(String(staging.evidence)).toContain("verified local helper")
       expect(String((await apiGet("https://example.invalid/x")).evidence)).toContain("treat it as unknown code")
+      // --param pairs are encoded by the helper, so a plain bash loop needs no Python.
+      const promql = "https://monitoring.googleapis.com/v1/projects/e2b-staging/location/global/prometheus/api/v1/query"
+      const withParam = await apiGet(promql, ` --param 'query=count(kube_node_info{cluster="e2b-staging"})'`)
+      expect(withParam.status).toBe("allow")
+      expect(String(withParam.evidence)).toContain("verified local helper")
+      expect(String((await apiGet(promql, " --data x=1")).evidence)).toContain("treat it as unknown code")
+      expect(String((await apiGet(promql, " --param")).evidence)).toContain("treat it as unknown code")
+      const loop = `for q in 'kube_node_info{cluster="e2b-staging"}' 'up'; do ${apiHelper} '${promql}' --param "query=$q"; done`
+      expect((await apiGet("", "", loop)).status).toBe("allow")
       if (previousApiHelper === undefined) delete process.env.OPENCODE_GOOGLE_API_HELPER
       else process.env.OPENCODE_GOOGLE_API_HELPER = previousApiHelper
 

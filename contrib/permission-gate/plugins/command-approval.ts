@@ -1017,7 +1017,10 @@ function gcloudAuthStatusCheck(command: string) {
 // contrib/permission-gate/bin/google-api-get, installed in /data/rguliyev/opencode/scripts: a
 // GET to *.googleapis.com with the shared login's token, which it keeps in
 // memory and never prints. Trusted only when the installed file matches.
-const googleApiHelperSha256 = "73c41f6c3793a098582ae762353977e0d719d9599c54806671ee6b6216b34eb9"
+const googleApiHelperSha256 = "7080128f21a930fd1b9fe197336d4e52f369afd958ce2a6e2560756aed6b674c"
+// The single-URL release before --param; still trusted so the installed copy
+// keeps working until the new one replaces it.
+const previousGoogleApiHelperSha256 = "73c41f6c3793a098582ae762353977e0d719d9599c54806671ee6b6216b34eb9"
 const googleApiHelperPath = () =>
   process.env.OPENCODE_GOOGLE_API_HELPER ?? path.join(opencodeScripts, "google-api-get")
 
@@ -1025,7 +1028,7 @@ function isPinnedGoogleApiHelper(file: string) {
   try {
     return (
       realpathSync(file) === realpathSync(googleApiHelperPath()) &&
-      createHash("sha256").update(readFileSync(file)).digest("hex") === googleApiHelperSha256
+      [googleApiHelperSha256, previousGoogleApiHelperSha256].includes(createHash("sha256").update(readFileSync(file)).digest("hex"))
     )
   } catch {
     return false
@@ -1064,8 +1067,9 @@ function ghApiEvidence(command: string) {
   if (invokesHelper(parts.verb, "grafana-query", grafanaHelperPath())) return grafanaHelperEvidence(parts.args)
   if (invokesHelper(parts.verb, "google-api-get", googleApiHelperPath()))
     return isPinnedGoogleApiHelper(googleApiHelperPath()) &&
-      parts.args.length === 1 &&
-      /^https:\/\/[a-z0-9-]+(?:\.[a-z0-9-]+)*\.googleapis\.com\//.test(parts.args[0])
+      parts.args.length % 2 === 1 &&
+      /^https:\/\/[a-z0-9-]+(?:\.[a-z0-9-]+)*\.googleapis\.com\//.test(parts.args[0]) &&
+      parts.args.slice(1).every((argument, index) => (index % 2 ? argument.includes("=") : argument === "--param"))
       ? "google-api-get: verified local helper; a read-only GET to a googleapis.com URL with the shared gcloud login's token, which it never prints; it changes nothing"
       : "google-api-get: not the gate's pinned helper or not a googleapis.com URL; treat it as unknown code"
   if (gcloudAuthStatusCheck(command))
