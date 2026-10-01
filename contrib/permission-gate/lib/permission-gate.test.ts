@@ -2073,6 +2073,9 @@ test("configured OpenCode the final reviewer resolves Jev escalations with trust
     }
     expect(await listed("docs/tech-radar/cilium-2026-09-10.md")).toBe("allow")
     expect(await listed("people/jane_1985-03-12.pdf")).toBe("ask")
+    // Feature names in source code are not personal data; data files still are.
+    expect(await listed("pkg/sandbox/health.go")).toBe("allow")
+    expect(await listed("exports/patient_health.csv")).toBe("ask")
     // A built-in read outside the worktrees may reach a helper-script
     // directory; OpenCode's data directory and shell access may not.
     const external = async (tool: string, target: string, callID: string) => {
