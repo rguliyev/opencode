@@ -1467,6 +1467,9 @@ test("shell segments get module evidence and self-contained segments are judged 
       expect(String(withParam.evidence)).toContain("verified local helper")
       expect(String((await apiGet(promql, " --data x=1")).evidence)).toContain("treat it as unknown code")
       expect(String((await apiGet(promql, " --param")).evidence)).toContain("treat it as unknown code")
+      // Multi-line calls with continuations and command substitutions in values.
+      const multiline = `${apiHelper} '${promql}' \\\n  --param 'query=up' \\\n  --param "time=$(date -u +%s)"`
+      expect(String((await apiGet("", "", multiline)).evidence)).toContain("verified local helper")
       const loop = `for q in 'kube_node_info{cluster="e2b-staging"}' 'up'; do ${apiHelper} '${promql}' --param "query=$q"; done`
       expect((await apiGet("", "", loop)).status).toBe("allow")
       if (previousApiHelper === undefined) delete process.env.OPENCODE_GOOGLE_API_HELPER

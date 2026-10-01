@@ -753,13 +753,20 @@ function splitWords(segment: string) {
   let quote = ""
   let escaped = false
   let started = false
+  let startedBeforeEscape = false
   for (const character of segment) {
     if (escaped) {
-      value += character
       escaped = false
+      // Backslash-newline is a line continuation: bash removes both.
+      if (character === "\n") {
+        started = startedBeforeEscape
+        continue
+      }
+      value += character
       started = true
     } else if (character === "\\" && quote !== "'") {
       escaped = true
+      startedBeforeEscape = started
       started = true
     } else if (quote) {
       if (character === quote) quote = ""
