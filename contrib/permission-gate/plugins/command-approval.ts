@@ -531,7 +531,26 @@ function shellSources(file: string, content: string): string[] {
   return [...shell.matchAll(/(?:^|[\s;&|(){}])(?:source|\.)\s+(\S+)/gm)].map((match) => match[1])
 }
 
+// `python3 -c '...'` that only formats text, such as building a
+// googleapis.com URL with urlencode: standard-library text modules only, and
+// no way to run code, open files, reach the network, or read credentials.
+function pythonTextOnly(command: string) {
+  const match = command.match(/^\s*python3?\s+-c\s+'([^']*)'\s*$/)
+  if (!match) return false
+  const code = match[1]
+  const imports = [...code.matchAll(/\b(?:from\s+(\S+)\s+import|import\s+([^;\n]+))/g)].flatMap((m) =>
+    (m[1] ?? m[2]).split(",").map((name) => name.trim().split(/\s+/)[0]),
+  )
+  return (
+    imports.every((name) => ["urllib.parse", "json", "datetime", "time", "math"].includes(name)) &&
+    !/__|\b(?:exec|eval|compile|open|getattr|setattr|globals|locals|vars|input|breakpoint|help)\b|\b(?:os|sys|subprocess|socket|http|requests|importlib|builtins)\b|urllib\.request|google\.(?:auth|cloud|oauth)|CLOUDSDK_|GOOGLE_|GCLOUD_|token|credential|secret/i.test(
+      code.replace(/https:\/\/[a-z0-9.-]+\.googleapis\.com\/[^"'\s]*/g, ""),
+    )
+  )
+}
+
 function requiresHuman(command: string) {
+  if (pythonTextOnly(command)) return false
   return /secretmanager\.googleapis\.com|google\.cloud\.secretmanager|\bgcloud\b[^\n;|&]*\bsecrets\s+versions\s+access\b|\bgcloud\b[^\n;|&]*\bauth\s+(?:print-access-token|application-default\s+print-access-token)\b|authorization[^\n;|&]*bearer|\b(?:python|python3|node|ruby|perl|bash|sh|zsh)\b[^\n]*(?:google\.auth|google\.cloud|googleapis\.com|CLOUDSDK_|GOOGLE_CLOUD_PROJECT|GCLOUD_PROJECT)/i.test(
     command,
   )
@@ -973,12 +992,22 @@ function isPinnedGcloudAuthHelper(file: string) {
   }
 }
 
+// The verb runs a pinned helper: its bare name, its installed path, or any
+// path (such as a ~/.local/bin symlink) that resolves to the installed file.
+function invokesHelper(verb: string, name: string, helperPath: string) {
+  if (verb === name) return true
+  try {
+    return realpathSync(verb.replace(/^~(?=\/)/, homedir())) === realpathSync(helperPath)
+  } catch {
+    return false
+  }
+}
+
 // `gcloud-remote-auth.sh status` / `verify`, and nothing else in the segment.
 function gcloudAuthStatusCheck(command: string) {
   const parts = commandParts(command)
-  const verb = parts.verb.replace(/^~(?=\/)/, homedir())
   return (
-    (verb === gcloudAuthHelperPath() || parts.verb === "gcloud-remote-auth.sh") &&
+    invokesHelper(parts.verb, "gcloud-remote-auth.sh", gcloudAuthHelperPath()) &&
     parts.args.length === 1 &&
     ["status", "verify"].includes(parts.args[0]) &&
     isPinnedGcloudAuthHelper(gcloudAuthHelperPath())
@@ -1032,8 +1061,8 @@ function grafanaHelperEvidence(args: string[]) {
 
 function ghApiEvidence(command: string) {
   const parts = commandParts(command)
-  if (["grafana-query", grafanaHelperPath()].includes(parts.verb)) return grafanaHelperEvidence(parts.args)
-  if (["google-api-get", googleApiHelperPath()].includes(parts.verb.replace(/^~(?=\/)/, homedir())))
+  if (invokesHelper(parts.verb, "grafana-query", grafanaHelperPath())) return grafanaHelperEvidence(parts.args)
+  if (invokesHelper(parts.verb, "google-api-get", googleApiHelperPath()))
     return isPinnedGoogleApiHelper(googleApiHelperPath()) &&
       parts.args.length === 1 &&
       /^https:\/\/[a-z0-9-]+(?:\.[a-z0-9-]+)*\.googleapis\.com\//.test(parts.args[0])

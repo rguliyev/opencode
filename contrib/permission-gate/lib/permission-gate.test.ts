@@ -1419,6 +1419,29 @@ test("shell segments get module evidence and self-contained segments are judged 
     try {
       expect(await grafanaEvidence(helper)).toContain("verified local helper")
       expect(await grafanaEvidence(helper, helper)).toContain("verified local helper")
+      // A symlink to the installed helper (e.g. ~/.local/bin) is the same helper.
+      const linked = path.join(directory, "grafana-link")
+      symlinkSync(helper, linked)
+      expect(await grafanaEvidence(helper, linked)).toContain("verified local helper")
+      // Naming the shared gcloud login the service already uses is not a scope switch.
+      process.env.OPENCODE_GRAFANA_HELPER = helper
+      expect(
+        await shellStatus(`CLOUDSDK_CONFIG=/data/rguliyev/tmp/opencode/gcloud-remote-auth/config ${helper} e2bstg.grafana.net GET /api/datasources`),
+      ).toBe("allow")
+      expect(await shellStatus(`CLOUDSDK_CONFIG=/tmp/other ${helper} e2bstg.grafana.net GET /api/datasources`)).toBe("ask")
+      // Building a googleapis.com URL in Python is text formatting, not credential access.
+      expect(
+        await shellStatus(
+          `python3 -c 'from urllib.parse import urlencode; print("https://monitoring.googleapis.com/v3/projects/e2b-staging/timeSeries?"+urlencode({"filter":"metric.type = \\"x\\"","pageSize":"1000"}))'`,
+        ),
+      ).toBe("allow")
+      for (const code of [
+        `import subprocess; print("https://monitoring.googleapis.com/v3/x")`,
+        `import google.auth; print("https://monitoring.googleapis.com/v3/x")`,
+        `__import__("os"); print("https://monitoring.googleapis.com/v3/x")`,
+        `print(open("/x").read(), "https://monitoring.googleapis.com/v3/x")`,
+      ])
+        expect(await shellStatus(`python3 -c '${code}'`)).toBe("ask")
       // The pinned Google API helper is a read-only GET with a hidden token.
       const apiHelper = path.join(import.meta.dir, "../bin/google-api-get")
       const previousApiHelper = process.env.OPENCODE_GOOGLE_API_HELPER

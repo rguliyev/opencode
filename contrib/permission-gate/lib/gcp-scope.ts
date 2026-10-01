@@ -129,7 +129,12 @@ function hasDynamicScope(command: string) {
   )
 }
 
+// The service already exports this CLOUDSDK_CONFIG; naming it again selects
+// nothing new.
+const sharedGcloudConfig = /\bCLOUDSDK_CONFIG=(["']?)\/data\/rguliyev\/tmp\/opencode\/gcloud-remote-auth\/config\1(?=\s|$)/g
+
 function attemptsScopeSwitch(command: string) {
+  command = command.replace(sharedGcloudConfig, "")
   return (
     hasDynamicScope(command) ||
     /\bCLOUDSDK_(?:ACTIVE_CONFIG_NAME|CONFIG|AUTH_CREDENTIAL_FILE_OVERRIDE)\s*=/.test(command) ||
