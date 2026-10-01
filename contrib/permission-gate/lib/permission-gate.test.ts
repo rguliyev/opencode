@@ -1442,6 +1442,16 @@ test("shell segments get module evidence and self-contained segments are judged 
         `print(open("/x").read(), "https://monitoring.googleapis.com/v3/x")`,
       ])
         expect(await shellStatus(`python3 -c '${code}'`)).toBe("ask")
+      // Interpreter names used as field names are not interpreters.
+      expect(
+        await shellStatus(
+          `jq -c '.[]|{node:.labels["compute.googleapis.com/resource_name"],zone:.resource.labels.zone}' logs.json`,
+        ),
+      ).toBe("allow")
+      expect(await shellStatus(`jq '.items[] | select(.node == "x") | .url' googleapis.com.json`)).toBe("allow")
+      expect(await shellStatus(`node -e 'require("google-auth-library")' https://monitoring.googleapis.com/x`)).toBe("ask")
+      expect(await shellStatus(`/usr/bin/python3 fetch.py https://monitoring.googleapis.com/x`)).toBe("ask")
+      expect(await shellStatus(`echo x | sh -c "curl https://monitoring.googleapis.com/x"`)).toBe("ask")
       // The pinned Google API helper is a read-only GET with a hidden token.
       const apiHelper = path.join(import.meta.dir, "../bin/google-api-get")
       const previousApiHelper = process.env.OPENCODE_GOOGLE_API_HELPER

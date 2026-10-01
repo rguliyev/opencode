@@ -549,9 +549,11 @@ function pythonTextOnly(command: string) {
   )
 }
 
+// An interpreter name counts only as a command word, not as a field name
+// such as jq's `{node: ...}` or `.node`.
 function requiresHuman(command: string) {
   if (pythonTextOnly(command)) return false
-  return /secretmanager\.googleapis\.com|google\.cloud\.secretmanager|\bgcloud\b[^\n;|&]*\bsecrets\s+versions\s+access\b|\bgcloud\b[^\n;|&]*\bauth\s+(?:print-access-token|application-default\s+print-access-token)\b|authorization[^\n;|&]*bearer|\b(?:python|python3|node|ruby|perl|bash|sh|zsh)\b[^\n]*(?:google\.auth|google\.cloud|googleapis\.com|CLOUDSDK_|GOOGLE_CLOUD_PROJECT|GCLOUD_PROJECT)/i.test(
+  return /secretmanager\.googleapis\.com|google\.cloud\.secretmanager|\bgcloud\b[^\n;|&]*\bsecrets\s+versions\s+access\b|\bgcloud\b[^\n;|&]*\bauth\s+(?:print-access-token|application-default\s+print-access-token)\b|authorization[^\n;|&]*bearer|(?<![.\w\[-])(?:python|python3|node|ruby|perl|bash|sh|zsh)(?![\w-])(?![\"']?\s*:)[^\n]*(?:google\.auth|google\.cloud|googleapis\.com|CLOUDSDK_|GOOGLE_CLOUD_PROJECT|GCLOUD_PROJECT)/i.test(
     command,
   )
 }
