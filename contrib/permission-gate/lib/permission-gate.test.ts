@@ -1467,6 +1467,20 @@ test("shell segments get module evidence and self-contained segments are judged 
       expect(String(withParam.evidence)).toContain("verified local helper")
       expect(String((await apiGet(promql, " --data x=1")).evidence)).toContain("treat it as unknown code")
       expect(String((await apiGet(promql, " --param")).evidence)).toContain("treat it as unknown code")
+      // IAM reads are reviewed normally; IAM changes stay human-only.
+      for (const command of [
+        "gcloud iam service-accounts get-iam-policy sa@e2b-dev-rauf-guliyev.iam.gserviceaccount.com --project=e2b-dev-rauf-guliyev --format=json",
+        "gcloud iam service-accounts list --project=e2b-dev-rauf-guliyev",
+        "gcloud iam roles describe roles/monitoring.viewer",
+      ])
+        expect(await shellStatus(command)).toBe("allow")
+      for (const command of [
+        "gcloud iam service-accounts create list --project=e2b-dev-rauf-guliyev",
+        "gcloud iam service-accounts keys create /tmp/k.json --iam-account=sa@e2b-dev-rauf-guliyev.iam.gserviceaccount.com",
+        "gcloud iam service-accounts add-iam-policy-binding sa@e2b-dev-rauf-guliyev.iam.gserviceaccount.com --role=roles/iam.workloadIdentityUser --member=x",
+        "gcloud iam service-accounts get-iam-policy sa; gcloud iam service-accounts delete sa",
+      ])
+        expect(await shellStatus(command)).toBe("ask")
       // Multi-line calls with continuations and command substitutions in values.
       const multiline = `${apiHelper} '${promql}' \\\n  --param 'query=up' \\\n  --param "time=$(date -u +%s)"`
       expect(String((await apiGet("", "", multiline)).evidence)).toContain("verified local helper")
