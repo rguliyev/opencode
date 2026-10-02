@@ -625,9 +625,15 @@ function readOnlyGoogleApiTokenCall(command: string, fullCommand: unknown) {
 // else that can execute its input keep the full check.
 const textOnlyTools = new Set(["grep", "egrep", "fgrep", "rg", "ag", "echo", "printf", "jq", "yq", "wc", "head", "tail"])
 
+// These CLIs print usage and exit on --help without running the operation.
+const helpExitTools = new Set(["gcloud", "kubectl", "gh", "git", "terraform", "terragrunt", "aws", "tailscale"])
+
 function segmentRequiresHumanOperation(raw: string) {
   // `if grep -q 'mkfs' f; then` runs grep; shell keywords are not the command.
   const segment = raw.replace(/^(?:(?:if|then|elif|else|while|until|do|!|\{|\()\s+)+/, "")
+  const parts = commandParts(segment)
+  if (helpExitTools.has(executableName(parts.verb)) && parts.args.includes("--help") && !/\$\(|`/.test(segment))
+    return false
   if (!textOnlyTools.has(executableName(commandParts(segment).verb)))
     return requiresHumanOperation(raw) || requiresHumanOperation(segment)
   // Single-quoted text never expands; double-quoted text can hide $(...) or

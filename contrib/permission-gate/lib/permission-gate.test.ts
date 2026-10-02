@@ -1482,6 +1482,8 @@ test("shell segments get module evidence and self-contained segments are judged 
         "gcloud iam service-accounts get-iam-policy sa@e2b-dev-rauf-guliyev.iam.gserviceaccount.com --project=e2b-dev-rauf-guliyev --format=json",
         "gcloud iam service-accounts list --project=e2b-dev-rauf-guliyev",
         "gcloud iam roles describe roles/monitoring.viewer",
+        "gcloud iam roles update --help",
+        "git push --help",
       ])
         expect(await shellStatus(command)).toBe("allow")
       for (const command of [
@@ -1489,6 +1491,9 @@ test("shell segments get module evidence and self-contained segments are judged 
         "gcloud iam service-accounts keys create /tmp/k.json --iam-account=sa@e2b-dev-rauf-guliyev.iam.gserviceaccount.com",
         "gcloud iam service-accounts add-iam-policy-binding sa@e2b-dev-rauf-guliyev.iam.gserviceaccount.com --role=roles/iam.workloadIdentityUser --member=x",
         "gcloud iam service-accounts get-iam-policy sa; gcloud iam service-accounts delete sa",
+        "gcloud iam roles update --help; gcloud iam roles update r --permissions=x",
+        "gcloud iam roles update r --permissions=$(echo --help)",
+        "gcloud iam roles update r --permissions=x --help=no",
       ])
         expect(await shellStatus(command)).toBe("ask")
       // Multi-line calls with continuations and command substitutions in values.
