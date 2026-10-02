@@ -549,11 +549,13 @@ function pythonTextOnly(command: string) {
   )
 }
 
+// gcloud's stored credentials (ADC file, credentials/access-token databases)
+// and the OAuth token endpoint are credential access however they are read.
 // An interpreter name counts only as a command word, not as a field name
 // such as jq's `{node: ...}` or `.node`.
 function requiresHuman(command: string) {
   if (pythonTextOnly(command)) return false
-  return /secretmanager\.googleapis\.com|google\.cloud\.secretmanager|\bgcloud\b[^\n;|&]*\bsecrets\s+versions\s+access\b|\bgcloud\b[^\n;|&]*\bauth\s+(?:print-access-token|application-default\s+print-access-token)\b|authorization[^\n;|&]*bearer|(?<![.\w\[-])(?:python|python3|node|ruby|perl|bash|sh|zsh)(?![\w-])(?![\"']?\s*:)[^\n]*(?:google\.auth|google\.cloud|googleapis\.com|CLOUDSDK_|GOOGLE_CLOUD_PROJECT|GCLOUD_PROJECT)/i.test(
+  return /secretmanager\.googleapis\.com|google\.cloud\.secretmanager|\bgcloud\b[^\n;|&]*\bsecrets\s+versions\s+access\b|\bgcloud\b[^\n;|&]*\bauth\s+(?:print-access-token|application-default\s+print-access-token)\b|authorization[^\n;|&]*bearer|application_default_credentials\.json|\b(?:credentials|access_tokens)\.db\b|\blegacy_credentials\b|oauth2\.googleapis\.com\/token|accounts\.google\.com\/o\/oauth2\/token|(?<![.\w\[-])(?:python|python3|node|ruby|perl|bash|sh|zsh)(?![\w-])(?![\"']?\s*:)[^\n]*(?:google\.auth|google\.cloud|googleapis\.com|CLOUDSDK_|GOOGLE_CLOUD_PROJECT|GCLOUD_PROJECT)/i.test(
     command,
   )
 }

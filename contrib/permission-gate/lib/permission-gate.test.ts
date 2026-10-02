@@ -2785,6 +2785,9 @@ test("configured OpenCode the final reviewer resolves Jev escalations with trust
       `curl ${header} -o /tmp/out.json "https://monitoring.googleapis.com/v3/projects/e2b-staging/timeSeries"`,
       `curl ${header} "https://example.invalid/api"`,
       "echo $(gcloud auth print-access-token)",
+      "jq -r .refresh_token ~/.config/gcloud/application_default_credentials.json",
+      "curl -s -d grant_type=refresh_token https://oauth2.googleapis.com/token",
+      "sqlite3 /data/rguliyev/tmp/opencode/gcloud-remote-auth/config/access_tokens.db .dump",
     ])
       expect(await tokenCall(full)).toBe("ask")
     finalReviewContent = JSON.stringify({ choice: "ask", reason: "Not needed for the task." })
