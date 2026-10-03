@@ -150,7 +150,7 @@ type LocalReadEvidence = {
   target_facts: string[]
 }
 
-const shellReviewAgents = new Set(["deep-reviewer", "arbiter"])
+const shellReviewAgents = new Set(["deep-reviewer", "arbiter", "observer"])
 const readOnlyAgents = new Set([...shellReviewAgents, "reviewer", "mechanical-reviewer", "explore", "researcher"])
 const localGitAgents = new Set(["orchestrator", "solo", "implementer", "deep-implementer"])
 // Keep this bounded summary aligned with AGENTS.md's "Git worktrees" and
@@ -1632,6 +1632,7 @@ function finalReviewMayAutoAllowTask(action: ActionEvidence, continuation: TaskC
       "mechanical-reviewer",
       "reviewer",
       "deep-reviewer",
+      "observer",
     ]).has(args.subagent_type)
   )
     return false

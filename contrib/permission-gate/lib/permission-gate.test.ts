@@ -1142,19 +1142,22 @@ test("executing read-only agent remains restricted after the session default cha
     throw new Error(`Unexpected fetch: ${url}`)
   }
   try {
-    const hooks = await gateForTest(directory, "deep-reviewer")
-    await hooks.provider.models({ models: {} }, { auth: { type: "api", key: "fake-test-key" } })
-    const output = { status: "allow" }
-    await hooks["permission.ask"](
-      {
-        permission: "edit",
-        sessionID: "ses_reviewer_action_test",
-        patterns: ["src/example.ts"],
-        metadata: { filepath: "src/example.ts", diff: "+const x = 1" },
-      },
-      output,
-    )
-    expect(output.status).toBe("ask")
+    // The observer is a read-only shell role like the deep reviewer.
+    for (const agent of ["deep-reviewer", "observer"]) {
+      const hooks = await gateForTest(directory, agent)
+      await hooks.provider.models({ models: {} }, { auth: { type: "api", key: "fake-test-key" } })
+      const output = { status: "allow" }
+      await hooks["permission.ask"](
+        {
+          permission: "edit",
+          sessionID: "ses_reviewer_action_test",
+          patterns: ["src/example.ts"],
+          metadata: { filepath: "src/example.ts", diff: "+const x = 1" },
+        },
+        output,
+      )
+      expect(output.status).toBe("ask")
+    }
   } finally {
     globalThis.fetch = previousFetch
     if (previousStateHome === undefined) delete process.env.XDG_STATE_HOME
@@ -1933,6 +1936,23 @@ test("configured OpenCode the final reviewer resolves Jev escalations with trust
       prompt: "Earlier gcloud logging read timestamp>=last24h showed 12 projects produced recent entries; build the fixture.",
     })
     expect(gcpProse.status).toBe("allow")
+    // A read-only observer launch is an ordinary task request.
+    const observerArgs = { description: "Watch N4 scale-up", prompt: "Watch the n4 pool read-only until 23:59Z.", subagent_type: "observer" }
+    await hooks["tool.execute.before"](
+      { tool: "task", sessionID: "ses_final_review_test", callID: "call_final_review_observer" },
+      { args: observerArgs },
+    )
+    const observerLaunch = { status: "ask", message: "" }
+    await hooks["permission.ask"](
+      {
+        ...taskRequest,
+        patterns: ["observer"],
+        metadata: { description: observerArgs.description, subagent_type: "observer", core_trusted_builtin: true },
+        tool: { callID: "call_final_review_observer" },
+      },
+      observerLaunch,
+    )
+    expect(observerLaunch.status).toBe("allow")
     const secretProse = await taskWith("call_final_review_task_secret", {
       ...baseTask,
       prompt: "Review the syncer: it reads a token via secretmanager.googleapis.com and sends it as a Bearer token.",
