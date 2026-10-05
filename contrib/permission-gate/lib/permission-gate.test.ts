@@ -1815,6 +1815,7 @@ test("configured OpenCode the final reviewer resolves Jev escalations with trust
       expect(input.system).toContain("re-reads the agent's own earlier tool results")
       expect(input.system).toContain("For review or research, read-only inspection of history")
       expect(input.system).toContain("get_goal, get_goal_history, and goal_status only read goal status")
+      expect(input.system).toContain("goal_complete only records the agent's completion evidence and ends autonomous work")
       if (JSON.parse(input.state).action?.permission === "webfetch")
         expect(JSON.parse(input.state).context.immediate_effect).toContain("changes no remote state")
       if (finalReviewDelayMs) await new Promise((resolve) => setTimeout(resolve, finalReviewDelayMs))
