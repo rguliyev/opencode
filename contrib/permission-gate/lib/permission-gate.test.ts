@@ -262,6 +262,28 @@ test("Jev classifies non-Bash actions with redacted context", async () => {
     )
     expect(preflight.status).toBe("allow")
     expect(seen).toHaveLength(0)
+    // Core's question tool only asks the human; a plugin tool named
+    // "question" is still reviewed.
+    const questionCall = async (callID: string, trusted: boolean) => {
+      await hooks["tool.execute.before"](
+        { tool: "question", sessionID: "ses_all_actions_test", callID },
+        { args: { questions: [{ question: "Run the test containers?", header: "Tests", options: [] }] } },
+      )
+      const output = { status: "ask" }
+      await hooks["permission.ask"](
+        {
+          permission: "tool_call",
+          sessionID: "ses_all_actions_test",
+          patterns: ["question"],
+          metadata: { tool: "question", trusted_builtin: trusted, internal_permission_check: false },
+          tool: { callID },
+        },
+        output,
+      )
+      return output.status
+    }
+    expect(await questionCall("call_question_builtin", true)).toBe("allow")
+    expect(seen).toHaveLength(0)
     const readOutput = { status: "allow" }
     await hooks["permission.ask"](
       {
@@ -523,6 +545,9 @@ test("Jev classifies non-Bash actions with redacted context", async () => {
       sensitiveSkill,
     )
     expect(sensitiveSkill.status).toBe("ask")
+    const beforePluginQuestion = seen.length
+    await questionCall("call_question_plugin", false)
+    expect(seen.length).toBeGreaterThan(beforePluginQuestion)
   } finally {
     await new Promise<void>((resolve) => kev.close(() => resolve()))
     rmSync(socketDir, { recursive: true, force: true })

@@ -2768,6 +2768,23 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
       ])
       return
     }
+    // Core's question tool only shows the human a question and waits for the
+    // answer; asking permission to ask the human adds nothing.
+    if (
+      input.permission === "tool_call" &&
+      !!call &&
+      call.tool === "question" &&
+      Array.isArray(input.patterns) &&
+      input.patterns.length === 1 &&
+      input.patterns[0] === "question" &&
+      input.metadata?.tool === "question" &&
+      input.metadata.trusted_builtin === true &&
+      input.metadata.internal_permission_check === false
+    ) {
+      output.message = undefined
+      await settle("allow", "builtin_question", ["question tool only asks the human"])
+      return
+    }
     const reviewer = readOnlyAgents.has(agent)
     const roleRestricted =
       reviewer &&
