@@ -2176,6 +2176,31 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
       return origin === "command_template" || origin === "plugin_transformed"
     })
     if (isRecord(source) && isRecord(source.metadata)) {
+      // `/goal <condition>` reaches the session only as the goal plugin's
+      // template "New active goal: <condition>"; the condition is the human's
+      // own text. Keep that line (and the human's criteria and constraints),
+      // never the plugin's instructions. Held goals and other templates stay
+      // withheld.
+      const goal = source.metadata["opencode-goal-plugin"]
+      if (
+        source.metadata.permissionContextOrigin === "command_template" &&
+        isRecord(goal) &&
+        goal.kind === "command" &&
+        typeof source.text === "string"
+      ) {
+        const lines = source.text.split("\n")
+        const start = lines.findIndex((line) => line.startsWith("New active goal: "))
+        if (start >= 0 && !lines.slice(0, start).some((line) => line.startsWith("Goal recorded but held: "))) {
+          const fields = [lines[start].slice("New active goal: ".length)]
+          for (const line of lines.slice(start + 1)) {
+            if (!/^(?:Success criteria|Constraints \/ non-goals): /.test(line)) break
+            fields.push(line)
+          }
+          const safe = safeTaskText(`/goal ${fields.join("\n")}`)
+          if (safe)
+            return { id, created, text: safe, ...(safe.includes("[REDACTED:") ? { withheld: "redacted_literal" as const } : {}) }
+        }
+      }
       const command = source.metadata.permissionContextOrigin === "command_template"
       return command
         ? { id, created, text: "[slash command template omitted]", withheld: "command_template" }
