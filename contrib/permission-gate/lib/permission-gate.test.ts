@@ -1505,6 +1505,11 @@ test("shell segments get module evidence and self-contained segments are judged 
       expect(String(withParam.evidence)).toContain("verified local helper")
       expect(String((await apiGet(promql, " --data x=1")).evidence)).toContain("treat it as unknown code")
       expect(String((await apiGet(promql, " --param")).evidence)).toContain("treat it as unknown code")
+      // Saving the output to a scratch file keeps the helper verified.
+      const saved = await apiGet(promql, " --param 'query=up' > /data/rguliyev/tmp/opencode/foxtrot-review.json 2>/dev/null")
+      expect(String(saved.evidence)).toContain("verified local helper")
+      expect(String(saved.evidence)).toContain("output is redirected")
+      expect(String((await apiGet(promql, " --param 'query=up' > out.json extra")).evidence)).toContain("treat it as unknown code")
       // IAM reads are reviewed normally; IAM changes stay human-only.
       for (const command of [
         "gcloud iam service-accounts get-iam-policy sa@e2b-dev-rauf-guliyev.iam.gserviceaccount.com --project=e2b-dev-rauf-guliyev --format=json",

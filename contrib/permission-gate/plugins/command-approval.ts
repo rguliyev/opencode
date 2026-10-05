@@ -1084,13 +1084,26 @@ function grafanaHelperEvidence(args: string[]) {
 function ghApiEvidence(command: string) {
   const parts = commandParts(command)
   if (invokesHelper(parts.verb, "grafana-query", grafanaHelperPath())) return grafanaHelperEvidence(parts.args)
-  if (invokesHelper(parts.verb, "google-api-get", googleApiHelperPath()))
+  if (invokesHelper(parts.verb, "google-api-get", googleApiHelperPath())) {
+    // Output redirects (`> file`, `2>/dev/null`) are judged by the gate's
+    // redirect checks; only the helper's own arguments must be URL + pairs.
+    const args: string[] = []
+    let redirected = false
+    for (let index = 0; index < parts.args.length; index++) {
+      const argument = parts.args[index]
+      if (/^\d?>>?$/.test(argument) && index + 1 < parts.args.length) {
+        redirected = true
+        index += 1
+      } else if (/^\d?>>?[^>&\s]+$/.test(argument) || /^\d?>&\d$/.test(argument)) redirected = true
+      else args.push(argument)
+    }
     return isPinnedGoogleApiHelper(googleApiHelperPath()) &&
-      parts.args.length % 2 === 1 &&
-      /^https:\/\/[a-z0-9-]+(?:\.[a-z0-9-]+)*\.googleapis\.com\//.test(parts.args[0]) &&
-      parts.args.slice(1).every((argument, index) => (index % 2 ? argument.includes("=") : argument === "--param"))
-      ? "google-api-get: verified local helper; a read-only GET to a googleapis.com URL with the shared gcloud login's token, which it never prints; it changes nothing"
+      args.length % 2 === 1 &&
+      /^https:\/\/[a-z0-9-]+(?:\.[a-z0-9-]+)*\.googleapis\.com\//.test(args[0]) &&
+      args.slice(1).every((argument, index) => (index % 2 ? argument.includes("=") : argument === "--param"))
+      ? `google-api-get: verified local helper; a read-only GET to a googleapis.com URL with the shared gcloud login's token, which it never prints; it changes nothing remote${redirected ? "; its output is redirected to a file, judged by redirect_evidence" : ""}`
       : "google-api-get: not the gate's pinned helper or not a googleapis.com URL; treat it as unknown code"
+  }
   if (gcloudAuthStatusCheck(command))
     return "gcloud-remote-auth.sh status/verify: verified local helper; it only reports whether the shared gcloud login works and prints no token"
   // Chart and script validators read files and write nothing, unless told to
