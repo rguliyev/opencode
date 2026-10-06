@@ -1588,6 +1588,8 @@ test("shell segments get module evidence and self-contained segments are judged 
       expect(String(withParam.evidence)).toContain("verified local helper")
       expect(String((await apiGet(promql, " --data x=1")).evidence)).toContain("treat it as unknown code")
       expect(String((await apiGet(promql, " --param")).evidence)).toContain("treat it as unknown code")
+      expect(String((await apiGet("", "", `${apiHelper} --help`)).evidence)).toContain("only prints its usage text")
+      expect(String((await apiGet("", "", `${apiHelper} --help --param x=1`)).evidence)).toContain("treat it as unknown code")
       // Saving the output to a scratch file keeps the helper verified.
       const saved = await apiGet(promql, " --param 'query=up' > /data/rguliyev/tmp/opencode/foxtrot-review.json 2>/dev/null")
       expect(String(saved.evidence)).toContain("verified local helper")

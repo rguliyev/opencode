@@ -1097,6 +1097,9 @@ function ghApiEvidence(command: string) {
       } else if (/^\d?>>?[^>&\s]+$/.test(argument) || /^\d?>&\d$/.test(argument)) redirected = true
       else args.push(argument)
     }
+    // `--help` prints the usage text and exits before any token is fetched.
+    if (isPinnedGoogleApiHelper(googleApiHelperPath()) && args.length === 1 && ["-h", "--help"].includes(args[0]))
+      return "google-api-get: verified local helper; --help only prints its usage text and fetches no token; it changes nothing"
     return isPinnedGoogleApiHelper(googleApiHelperPath()) &&
       args.length % 2 === 1 &&
       /^https:\/\/[a-z0-9-]+(?:\.[a-z0-9-]+)*\.googleapis\.com\//.test(args[0]) &&
