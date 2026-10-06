@@ -1290,7 +1290,33 @@ function scriptPaths(command: string, cwd: string, depth = 0) {
   return { scripts }
 }
 
-async function inspectScripts(command: string, cwd: string) {
+// `cat > run.py <<'EOF' ... EOF && python3 run.py` writes the script it
+// runs in the same call, so the file does not exist yet when the gate looks.
+// With a quoted delimiter the shell writes the body verbatim, so that body is
+// exactly the script that will run.
+function heredocScripts(fullCommand: unknown, cwd: string) {
+  const written = new Map<string, string>()
+  if (typeof fullCommand !== "string") return written
+  const lines = fullCommand.split("\n")
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index]
+    const targetFirst = line.match(/(?:^|[;&|]\s*)(?:cat|tee)\s+(?:>\s*)?([A-Za-z0-9._/-]+)\s+<<(-?)\s*(['"])([A-Za-z_][A-Za-z0-9_]*)\3\s*$/)
+    const tagFirst = line.match(/(?:^|[;&|]\s*)(?:cat|tee)\s+<<(-?)\s*(['"])([A-Za-z_][A-Za-z0-9_]*)\2\s+(?:>\s*)?([A-Za-z0-9._/-]+)\s*$/)
+    const target = targetFirst?.[1] ?? tagFirst?.[4]
+    const tag = targetFirst?.[4] ?? tagFirst?.[3]
+    const strip = (targetFirst?.[2] ?? tagFirst?.[1]) === "-"
+    if (!target || !tag) continue
+    const close = lines.findIndex((candidate, at) => at > index && (strip ? candidate.replace(/^\t+/, "") : candidate) === tag)
+    if (close < 0) break
+    const body = lines.slice(index + 1, close).map((candidate) => (strip ? candidate.replace(/^\t+/, "") : candidate))
+    written.set(path.resolve(cwd, target), body.join("\n") + "\n")
+    index = close
+  }
+  return written
+}
+
+async function inspectScripts(command: string, cwd: string, fullCommand?: unknown) {
+  const heredocs = heredocScripts(fullCommand, cwd)
   const found = scriptPaths(command, cwd)
   if (found.error) return { error: found.error, scripts: [] as ScriptEvidence[] }
   const paths = found.scripts
@@ -1405,6 +1431,21 @@ async function inspectScripts(command: string, cwd: string) {
       })
     } catch (error) {
       const code = (error as { code?: string })?.code
+      const body = code === "ENOENT" ? heredocs.get(item.absolute) : undefined
+      if (body !== undefined && Buffer.byteLength(body) <= maxScriptBytes - total) {
+        const safePath = sanitizeReviewText(item.shown)
+        const safeContent = sanitizeReviewText(body)
+        if (safePath.complete && safeContent.complete && !containsCredentialLiteralUnmasked(safeContent.value)) {
+          total += Buffer.byteLength(body)
+          const redactions = [...new Set([...safePath.kinds, ...safeContent.kinds])]
+          scripts.push({
+            path: safePath.value,
+            content: `[written by this command from a quoted heredoc]\n${safeContent.value}`,
+            ...(redactions.length ? { redactions } : {}),
+          })
+          continue
+        }
+      }
       const why =
         code === "ENOENT"
           ? "referenced script does not exist"
@@ -3676,7 +3717,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
               explanation: "self-contained output-only segment; no effect to review",
               checks: [],
             }
-          const inspection = await inspectScripts(command, workdir)
+          const inspection = await inspectScripts(command, workdir, fullCommand)
           recordKev(
             "bash",
             command,

@@ -131,6 +131,26 @@ test("Jev receives a scrubbed command and context, while the local gate asks", a
     expect(scripts[0].redactions).toContain("CREDENTIAL")
     expect(scriptOutput.status).toBe("ask")
 
+    // A script written by a quoted heredoc in the same call is inspected from
+    // the heredoc body instead of failing as "does not exist".
+    const heredocScript = "/data/rguliyev/tmp/opencode/heredoc-test-does-not-exist/parse.py"
+    const heredocFull = `cat > ${heredocScript} <<'PY'\nimport json\nprint(len(json.load(open("serials.json"))))\nPY\npython3 ${heredocScript}`
+    await hooks["permission.ask"](
+      {
+        permission: "bash",
+        sessionID: "ses_redaction_test",
+        patterns: [`cat > ${heredocScript}`, `python3 ${heredocScript}`],
+        metadata: { command: heredocFull },
+      },
+      { status: "ask" },
+    )
+    const heredocState = (sent as { state: Record<string, unknown> }).state
+    const heredocScripts = heredocState.scripts as { path: string; content: string }[]
+    expect(heredocScripts).toHaveLength(1)
+    expect(heredocScripts[0].content).toContain("written by this command from a quoted heredoc")
+    expect(heredocScripts[0].content).toContain('print(len(json.load(open("serials.json"))))')
+    expect(JSON.stringify(heredocState)).not.toContain("referenced script does not exist")
+
     await hooks["tool.execute.before"](
       { tool: "skill", sessionID: "ses_redaction_test", callID: "call_skill_redaction" },
       { args: { name: "example" } },
