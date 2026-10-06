@@ -103,3 +103,13 @@ test("parts preserve concurrent text updates and remove parts deleted during hyd
   expect(mergeHistoryParts([text], [], new Set([text.id]))).toEqual([])
   expect(mergeHistoryParts([{ ...text, text: "" }], [text], new Set())).toEqual([text])
 })
+
+test("reconnect boundaries use message identity, not lexical ID order", async () => {
+  const requests: Array<string | undefined> = []
+  const window = await readMessageWindow(async (before) => {
+    requests.push(before)
+    return before ? { data: [{ info: { id: "msg_z" } }] } : { data: [{ info: { id: "msg_a" } }], cursor: "older" }
+  }, "msg_z")
+  expect(requests).toEqual([undefined, "older"])
+  expect(window.data.map((item) => item.info.id)).toEqual(["msg_z", "msg_a"])
+})

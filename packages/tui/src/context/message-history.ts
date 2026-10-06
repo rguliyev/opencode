@@ -15,7 +15,7 @@ export async function readMessageWindow<T extends { info: { id: string } }>(
   while (true) {
     const page = await load(before)
     data.unshift(...page.data)
-    if (!page.cursor || !through || page.data.some((item) => item.info.id <= through)) {
+    if (!page.cursor || !through || page.data.some((item) => item.info.id === through)) {
       return { data, cursor: page.cursor }
     }
     if (!page.data.length || cursors.has(page.cursor)) throw new Error("Message history cursor did not advance")
