@@ -2561,6 +2561,14 @@ test("configured OpenCode the final reviewer resolves Jev escalations with trust
       "human-only policy or data change may apply",
     )
     expect(seen.slice(-2)).toEqual(["jev", "final_review"])
+    // A scratch task folder whose name contains "audit" is not a policy file.
+    const scratchAudit = "/data/rguliyev/tmp/opencode/nbd-prod-audit-test-does-not-exist/summarize.py"
+    const scratchEdit = { status: "ask", message: "" }
+    await hooks["permission.ask"](
+      { ...editRequest, patterns: [scratchAudit.slice(1)], metadata: { filepath: scratchAudit, diff: "+print('summary')" } },
+      scratchEdit,
+    )
+    expect(String(scratchEdit.message ?? "")).not.toContain("security, permission, or data-migration file")
 
     await hooks["tool.execute.before"](
       { tool: "grep", sessionID: "ses_final_review_test", callID: "call_final_review_grep" },

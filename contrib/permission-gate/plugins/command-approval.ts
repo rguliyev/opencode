@@ -3217,7 +3217,13 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
       patterns.some((pattern) =>
         /(?:^|[/_.-])(?:auth|permission|policy|iam|crypto|cert|audit|pii|patient|migration)(?:$|[/_.-])/i.test(pattern),
       ) &&
-      !(await editTargetsInWorktrees(patterns, metadata.filepath))
+      !(await editTargetsInWorktrees(patterns, metadata.filepath)) &&
+      // A scratch task folder named e.g. nbd-prod-audit-20261006 holds no policy or data.
+      !(
+        typeof metadata.filepath === "string" &&
+        path.isAbsolute(metadata.filepath) &&
+        scratchFolder(path.dirname(path.normalize(metadata.filepath)))
+      )
     )
       reasons.push("human-only policy or data change may apply")
     const sessions = humanContext!.sessions
