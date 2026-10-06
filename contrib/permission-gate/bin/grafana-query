@@ -5,12 +5,13 @@ Usage:
   grafana-query HOST GET PATH
   grafana-query HOST POST PATH [JSON_BODY | @FILE | -]
 
-HOST is e2bprod.grafana.net or e2bstg.grafana.net. PATH starts with /.
+HOST is e2bprod.grafana.net, e2bstg.grafana.net, or e2bfoxtrot.grafana.net.
+PATH starts with /.
 GET may read any API path. POST is limited to Grafana's query endpoints
 (/api/ds/query and /apis/query.grafana.app/.../query), which run a
 datasource query and change nothing.
 
-The instance token is read from Google Secret Manager (project e2b-shared)
+The instance token is read from Google Secret Manager (the stack's project)
 into memory, sent only to HOST over HTTPS, and never printed, logged, or
 written. The response body goes to stdout; HTTP errors go to stderr with a
 non-zero exit.
@@ -22,9 +23,12 @@ import sys
 import urllib.error
 import urllib.request
 
+# HOST -> (Secret Manager project, secret holding the instance token).
 SECRETS = {
-    "e2bprod.grafana.net": "grafana-instance-token-e2b-prod",
-    "e2bstg.grafana.net": "grafana-instance-token-e2b-stg",
+    "e2bprod.grafana.net": ("e2b-shared", "grafana-instance-token-e2b-prod"),
+    "e2bstg.grafana.net": ("e2b-shared", "grafana-instance-token-e2b-stg"),
+    # Per-environment stack: the monitoring-owned instance service account token.
+    "e2bfoxtrot.grafana.net": ("e2b-foxtrot", "grafana-datasource-syncer-api-token"),
 }
 QUERY_POST = re.compile(r"^/(?:api/ds/query|apis/query\.grafana\.app/[A-Za-z0-9._/-]+/query)(?:\?[^\s]*)?$")
 MAX_BODY_BYTES = 1_000_000
@@ -81,7 +85,7 @@ def main() -> None:
         fail("METHOD must be GET or POST")
 
     token = subprocess.run(
-        ["gcloud", "secrets", "versions", "access", "latest", "--project=e2b-shared", f"--secret={SECRETS[host]}"],
+        ["gcloud", "secrets", "versions", "access", "latest", f"--project={SECRETS[host][0]}", f"--secret={SECRETS[host][1]}"],
         capture_output=True,
         text=True,
         timeout=30,
