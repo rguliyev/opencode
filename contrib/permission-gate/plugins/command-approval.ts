@@ -440,14 +440,18 @@ function redact(command: string) {
 // authorization code was both sent to OpenRouter and written to the decision log.
 const googleOAuthLiteral = /\b4\/0A[A-Za-z0-9_-]{20,}|\b1\/\/[A-Za-z0-9_-]{20,}|\bya29\.[A-Za-z0-9_-]{20,}/
 
-function hasSkillCredentialLiteral(content: string) {
-  // In gcloud's `secrets versions access` command, --secret selects a
-  // resource by name; its argument is not the secret payload. Keep every
-  // other credential detector active for the skill's returned content.
-  const withoutResourceSelectors = content.replace(
+// In gcloud's `secrets versions access` command, --secret selects a
+// resource by name; its argument is not the secret payload. Every other
+// credential detector stays active on the rest of the text.
+function withoutSecretResourceNames(content: string) {
+  return content.replace(
     /(\bgcloud\s+secrets\s+versions\s+access\b(?:(?!\n[ \t]*\n)[\s\S]){0,300}?)--secret(?:=|\s+)(?:'[A-Za-z0-9._-]{1,128}'|"[A-Za-z0-9._-]{1,128}"|[A-Za-z0-9._-]{1,128})/gi,
     "$1--secret-resource-name",
   )
+}
+
+function hasSkillCredentialLiteral(content: string) {
+  const withoutResourceSelectors = withoutSecretResourceNames(content)
   const scan = sanitizeReviewText(withoutResourceSelectors)
   return !scan.complete || scan.kinds.length > 0 || containsCredentialLiteralUnmasked(withoutResourceSelectors)
 }
@@ -1524,7 +1528,7 @@ async function localReadEvidence(target: unknown, workdir: string): Promise<Loca
   const content = await readFile(real).catch(() => undefined)
   if (!content) return { literal_scan: "not_scanned", not_scanned_reason: "unreadable", target_facts: facts }
   if (content.includes(0)) return { literal_scan: "not_scanned", not_scanned_reason: "binary", target_facts: facts }
-  const text = content.toString("utf8")
+  const text = withoutSecretResourceNames(content.toString("utf8"))
   const redaction = sanitizeReviewText(text)
   const literal =
     !redaction.complete ||

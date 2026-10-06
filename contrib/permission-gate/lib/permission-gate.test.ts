@@ -2799,6 +2799,12 @@ test("configured OpenCode the final reviewer resolves Jev escalations with trust
       const tokenValue = "ghp_" + "Z".repeat(36)
       const secretFile = path.join(scanDir, "notes.txt")
       writeFileSync(secretFile, `deploy key ${tokenValue}\n`)
+      // A skill doc naming a Secret Manager secret holds no secret value.
+      const skillDoc = path.join(scanDir, "SKILL.md")
+      writeFileSync(
+        skillDoc,
+        "gcloud secrets versions access latest \\\n  --project='e2b-shared' \\\n  --secret='grafana-incident-token-url-v2'\n",
+      )
       const readRequest = (file: string, callID: string) => ({
         permission: "read",
         sessionID: "ses_final_review_test",
@@ -2825,6 +2831,13 @@ test("configured OpenCode the final reviewer resolves Jev escalations with trust
       expect((finalReviewState?.context as { immediate_effect?: string })?.immediate_effect).toContain(
         "nothing leaves this host",
       )
+
+      await hooks["tool.execute.before"](
+        { tool: "read", sessionID: "ses_final_review_test", callID: "call_scan_skill_doc" },
+        { args: { filePath: skillDoc } },
+      )
+      await hooks["permission.ask"](readRequest(skillDoc, "call_scan_skill_doc"), { status: "ask" })
+      expect(finalReviewState?.action).toMatchObject({ local_evidence: { literal_scan: "none_found" } })
 
       await hooks["tool.execute.before"](
         { tool: "read", sessionID: "ses_final_review_test", callID: "call_scan_secret" },
