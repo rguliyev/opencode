@@ -160,7 +160,7 @@ const localGitRolePolicy =
   "For assigned development work, this role may fetch, create branches and dedicated worktrees under /data/rguliyev/tmp/opencode/worktrees, edit files there, stage, commit, merge, and rebase unpushed branches without a separate human permission. These are ordinary local development actions, not shared-state rewrites. Pushing, PR creation/update, merging, and rewriting pushed history require human authorization; Terraform apply and other human gates still apply. The human has stated that changing files inside dedicated worktrees under /data/rguliyev/tmp/opencode/worktrees is fine, including configuration, Terraform, and IAM files: such edits change nothing live until a separately gated push, PR, apply, or deploy."
 // A GET to GitHub or another API was read as a forbidden "download".
 const readOnlyRolePolicy =
-  "Read-only inspection only; no edits, builds, tests, delegation, state changes, or downloading and running code. Read-only queries to remote services, such as GET requests, gh pr view/diff/list, gh run view, and gh api GET calls, are allowed inspection. Saving read-only output to scratch files directly under /tmp or /data/rguliyev/tmp/opencode (outside worktrees) is allowed."
+  "Read-only inspection only; no edits, builds, tests, delegation, state changes, or downloading and running code. Read-only queries to remote services, such as GET requests, gh pr view/diff/list, gh run view, and gh api GET calls, are allowed inspection. Saving read-only output to scratch files under /tmp or /data/rguliyev/tmp/opencode, including a task folder created there (outside worktrees and repositories), is allowed."
 // The config tree is root-owned and immutable. A model may still request a
 // privileged shell command to change it, so formerly denied references must
 // always reach the human rather than becoming an automatic model approval.
@@ -949,6 +949,32 @@ const ghReadOnly = new Set([
 // state. Subdirectories (including worktrees), symlinks, and dynamic targets
 // are not scratch.
 const scratchDirectories = new Set(["/tmp", "/data/rguliyev/tmp/opencode"])
+// Task folders under a scratch directory (the observer is told to keep its
+// output in one) are scratch too, except worktrees, the gate's own runtime
+// directory (scripts the human runs with sudo), and any folder inside a git
+// repository or reached through a symlink.
+const scratchExcluded = ["/data/rguliyev/tmp/opencode/worktrees", "/data/rguliyev/tmp/opencode/gate-delegation-runtime"]
+
+function scratchFolder(dir: string) {
+  if (!/^\/[A-Za-z0-9._/-]+$/.test(dir) || path.normalize(dir) !== dir || dir.split("/").includes("..")) return false
+  const root = [...scratchDirectories].find((candidate) => dir === candidate || dir.startsWith(candidate + "/"))
+  if (!root || scratchExcluded.some((excluded) => dir === excluded || dir.startsWith(excluded + "/"))) return false
+  for (let current = dir; ; current = path.dirname(current)) {
+    const info = lstatSyncSafe(current)
+    if (info && (info.isSymbolicLink() || !info.isDirectory())) return false
+    if (lstatSyncSafe(path.join(current, ".git"))) return false
+    if (current === root) return true
+  }
+}
+
+// `mkdir -p <task folder>` under a scratch directory creates only scratch.
+function scratchMkdirSegment(command: string) {
+  if (/[$`<>;&|]/.test(command)) return false
+  const parts = commandParts(command)
+  if (parts.error || parts.directory || executableName(parts.verb) !== "mkdir") return false
+  const dirs = parts.args.filter((argument) => argument !== "-p" && argument !== "--parents")
+  return dirs.length > 0 && dirs.every((dir) => !dir.startsWith("-") && scratchFolder(dir.replace(/(.)\/+$/, "$1")))
+}
 
 function scratchRedirectEvidence(fullCommand: unknown) {
   if (typeof fullCommand !== "string") return undefined
@@ -964,10 +990,12 @@ function scratchRedirectEvidence(fullCommand: unknown) {
     .map((target) => (base && /^[A-Za-z0-9_][A-Za-z0-9._-]*$/.test(target) ? path.join(base, target) : target))
   if (!files.length) return undefined
   const scratch = files.every((file) => {
-    if (!/^\/[A-Za-z0-9._/-]+$/.test(file) || !scratchDirectories.has(path.dirname(file))) return false
+    if (!/^\/[A-Za-z0-9._/-]+$/.test(file) || !scratchFolder(path.dirname(file))) return false
     if (/^\.+$/.test(path.basename(file))) return false
     const info = lstatSyncSafe(file)
-    return !info || info.isFile()
+    if (!info) return true
+    // In a task folder, an existing executable is not scratch output.
+    return info.isFile() && (scratchDirectories.has(path.dirname(file)) || (info.mode & 0o111) === 0)
   })
   return scratch
     ? `output is redirected only to scratch file(s) ${[...new Set(files)].join(", ")}, outside repositories and worktrees; this changes no repository, worktree, or shared state`
@@ -3589,6 +3617,17 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
           // Jev and the final reviewer misjudged `echo "=== DIFF A ==="` as an unknown shell
           // action. Variables other than $? could print secrets, so they still
           // go through review.
+          if (safe && scratchMkdirSegment(command))
+            return {
+              ...id,
+              kev: { status: "not_needed" },
+              final_review: finalReviewAudit({ status: "not_needed" }),
+              ask: false,
+              reasons: [],
+              jev: null,
+              explanation: "creates only scratch folders outside repositories and worktrees; no effect to review",
+              checks: [],
+            }
           if (commands.length > 1 && safe && isSelfContainedSegment(command) && !/\$(?!\?)/.test(command))
             return {
               ...id,

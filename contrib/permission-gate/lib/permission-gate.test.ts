@@ -1345,6 +1345,13 @@ test("a read-only agent's dual-use shell command needs both the final reviewer a
     expect(await batched(['echo "=== DIFF A ==="', 'echo "=== DIFF B ==="'])).toBe("allow")
     expect(await batched(["cd /data/rguliyev/tmp/opencode/worktrees/charts", 'echo "=== DIFF B ==="'])).toBe("allow")
     expect(await batched(['echo "=== DIFF A ==="', 'echo "$GRAFANA_TOKEN"'])).toBe("ask")
+    // Creating a task scratch folder needs no review; folders in worktrees,
+    // the gate's runtime directory, or outside scratch roots still do.
+    expect(await batched(["mkdir -p /data/rguliyev/tmp/opencode/audit-20261006/serving"])).toBe("allow")
+    expect(await batched(["mkdir -p /data/rguliyev/tmp/opencode/worktrees/charts/new"])).toBe("ask")
+    expect(await batched(["mkdir -p /data/rguliyev/tmp/opencode/gate-delegation-runtime/x"])).toBe("ask")
+    expect(await batched(["mkdir -p /data/rguliyev/projects/x"])).toBe("ask")
+    expect(await batched(["mkdir -p /data/rguliyev/tmp/opencode/../../x"])).toBe("ask")
     // Process substitution: the full call is itself one of the patterns.
     finalReviewChoice = "allow"
     mutation["diff <(git show HEAD:a.yaml) <(git show HEAD~1:a.yaml)"] = 0.05
@@ -1488,9 +1495,13 @@ test("shell segments get module evidence and self-contained segments are judged 
       await redirectEvidence("cd /data/rguliyev/tmp/opencode/worktrees/charts/x && git diff > values.yaml"),
     ).toBeUndefined()
     expect(await redirectEvidence("cd /data/rguliyev/tmp/opencode && cd sub && git diff > out.diff")).toBeUndefined()
+    // A task folder under the scratch root is scratch.
+    expect(await redirectEvidence("git show abc123 > /data/rguliyev/tmp/opencode/sub/review.diff")).toContain(
+      "/data/rguliyev/tmp/opencode/sub/review.diff",
+    )
     for (const command of [
       "git show abc123 > /data/rguliyev/tmp/opencode/worktrees/charts/x/values.yaml",
-      "git show abc123 > /data/rguliyev/tmp/opencode/sub/review.diff",
+      "git show abc123 > /data/rguliyev/tmp/opencode/gate-delegation-runtime/apply-protected-config.sh",
       'git show abc123 > "$OUT"',
       "git show abc123 > ../review.diff",
       "git show abc123 2>&1",
