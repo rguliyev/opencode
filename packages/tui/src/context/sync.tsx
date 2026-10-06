@@ -40,6 +40,7 @@ import {
   touchPending,
 } from "./reconnect-state"
 import { partForDisplay } from "./part-display"
+import { MESSAGE_PAGE_SIZE, mergeHistoryParts, mergeMessageHistory, readMessageWindow } from "./message-history"
 
 const emptyConsoleState: ConsoleState = {
   consoleManagedProviders: [],
@@ -57,10 +58,6 @@ function search<T>(items: T[], target: string, key: (item: T) => string) {
     else right = middle - 1
   }
   return { found: false, index: left }
-}
-
-function compareMessage(a: Message, b: Message) {
-  return a.time.created - b.time.created || a.id.localeCompare(b.id)
 }
 
 const messageKey = (message: Message) => message.time.created + message.id
@@ -110,6 +107,9 @@ export const {
       part: {
         [messageID: string]: Part[]
       }
+      history: {
+        [sessionID: string]: { cursor?: string; loading: boolean }
+      }
       lsp: LspStatus[]
       mcp: {
         [key: string]: McpStatus
@@ -144,6 +144,7 @@ export const {
       todo: {},
       message: {},
       part: {},
+      history: {},
       lsp: [],
       mcp: {},
       mcp_resource: {},
@@ -158,6 +159,8 @@ export const {
     const fullSyncedSessions = new Set<string>()
     const syncingSessions = new Map<string, Promise<void>>()
     const syncingAbort = new Map<string, AbortController>()
+    const olderRequests = new Map<string, Promise<void>>()
+    const olderAbort = new Map<string, AbortController>()
     const hydratingSessions = new Map<string, { messages: Set<string>; parts: Set<string> }>()
     let connected = false
     let reconnectEpoch = 0
@@ -323,6 +326,9 @@ export const {
           const sessions = new Set([...fullSyncedSessions, ...syncingSessions.keys()])
           fullSyncedSessions.clear()
           for (const sessionID of sessions) {
+            olderAbort.get(sessionID)?.abort()
+            olderRequests.delete(sessionID)
+            olderAbort.delete(sessionID)
             syncingAbort.get(sessionID)?.abort()
             syncingSessions.delete(sessionID)
             syncingAbort.delete(sessionID)
@@ -499,25 +505,6 @@ export const {
               draft.splice(result.index, 0, event.properties.info)
             }),
           )
-          const updated = store.message[event.properties.info.sessionID]
-          if (updated.length > 100) {
-            const oldest = updated[0]
-            batch(() => {
-              setStore(
-                "message",
-                event.properties.info.sessionID,
-                produce((draft) => {
-                  draft.shift()
-                }),
-              )
-              setStore(
-                "part",
-                produce((draft) => {
-                  delete draft[oldest.id]
-                }),
-              )
-            })
-          }
           break
         }
         case "message.removed": {
@@ -724,7 +711,16 @@ export const {
     onCleanup(() => {
       recoveryAbort.abort()
       for (const controller of syncingAbort.values()) controller.abort()
+      for (const controller of olderAbort.values()) controller.abort()
     })
+
+    async function messagePage(sessionID: string, signal: AbortSignal, before?: string) {
+      const page = await sdk.client.session.messages(
+        { sessionID, limit: MESSAGE_PAGE_SIZE, before },
+        { signal: AbortSignal.any([signal, AbortSignal.timeout(15_000)]), throwOnError: true },
+      )
+      return { data: page.data ?? [], cursor: page.response.headers.get("x-next-cursor") ?? undefined }
+    }
 
     const result = {
       data: store,
@@ -762,6 +758,53 @@ export const {
           if (last.role === "user") return "working"
           return last.time.completed ? "idle" : "working"
         },
+        async older(sessionID: string) {
+          await result.session.sync(sessionID)
+          const pending = olderRequests.get(sessionID)
+          if (pending) return pending
+          const cursor = store.history[sessionID]?.cursor
+          if (!cursor) return
+          const tracker = { messages: new Set<string>(), parts: new Set<string>() }
+          const controller = new AbortController()
+          hydratingSessions.set(sessionID, tracker)
+          olderAbort.set(sessionID, controller)
+          setStore("history", sessionID, "loading", true)
+          const task = (async () => {
+            const page = await messagePage(sessionID, controller.signal, cursor)
+            if (controller.signal.aborted) return
+            if (page.cursor === cursor) throw new Error("Message history cursor did not advance")
+            setStore(
+              produce((draft) => {
+                const infos = mergeMessageHistory(
+                  page.data.map((message) => message.info),
+                  draft.message[sessionID] ?? [],
+                  tracker.messages,
+                  true,
+                )
+                const ids = new Set(infos.map((message) => message.id))
+                for (const message of page.data) {
+                  if (!ids.has(message.info.id)) continue
+                  draft.part[message.info.id] = mergeHistoryParts(
+                    message.parts,
+                    draft.part[message.info.id] ?? [],
+                    tracker.parts,
+                  )
+                }
+                draft.message[sessionID] = infos
+                draft.history[sessionID] = { cursor: page.cursor, loading: false }
+              }),
+            )
+          })().finally(() => {
+            if (olderRequests.get(sessionID) === task) {
+              olderRequests.delete(sessionID)
+              setStore("history", sessionID, "loading", false)
+            }
+            if (olderAbort.get(sessionID) === controller) olderAbort.delete(sessionID)
+            if (hydratingSessions.get(sessionID) === tracker) hydratingSessions.delete(sessionID)
+          })
+          olderRequests.set(sessionID, task)
+          return task
+        },
         async sync(sessionID: string) {
           if (fullSyncedSessions.has(sessionID)) return
           const syncing = syncingSessions.get(sessionID)
@@ -773,7 +816,10 @@ export const {
           const task = (async () => {
             const [session, messages, todo, diff] = await Promise.all([
               sdk.client.session.get({ sessionID }, { signal: controller.signal, throwOnError: true }),
-              sdk.client.session.messages({ sessionID, limit: 100 }, { signal: controller.signal, throwOnError: true }),
+              readMessageWindow(
+                (before) => messagePage(sessionID, controller.signal, before),
+                store.message[sessionID]?.[0]?.id,
+              ),
               sdk.client.session.todo({ sessionID }, { signal: controller.signal, throwOnError: true }),
               sdk.client.session.diff({ sessionID }, { signal: controller.signal, throwOnError: true }),
             ])
@@ -785,49 +831,25 @@ export const {
                 if (!match.found) draft.session.splice(match.index, 0, session.data!)
                 draft.todo[sessionID] = todo.data ?? []
                 const currentMessages = draft.message[sessionID] ?? []
-                const infos = (messages.data ?? []).flatMap((message) => {
-                  if (!tracker.messages.has(message.info.id)) return [message.info]
-                  const current = currentMessages.find((item) => item.id === message.info.id)
-                  return current ? [current] : []
-                })
-                infos.push(
-                  ...currentMessages.filter(
-                    (message) => tracker.messages.has(message.id) && !infos.some((item) => item.id === message.id),
-                  ),
+                const infos = mergeMessageHistory(
+                  messages.data.map((message) => message.info),
+                  currentMessages,
+                  tracker.messages,
                 )
-                infos.sort(compareMessage)
-                const removed = infos.slice(0, -100)
-                const visible = infos.slice(-100)
-                const visibleIDs = new Set(visible.map((message) => message.id))
-                for (const message of messages.data ?? []) {
-                  if (!visibleIDs.has(message.info.id)) {
-                    delete draft.part[message.info.id]
-                    continue
-                  }
-                  const currentParts = draft.part[message.info.id] ?? []
-                  const parts = message.parts.flatMap((part) => {
-                    const current = currentParts.find((item) => item.id === part.id)
-                    if (tracker.parts.has(part.id)) return current ? [current] : []
-                    if (
-                      current &&
-                      (part.type === "text" || part.type === "reasoning") &&
-                      (current.type === "text" || current.type === "reasoning") &&
-                      part.text.length === 0 &&
-                      current.text.length > 0
-                    ) {
-                      return [current]
-                    }
-                    return [partForDisplay(part)]
-                  })
-                  parts.push(
-                    ...currentParts.filter(
-                      (part) => tracker.parts.has(part.id) && !parts.some((item) => item.id === part.id),
-                    ),
+                const ids = new Set(infos.map((message) => message.id))
+                for (const message of messages.data) {
+                  if (!ids.has(message.info.id)) continue
+                  draft.part[message.info.id] = mergeHistoryParts(
+                    message.parts,
+                    draft.part[message.info.id] ?? [],
+                    tracker.parts,
                   )
-                  draft.part[message.info.id] = parts
                 }
-                for (const message of removed) delete draft.part[message.id]
-                draft.message[sessionID] = visible
+                for (const message of currentMessages) {
+                  if (!ids.has(message.id)) delete draft.part[message.id]
+                }
+                draft.message[sessionID] = infos
+                draft.history[sessionID] = { cursor: messages.cursor, loading: false }
                 draft.session_diff[sessionID] = diff.data ?? []
               }),
             )

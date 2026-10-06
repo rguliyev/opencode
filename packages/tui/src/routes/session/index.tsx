@@ -431,6 +431,29 @@ export function Session() {
     dialog.clear()
   }
 
+  async function loadEarlier() {
+    const sessionID = route.sessionID
+    if (!sync.data.history[sessionID]?.cursor || sync.data.history[sessionID]?.loading) return
+    const viewport = scroll
+    const top = viewport?.scrollTop ?? 0
+    const height = viewport?.scrollHeight ?? 0
+    try {
+      await sync.session.older(sessionID)
+      // Prepending changes content height. Keep the old visible text anchored.
+      setTimeout(() => {
+        if (route.sessionID !== sessionID || viewport !== scroll || viewport?.isDestroyed) return
+        viewport?.scrollTo(top + viewport.scrollHeight - height)
+      }, 50)
+    } catch (error) {
+      if (route.sessionID !== sessionID || (error instanceof Error && error.name === "AbortError")) return
+      toast.show({
+        message: `Could not load earlier messages: ${errorMessage(error)}`,
+        variant: "error",
+        duration: 5000,
+      })
+    }
+  }
+
   function toBottom() {
     setTimeout(() => {
       if (!scroll || scroll.isDestroyed) return
@@ -757,6 +780,17 @@ export function Session() {
       run: () => {
         setShowGenericToolOutput((prev) => !prev)
         dialog.clear()
+      },
+    },
+    {
+      title: "Load earlier messages",
+      value: "session.history.older",
+      category: "Session",
+      enabled: !!sync.data.history[route.sessionID]?.cursor,
+      slash: { name: "history" },
+      run: async () => {
+        dialog.clear()
+        await loadEarlier()
       },
     },
     {
@@ -1189,7 +1223,17 @@ export function Session() {
           <box flexGrow={1} minHeight={0} paddingBottom={1} paddingLeft={2} paddingRight={2} gap={1}>
             <Show when={session()}>
               <scrollbox
-                ref={(r) => (scroll = r)}
+                ref={(r) => {
+                  scroll = r
+                  let previous = r.scrollTop
+                  const changed = () => {
+                    const position = r.scrollTop
+                    if (position <= 2 && position < previous) void loadEarlier()
+                    previous = position
+                  }
+                  r.verticalScrollBar.on("change", changed)
+                  onCleanup(() => r.verticalScrollBar.off("change", changed))
+                }}
                 viewportOptions={{
                   paddingRight: showScrollbar() ? 1 : 0,
                 }}
@@ -1207,6 +1251,15 @@ export function Session() {
                 scrollAcceleration={scrollAcceleration()}
               >
                 <box height={1} />
+                <Show when={sync.data.history[route.sessionID]?.cursor}>
+                  <box paddingBottom={1} onMouseUp={() => void loadEarlier()}>
+                    <text fg={theme.textMuted}>
+                      {sync.data.history[route.sessionID]?.loading
+                        ? "Loading earlier messages…"
+                        : "Load earlier messages — click here or use /history"}
+                    </text>
+                  </box>
+                </Show>
                 <For each={messages()}>
                   {(message, index) => (
                     <Switch>

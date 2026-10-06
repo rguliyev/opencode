@@ -1,5 +1,6 @@
 import { createMemo, onMount } from "solid-js"
 import { useSync } from "../../context/sync"
+import { useFullHistory } from "../../context/full-history"
 import { DialogSelect, type DialogSelectOption } from "../../ui/dialog-select"
 import type { TextPart } from "@opencode-ai/sdk/v2"
 import { Locale } from "../../util/locale"
@@ -11,6 +12,7 @@ import { stripPromptPartIDs as strip } from "../../prompt/part"
 
 export function DialogForkFromTimeline(props: { sessionID: string; onMove: (messageID?: string) => void }) {
   const sync = useSync()
+  const history = useFullHistory(props.sessionID)
   const dialog = useDialog()
   const sdk = useSDK()
   const route = useRoute()
@@ -72,5 +74,12 @@ export function DialogForkFromTimeline(props: { sessionID: string; onMove: (mess
     return [fullSession, ...result.reverse()]
   })
 
-  return <DialogSelect onMove={(option) => props.onMove(option.value)} title="Fork session" options={options()} />
+  return (
+    <DialogSelect
+      onMove={(option) => props.onMove(option.value)}
+      title={history.loading() ? "Fork session — loading full history…" : "Fork session"}
+      footer={history.error() ? <text>Could not load full history: {history.error()}</text> : undefined}
+      options={options()}
+    />
+  )
 }

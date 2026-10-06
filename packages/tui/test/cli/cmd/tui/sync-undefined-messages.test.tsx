@@ -13,7 +13,7 @@ import { directory, json, mount } from "./sync-fixture"
 const sessionID = "ses_undef"
 
 describe("tui sync (#26560)", () => {
-  test("entering a session whose messages endpoint errors does not crash sync", async () => {
+  test("failed message hydration stays retryable instead of marking empty history complete", async () => {
     await using tmp = await tmpdir()
     await Bun.write(`${tmp.path}/kv.json`, "{}")
 
@@ -25,9 +25,10 @@ describe("tui sync (#26560)", () => {
       directory,
       project_id: "proj_test",
     }
+    let failed = true
     const { app, sync } = await mount((url) => {
       if (url.pathname === `/session/${sessionID}`) return json(sessionPayload)
-      if (url.pathname === `/session/${sessionID}/messages`) return json({}, { status: 500 })
+      if (url.pathname === `/session/${sessionID}/message`) return failed ? json({}, { status: 500 }) : json([])
       if (url.pathname === `/session/${sessionID}/todo`) return json([])
       if (url.pathname === `/session/${sessionID}/diff`) return json([])
       if (url.pathname === "/session") return json([sessionPayload])
@@ -35,7 +36,16 @@ describe("tui sync (#26560)", () => {
     }, tmp.path)
 
     try {
-      await expect(sync.session.sync(sessionID)).resolves.toBeUndefined()
+      await sync.session.sync(sessionID).then(
+        () => {
+          throw new Error("Expected hydration failure")
+        },
+        (error: unknown) => expect(error).toBeDefined(),
+      )
+      expect(sync.data.message[sessionID]).toBeUndefined()
+      failed = false
+      await sync.session.sync(sessionID)
+      expect(sync.data.message[sessionID]).toEqual([])
     } finally {
       app.renderer.destroy()
     }

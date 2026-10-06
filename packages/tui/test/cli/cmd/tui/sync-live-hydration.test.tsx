@@ -199,7 +199,7 @@ test("hydration does not clear text streamed before it starts", async () => {
   }
 })
 
-test("live messages merged during hydration retain the 100 message window", async () => {
+test("live messages merged during hydration retain older history", async () => {
   await using tmp = await tmpdir()
   await Bun.write(`${tmp.path}/kv.json`, "{}")
 
@@ -237,10 +237,10 @@ test("live messages merged during hydration retain the 100 message window", asyn
     )
     await hydrate
 
-    expect(sync.data.message[sessionID]).toHaveLength(100)
+    expect(sync.data.message[sessionID]).toHaveLength(101)
     expect(sync.data.message[sessionID].at(-1)?.id).toBe(live.id)
-    expect(sync.data.message[sessionID].some((message) => message.id === "msg_000")).toBe(false)
-    expect(sync.data.part.msg_000).toBeUndefined()
+    expect(sync.data.message[sessionID].some((message) => message.id === "msg_000")).toBe(true)
+    expect(sync.data.part.msg_000[0]).toMatchObject({ text: "msg_000" })
   } finally {
     app.renderer.destroy()
   }
@@ -279,6 +279,97 @@ test("a message removed during hydration does not regain stale parts", async () 
 
     expect(sync.data.message[sessionID]).toEqual([])
     expect(sync.data.part[messageID]).toBeUndefined()
+  } finally {
+    app.renderer.destroy()
+  }
+})
+
+test("older history and reconnect keep every prompt beyond the initial page", async () => {
+  await using tmp = await tmpdir()
+  await Bun.write(`${tmp.path}/kv.json`, "{}")
+  const prompts = new Set([0, 20, 40, 60, 70, 85, 95, 105, 125, 135, 145, 155, 165])
+  const transcript = Array.from({ length: 174 }, (_, index) => {
+    const id = `msg_${String(index).padStart(5, "0")}`
+    return {
+      info: prompts.has(index)
+        ? {
+            id,
+            sessionID,
+            role: "user",
+            agent: "build",
+            model: { providerID: "test", modelID: "model" },
+            time: { created: index },
+          }
+        : { ...assistant, id, time: { created: index, completed: index + 1 } },
+      parts: [{ id: `prt_${id}`, sessionID, messageID: id, type: "text", text: `prompt or reply ${index}` }],
+    }
+  })
+  const requests: Array<string | null> = []
+  const { app, emit, sync } = await mount((url) => {
+    if (url.pathname === `/session/${sessionID}`) return json({ ...session, revert: { messageID: "msg_00135" } })
+    if (url.pathname === `/session/${sessionID}/message`) {
+      expect(url.searchParams.get("limit")).toBe("100")
+      const before = url.searchParams.get("before")
+      requests.push(before)
+      return before
+        ? json(transcript.slice(0, 74))
+        : json(transcript.slice(74), { headers: { "x-next-cursor": "older-page" } })
+    }
+    if (["/permission", "/question", `/session/${sessionID}/todo`, `/session/${sessionID}/diff`].includes(url.pathname))
+      return json([])
+    return undefined
+  }, tmp.path)
+  try {
+    await sync.session.sync(sessionID)
+    expect(sync.data.message[sessionID]).toHaveLength(100)
+    expect(sync.data.history[sessionID].cursor).toBe("older-page")
+    await Promise.all([sync.session.older(sessionID), sync.session.older(sessionID)])
+    expect(requests).toEqual([null, "older-page"])
+    expect(sync.data.message[sessionID]).toHaveLength(174)
+    expect(sync.data.history[sessionID]).toEqual({ loading: false })
+    expect(sync.data.message[sessionID].filter((item) => item.role === "user" && item.id < "msg_00135")).toHaveLength(9)
+    expect(sync.data.part.msg_00000[0]).toMatchObject({ text: "prompt or reply 0" })
+    emit(global({ id: "evt_connect_1", type: "server.connected", properties: {} }))
+    emit(global({ id: "evt_connect_2", type: "server.connected", properties: {} }))
+    await wait(() => requests.length === 4 && sync.data.message[sessionID]?.length === 174)
+    expect(requests).toEqual([null, "older-page", null, "older-page"])
+    expect(sync.data.message[sessionID].filter((item) => item.role === "user")).toHaveLength(13)
+    expect(sync.data.part.msg_00000[0]).toMatchObject({ text: "prompt or reply 0" })
+  } finally {
+    app.renderer.destroy()
+  }
+})
+
+test("failed older page leaves history and cursor intact and can be retried", async () => {
+  await using tmp = await tmpdir()
+  await Bun.write(`${tmp.path}/kv.json`, "{}")
+  let olderRequests = 0
+  const { app, sync } = await mount((url) => {
+    if (url.pathname === `/session/${sessionID}`) return json(session)
+    if (url.pathname === `/session/${sessionID}/message`) {
+      if (!url.searchParams.has("before"))
+        return json([{ info: assistant, parts: [] }], { headers: { "x-next-cursor": "older-page" } })
+      if (++olderRequests === 1) return json({ message: "temporary failure" }, { status: 503 })
+      return json([{ info: { ...assistant, id: "msg_earlier", time: { created: 0, completed: 1 } }, parts: [] }])
+    }
+    if (["/permission", "/question", `/session/${sessionID}/todo`, `/session/${sessionID}/diff`].includes(url.pathname))
+      return json([])
+    return undefined
+  }, tmp.path)
+  try {
+    await sync.session.sync(sessionID)
+    await sync.session.older(sessionID).then(
+      () => {
+        throw new Error("Expected older page failure")
+      },
+      () => {},
+    )
+    expect(sync.data.message[sessionID]).toHaveLength(1)
+    expect(sync.data.history[sessionID]).toEqual({ cursor: "older-page", loading: false })
+    await sync.session.older(sessionID)
+    expect(sync.data.message[sessionID]).toHaveLength(2)
+    expect(sync.data.message[sessionID][0].id).toBe("msg_earlier")
+    expect(sync.data.history[sessionID]).toEqual({ loading: false })
   } finally {
     app.renderer.destroy()
   }

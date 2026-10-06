@@ -1,5 +1,6 @@
 import { createMemo, onMount } from "solid-js"
 import { useSync } from "../../context/sync"
+import { useFullHistory } from "../../context/full-history"
 import { DialogSelect, type DialogSelectOption } from "../../ui/dialog-select"
 import type { TextPart } from "@opencode-ai/sdk/v2"
 import { Locale } from "../../util/locale"
@@ -13,6 +14,7 @@ export function DialogTimeline(props: {
   setPrompt?: (prompt: PromptInfo) => void
 }) {
   const sync = useSync()
+  const history = useFullHistory(props.sessionID)
   const dialog = useDialog()
 
   onMount(() => {
@@ -43,5 +45,12 @@ export function DialogTimeline(props: {
     return result
   })
 
-  return <DialogSelect onMove={(option) => props.onMove(option.value)} title="Timeline" options={options()} />
+  return (
+    <DialogSelect
+      onMove={(option) => props.onMove(option.value)}
+      title={history.loading() ? "Timeline — loading full history…" : "Timeline"}
+      footer={history.error() ? <text>Could not load full history: {history.error()}</text> : undefined}
+      options={options()}
+    />
+  )
 }
