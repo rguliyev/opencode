@@ -942,6 +942,29 @@ const ghReadOnly = new Set([
   "search code", "search prs", "search issues", "search repos",
 ])
 
+// "Allow once" for a command shape: after the human directly approves a
+// prompt, a later command in the same session tree that differs only in
+// timestamps, numbers, or long hex IDs, with the same reasons and the same
+// inspected script contents, is allowed for 8 hours. Human-only operations,
+// protected configuration, credentials, secrets, and commands with withheld
+// text are never remembered.
+const rememberedReasons = /^(?:GCP project or credential selection requires human review|GCP projects? \S.* require human review)/
+const approvedShapeTtlMs = 8 * 60 * 60 * 1000
+
+function commandShape(command: string) {
+  return command
+    .replace(/\b\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?/g, "<TIME>")
+    .replace(/\b[0-9a-f]{12,}\b/gi, "<HEX>")
+    .replace(/\b\d+\b/g, "<N>")
+}
+
+function approvalShapeKey(command: string, reasons: string[], checks: { sha256: string }[], withheld: boolean) {
+  if (withheld || !command || !reasons.every((reason) => rememberedReasons.test(reason))) return undefined
+  return createHash("sha256")
+    .update(JSON.stringify([commandShape(command), [...reasons].sort(), checks.map((check) => check.sha256).sort()]))
+    .digest("hex")
+}
+
 // Read-only agents keep long output in scratch files, e.g.
 // `git show <sha> > /data/rguliyev/tmp/opencode/review.diff`. Output sent only
 // to /dev/null or to a plain file directly under /tmp or
@@ -1981,6 +2004,8 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
   const toolCalls = new Map<string, ToolCall>()
   const toolDescriptions = new Map<string, string>()
   const pendingReplies = new Map<string, { session: string; call: string | null; permission: string }>()
+  const pendingShapeApprovals = new Map<string, { root: string; keys: string[] }>()
+  const approvedShapes = new Map<string, Map<string, number>>()
 
   // Append-only decision log. Nothing else records what the gate DECIDED --
   // outcomes can only be reconstructed from tool errors afterwards, which cannot
@@ -3309,6 +3334,15 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
                 ["allow", "reject"].includes(item.decision),
             )
           : undefined
+        const shapes =
+          pendingShapeApprovals.get(reply.requestID) ?? (pending.call ? pendingShapeApprovals.get(pending.call) : undefined)
+        pendingShapeApprovals.delete(reply.requestID)
+        if (pending.call) pendingShapeApprovals.delete(pending.call)
+        if (shapes && provenance === "human_direct" && (reply.reply === "once" || reply.reply === "always")) {
+          const remembered = approvedShapes.get(shapes.root) ?? new Map<string, number>()
+          for (const key of shapes.keys) remembered.set(key, Date.now() + approvedShapeTtlMs)
+          approvedShapes.set(shapes.root, remembered)
+        }
         logReply({
           request: reply.requestID,
           session: pending.session,
@@ -3771,8 +3805,34 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
         ]
       })
 
+      const shapeRoot = (await sessionChain(input.sessionID))?.at(-1)
+      const shapeKeyFor = (item: (typeof reviewed)[number], index: number) =>
+        approvalShapeKey(
+          commands[index] ?? "",
+          item.reasons ?? [],
+          (item as { checks?: { sha256: string }[] }).checks ?? [],
+          (item as { cmd_withheld?: boolean }).cmd_withheld !== false,
+        )
+      const remembered = shapeRoot ? approvedShapes.get(shapeRoot) : undefined
+      if (remembered)
+        for (const [index, item] of reviewed.entries()) {
+          if (!item.ask) continue
+          const key = shapeKeyFor(item, index)
+          if (key && (remembered.get(key) ?? 0) > Date.now())
+            Object.assign(item, { ask: false, explanation: "same command shape as one the human approved in this session" })
+        }
+
       // Strictest outcome across the whole batch wins.
       const blocking = reviewed.filter((r) => r.ask)
+      if (blocking.length > 0 && shapeRoot) {
+        const keys = reviewed.flatMap((item, index) => (item.ask ? [shapeKeyFor(item, index)] : [])).filter(
+          (key): key is string => !!key,
+        )
+        if (keys.length)
+          for (const id of [input.id, input.tool?.callID])
+            if (typeof id === "string") pendingShapeApprovals.set(id, { root: shapeRoot, keys })
+        while (pendingShapeApprovals.size > 1000) pendingShapeApprovals.delete(pendingShapeApprovals.keys().next().value!)
+      }
       if (blocking.length > 0) {
         const reasons = [...new Set(blocking.flatMap((r) => r.reasons))]
         const policy = reasons.filter((r) => !r.startsWith("no script evidence"))

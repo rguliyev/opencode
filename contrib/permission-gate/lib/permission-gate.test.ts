@@ -1345,6 +1345,45 @@ test("a read-only agent's dual-use shell command needs both the final reviewer a
     expect(await batched(['echo "=== DIFF A ==="', 'echo "=== DIFF B ==="'])).toBe("allow")
     expect(await batched(["cd /data/rguliyev/tmp/opencode/worktrees/charts", 'echo "=== DIFF B ==="'])).toBe("allow")
     expect(await batched(['echo "=== DIFF A ==="', 'echo "$GRAFANA_TOKEN"'])).toBe("ask")
+    // Allow once per shape: after the human approves a prompted command, the
+    // same command with only new timestamps or IDs passes in this session;
+    // a different project, an automatic reply, or a human-only operation does not.
+    const shaped = async (command: string, callID: string) => {
+      const output = { status: "ask" }
+      await hooks["permission.ask"](
+        {
+          id: `per_${callID}`,
+          permission: "bash",
+          sessionID: "ses_reviewer_shell",
+          patterns: [command],
+          metadata: { command, purpose: "Inspect serial console logs" },
+          tool: { callID },
+        } as never,
+        output,
+      )
+      return output.status
+    }
+    const reply = async (callID: string, origin: string) => {
+      await hooks.event({
+        event: { type: "permission.asked", properties: { id: `per_${callID}`, sessionID: "ses_reviewer_shell", permission: "bash", tool: { callID } } },
+      } as never)
+      await hooks.event({
+        event: { type: "permission.replied", properties: { requestID: `per_${callID}`, sessionID: "ses_reviewer_shell", reply: "once", origin, direct: true } },
+      } as never)
+    }
+    const logs = (time: string, id: string, project = "e2b-staging") =>
+      `gcloud logging read 'timestamp>="2026-10-06T${time}Z" AND resource.labels.instance_id="${id}"' --project=${project} --limit=50`
+    expect(await shaped(logs("14:24:25", "8900738816775441841"), "call_shape_1")).toBe("ask")
+    expect(await shaped(logs("14:30:00", "8900738816775441841"), "call_shape_unapproved")).toBe("ask")
+    await reply("call_shape_1", "human")
+    expect(await shaped(logs("15:10:02", "1234567890123456789"), "call_shape_2")).toBe("allow")
+    expect(await shaped(logs("15:10:02", "1234567890123456789", "e2b-juliett"), "call_shape_3")).toBe("ask")
+    expect(await shaped("git push --force origin feature-x", "call_shape_push")).toBe("ask")
+    await reply("call_shape_push", "human")
+    expect(await shaped("git push --force origin feature-y", "call_shape_push_2")).toBe("ask")
+    expect(await shaped("kubectl get pods -n team-42 --context=dev", "call_shape_auto")).toBe("ask")
+    await reply("call_shape_auto", "automatic")
+    expect(await shaped("kubectl get pods -n team-43 --context=dev", "call_shape_auto_2")).toBe("ask")
     // Creating a task scratch folder needs no review; folders in worktrees,
     // the gate's runtime directory, or outside scratch roots still do.
     expect(await batched(["mkdir -p /data/rguliyev/tmp/opencode/audit-20261006/serving"])).toBe("allow")
