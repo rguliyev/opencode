@@ -640,7 +640,9 @@ function segmentRequiresHumanOperation(raw: string) {
   const parts = commandParts(segment)
   if (helpExitTools.has(executableName(parts.verb)) && parts.args.includes("--help") && !/\$\(|`/.test(segment))
     return false
-  if (!textOnlyTools.has(executableName(commandParts(segment).verb)))
+  // A `gcloud logging read` filter is search text, like a grep pattern.
+  const logSearch = executableName(parts.verb) === "gcloud" && parts.args[0] === "logging" && parts.args[1] === "read"
+  if (!textOnlyTools.has(executableName(parts.verb)) && !logSearch)
     return requiresHumanOperation(raw) || requiresHumanOperation(segment)
   // Single-quoted text never expands; double-quoted text can hide $(...) or
   // backticks, so only substitution-free double quotes are blanked.

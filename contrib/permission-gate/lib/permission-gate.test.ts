@@ -1602,6 +1602,12 @@ test("shell segments get module evidence and self-contained segments are judged 
     }
     expect(await shellStatus('grep -n -i "xfs\\|ext4\\|mkfs\\|btrfs" notes.txt')).toBe("allow")
     expect(await shellStatus("rg 'git push|rm -rf' docs")).toBe("allow")
+    expect(
+      await shellStatus(
+        `gcloud logging read 'resource.type="gce_instance" AND textPayload=~"(?i)xfs|mkfs|nvme|rm -rf"' --project=e2b-dev-rauf-guliyev --limit=50`,
+      ),
+    ).toBe("allow")
+    expect(await shellStatus("gcloud logging read \"$(mkfs.ext4 /dev/sdb)\" --project=e2b-dev-rauf-guliyev")).toBe("ask")
     expect(await shellStatus('echo "$(mkfs.ext4 /dev/sdb)"')).toBe("ask")
     expect(await shellStatus('bash -c "grep x f | mkfs.ext4 /dev/sdb"')).toBe("ask")
 
