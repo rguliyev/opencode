@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "about": "Standing human policy that the permission gate sends to both reviewers (Jev and the final reviewer) as context.environment_policy. Edit this file, not the plugin code, to change what the reviewers may approve. The hard human gates (force push and history rewrites, merges, PR close, terraform/terragrunt apply and destroy outside local dev, live kubectl mutations, IAM and policy changes, secret values and credential material, protected OpenCode configuration, ~/.ssh, and evidence withheld because redaction failed) are enforced in code and cannot be relaxed here. Classes match in order; the first match wins; a trailing * matches any suffix.",
+  "gcp_projects": {
+    "classes": [
+      {
+        "class": "dev",
+        "match": [
+          "e2b-dev-*"
+        ],
+        "policy": "Personal development projects. Reads, lists, describes, and log or metric queries are allowed. Changes are allowed when they serve the human's current task; hard gates still apply."
+      },
+      {
+        "class": "staging",
+        "match": [
+          "e2b-staging",
+          "e2b-byoc-staging",
+          "e2b-staging-*"
+        ],
+        "policy": "Shared staging. Reads, lists, describes, and log or metric queries are allowed. Changes only when the human's current task calls for that change in staging; hard gates still apply."
+      },
+      {
+        "class": "production",
+        "match": [
+          "e2b-foxtrot",
+          "e2b-tango",
+          "e2b-juliett-europe",
+          "sandboxes-prod-*",
+          "prj-e2b-*",
+          "felix-sandboxes-prod-*"
+        ],
+        "policy": "Production. Read-only by default: reads, lists, describes, and log or metric queries that serve the task are allowed; any change asks."
+      },
+      {
+        "class": "shared",
+        "match": [
+          "e2b-shared",
+          "e2b-management",
+          "e2b-global*",
+          "e2b-artifacts",
+          "e2b-observability"
+        ],
+        "policy": "Shared and management projects. Read-only; any change asks."
+      }
+    ],
+    "unclassified": "Any other project the human's GCP allowlist permits (for example e2b-development, e2b-growth, prj-dev-eu-e2b): read-only; any change asks. A project outside that allowlist is a hard human gate."
+  },
+  "local_paths": {
+    "classes": [
+      {
+        "class": "gate_runtime",
+        "prefix": "/data/rguliyev/tmp/opencode/gate-delegation-runtime",
+        "policy": "The gate's own runtime directory (scripts the human runs with sudo). Any write or delete asks."
+      },
+      {
+        "class": "worktree",
+        "prefix": "/data/rguliyev/tmp/opencode/worktrees",
+        "policy": "Dedicated git worktrees. Creating, editing, generating, and deleting files here, including configuration, Terraform, and IAM files, is fine when it serves the task: nothing changes live until a separately gated push, PR, apply, or deploy. An instruction not to change configuration does not forbid worktree edits. Removing a whole worktree needs the human's request."
+      },
+      {
+        "class": "scratch",
+        "prefix": "/data/rguliyev/tmp/opencode",
+        "policy": "Scratch space outside repositories. Creating, editing, and deleting task folders, notes, scripts, query output, and caches here is fine."
+      },
+      {
+        "class": "scratch",
+        "prefix": "/tmp",
+        "policy": "Scratch space. Creating, editing, and deleting temporary files here is fine."
+      }
+    ],
+    "other": "Anywhere else (the home directory, checkouts under /data/rguliyev/src, system paths): read-only inspection that serves the task is fine; writes or deletes need the human's explicit request for that path."
+  },
+  "services": [
+    {
+      "service": "grafana",
+      "policy": "Grafana reads (MCP list/get/search/query tools, the verified grafana-query helper) are allowed when they serve the task. Changing dashboards, alerting, contact points, or incidents asks."
+    },
+    {
+      "service": "github",
+      "policy": "Read-only queries (gh pr view/diff/list, gh run view, gh api GET) are inspection. Publishing follows reviewer_rules; merges, PR close, force pushes, and pushes to shared branches are hard gates."
+    },
+    {
+      "service": "google_apis",
+      "policy": "A read-only GET to *.googleapis.com that sends $(gcloud auth print-access-token) only as a Bearer header uses the human's login: allow it when it serves the task and prints no token. A grafana-query or google-api-get call verified by context.command_evidence is a read-only query; allow it for the task. Ask for any other token handling."
+    }
+  ],
+  "reviewer_rules": [
+    "A git push of a named feature branch, or gh pr create/edit/ready/comment (or a gh api PR title/body edit per command_evidence), may be allowed only when the direct human messages explicitly ask to push or open or update a PR for this work, at any point and not since revoked (asking for more changes does not revoke it; pushing the revised branch continues the request; handing the agent a PR, e.g. \"you own #N\", requests pushing and updating that PR), or context.session_decisions shows the human approved pushing the same branch; otherwise ask. A local git merge in a dedicated worktree is ordinary local work.",
+    "A skill load only reads that skill's instructions; each action the skill describes gets its own permission check. Judge it against the human's overall task, not only the current step: loading a PR or deployment skill early is not creating a PR or deploying. Likewise, delegating a task whose instructions include committing, pushing, or opening a PR is not publishing; those steps are separately gated.",
+    "action.tool_effect marks a Grafana MCP read tool: allow it when it serves the task.",
+    "The attested goal-plugin tools get_goal, get_goal_history, and goal_status only read goal status (plus local bookkeeping), goal_block only pauses autonomous work for the human, and goal_complete only records the agent's completion evidence and ends autonomous work; all are within any task. goal_resume restarts autonomous work and needs a direct human request.",
+    "An existing E2B sandbox identified by direct human messages for the current isolated test is task-local, not production or unrelated shared state: task credentials may be used only inside it, and restarting its test worker after a status report continues the testing instruction. This covers no new sandbox, service, or test expansion. Ask if the sandbox identity is not corroborated by direct human messages, the remote program's effects are unknown, credentials could leave that sandbox, or the action changes live Grafana, Slack, IAM, secrets, security controls, or production.",
+    "For edit/apply_patch, newly written references to process.env.NAME, Sandbox.create, or commands.run do not perform those operations, but formatter runs and policy-changing edits are present effects. Ask if formatter effects are unknown, or for embedded credential literals, backdoor or exfiltration code, security-policy edits the task did not ask for, or edits outside the human request."
+  ]
+}

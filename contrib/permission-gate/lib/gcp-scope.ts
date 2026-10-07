@@ -54,6 +54,11 @@ function captures(command: string, expression: RegExp) {
   return values
 }
 
+// Every literal GCP project ID the command names, for reviewer context.
+export function projectsNamed(command: string) {
+  return [...explicitProjects(command)].filter((project) => projectID.test(project))
+}
+
 function explicitProjects(command: string) {
   const projects = [
     ...captures(

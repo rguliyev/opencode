@@ -1976,6 +1976,7 @@ test("configured OpenCode the final reviewer resolves Jev escalations with trust
   let jevState: Record<string, unknown> | undefined
   let jevQuestions: unknown
   const finalReviewSignals: (AbortSignal | null | undefined)[] = []
+  let policySeen = false
   process.env.XDG_STATE_HOME = "/dev/null"
   process.env.OPENCODE_KEV_SOCKET = "/dev/null/no-kev-socket"
   globalThis.fetch = async (input, init) => {
@@ -2036,19 +2037,26 @@ test("configured OpenCode the final reviewer resolves Jev escalations with trust
       finalReviewState = JSON.parse(input.state)
       expect(input.system).toContain("last automatic reviewer")
       expect(input.system).toContain("a shell command, read, or fetch never launches a subagent")
-      expect(input.system).toContain("An existing E2B sandbox identified by direct human messages")
-      expect(input.system).toContain("continues the testing instruction")
-      expect(input.system).toContain("Ask if the sandbox identity is not corroborated by direct human messages")
-      expect(input.system).toContain("the remote program's effects are unknown")
       expect(input.system).toContain("independently judged this exact action or command to be read-only in effect")
       expect(input.system).toContain("reading data into the agent's context for the human's task is not credential disclosure")
-      expect(input.system).toContain("A skill load only reads that skill's instructions")
-      expect(input.system).toContain("Standing human policy: editing files inside dedicated worktrees")
       expect(input.system).toContain("re-reads the agent's own earlier tool results")
       expect(input.system).toContain("For review or research, read-only inspection of history")
-      expect(input.system).toContain("get_goal, get_goal_history, and goal_status only read goal status")
-      expect(input.system).toContain("goal_complete only records the agent's completion evidence and ends autonomous work")
-      expect(input.system).toContain("action.tool_effect marks a Grafana MCP read tool")
+      expect(input.system).toContain("context.environment_policy is the human's standing policy")
+      // Domain rules live in the human-edited policy file, sent as state.
+      const policy = JSON.parse(input.state).context?.environment_policy
+      if (policy) {
+        policySeen = true
+        const text = JSON.stringify(policy)
+        expect(text).toContain("An existing E2B sandbox identified by direct human messages")
+        expect(text).toContain("continues the testing instruction")
+        expect(text).toContain("Ask if the sandbox identity is not corroborated by direct human messages")
+        expect(text).toContain("the remote program's effects are unknown")
+        expect(text).toContain("A skill load only reads that skill's instructions")
+        expect(text).toContain("including configuration, Terraform, and IAM files, is fine when it serves the task")
+        expect(text).toContain("get_goal, get_goal_history, and goal_status only read goal status")
+        expect(text).toContain("goal_complete only records the agent's completion evidence and ends autonomous work")
+        expect(text).toContain("action.tool_effect marks a Grafana MCP read tool")
+      }
       if (JSON.parse(input.state).action?.permission === "webfetch")
         expect(JSON.parse(input.state).context.immediate_effect).toContain("changes no remote state")
       if (finalReviewDelayMs) await new Promise((resolve) => setTimeout(resolve, finalReviewDelayMs))
@@ -3143,6 +3151,7 @@ test("configured OpenCode the final reviewer resolves Jev escalations with trust
     expect((finalReviewState?.context as { local_rules?: string[] })?.local_rules).toContain(
       "protected OpenCode configuration",
     )
+    expect(policySeen).toBe(true)
   } finally {
     globalThis.fetch = previousFetch
     if (previousStateHome === undefined) delete process.env.XDG_STATE_HOME
