@@ -135,6 +135,7 @@ type ActionEvidence = {
   tool?: string
   tool_description?: string
   trusted_effect?: string
+  tool_effect?: string
   args?: unknown
   metadata?: Record<string, unknown>
   local_evidence?: LocalReadEvidence
@@ -640,6 +641,23 @@ function segmentRequiresHumanOperation(raw: string) {
   const parts = commandParts(segment)
   if (helpExitTools.has(executableName(parts.verb)) && parts.args.includes("--help") && !/\$\(|`/.test(segment))
     return false
+  // Removing a tool's own scratch cache (`rm -rf .cache/n4-swap`, `.validation/tmp`)
+  // under the working directory is cleanup, not a human-only delete. Absolute
+  // paths, `..`, globs, and variables still ask.
+  if (executableName(parts.verb) === "rm" && !parts.directory && !/[$`*?[\]{}~]/.test(segment)) {
+    const targets = parts.args.filter((argument) => !/^-[rRfv]+$/.test(argument))
+    if (
+      targets.length > 0 &&
+      targets.length === parts.args.length - parts.args.filter((argument) => /^-[rRfv]+$/.test(argument)).length &&
+      targets.every((target) =>
+        /^(?:(?:\.\/)?|\/data\/rguliyev\/tmp\/opencode\/worktrees\/(?:[A-Za-z0-9._-]+\/)+)\.(?:cache|validation)(?:\/[A-Za-z0-9._-]+)*\/?$/.test(
+          target.replace(/^(["'])(.*)\1$/, "$2"),
+        ) &&
+        !target.split("/").includes(".."),
+      )
+    )
+      return false
+  }
   // A `gcloud logging read` filter is search text, like a grep pattern.
   const logSearch = executableName(parts.verb) === "gcloud" && parts.args[0] === "logging" && parts.args[1] === "read"
   if (!textOnlyTools.has(executableName(parts.verb)) && !logSearch)
@@ -947,7 +965,8 @@ const ghReadOnly = new Set([
 // Grafana MCP tools named as reads (grafana-<instance>_list_*, _get_*,
 // _search_*, _query_*, _find_*, _user_info) only read; a read-only agent may
 // ask the reviewers for them. Every other MCP tool stays outside the role.
-const grafanaMcpReadTool = /^grafana-[a-z0-9-]+_(?:(?:list|get|search|query|find)_[a-z0-9_]+|user_info)$/
+const grafanaMcpReadTool =
+  /^grafana-[a-z0-9-]+_(?:(?:list|get|search|query|find)_[a-z0-9_]+|[a-z0-9_]+_read|user_info|assistant_search)$/
 
 // "Allow once" for a command shape: after the human directly approves a
 // prompt, a later command in the same session tree that differs only in
@@ -2759,7 +2778,8 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
       "A skill load only reads that skill's instructions; each action the skill describes gets its own permission check. Judge it against the human's overall task, not only the current step: loading a PR or deployment skill early is not creating a PR or deploying. Likewise, delegating a task whose instructions include committing, pushing, or opening a PR is not publishing; those steps are separately gated.",
       "When a shell segment's context has no full_command, the gate judged it self-contained (it only prints or filters stdin): judge it alone. context.module_evidence says whether a go run module is go.sum-pinned (a verified dependency). context.command_evidence is the gate's local reading of the command's flags, e.g. a read-only gh api GET or a validator that writes nothing. A read-only remote query (a GET, gh pr view/diff/list, gh run view) is read-only inspection. For review or research, read-only inspection of history, changelogs, adjacent versions, sibling repositories, and related files is within the task; ask only when the target is clearly unrelated.",
       "Standing human policy: editing files inside dedicated worktrees under /data/rguliyev/tmp/opencode/worktrees, including configuration, Terraform, and IAM files, is allowed when it serves the human's task; such edits change nothing live, and push, PR, apply, and deploy are gated separately. An instruction not to change configuration does not forbid worktree edits. Still ask for embedded credential literals, backdoor or exfiltration code, or edits outside worktrees.",
-      "The attested goal-plugin tools get_goal, get_goal_history, and goal_status only read goal status and keep local bookkeeping (a persistence lease and state snapshot), goal_block only pauses autonomous work to wait for the human, and goal_complete only records the agent's completion evidence and ends autonomous work; they are within any task. goal_resume restarts autonomous work and still needs a direct human request.",
+      "action.tool_effect marks a Grafana MCP read tool: allow it when it serves the task.",
+      "The attested goal-plugin tools get_goal, get_goal_history, and goal_status only read goal status (plus local bookkeeping), goal_block only pauses autonomous work for the human, and goal_complete only records the agent's completion evidence and ends autonomous work; all are within any task. goal_resume restarts autonomous work and needs a direct human request.",
       "A git push of a named feature branch, or gh pr create/edit/ready/comment (or a gh api PR title/body edit per command_evidence), may be allowed only when the direct human messages explicitly ask to push or open or update a PR for this work, at any point and not since revoked (asking for more changes does not revoke it; pushing the revised branch continues the request; handing the agent a PR, e.g. \"you own #N\", requests pushing and updating that PR), or context.session_decisions shows the human approved pushing the same branch; otherwise ask. Pushes to shared branches, force pushes, and PR or remote merges are never yours to allow; a local git merge in a dedicated worktree is ordinary local work.",
       "A read-only GET to *.googleapis.com that sends $(gcloud auth print-access-token) only as a Bearer header uses the human's login; allow it when it serves the task and prints no token. Ask for any other token handling. A grafana-query or google-api-get call verified by command_evidence is a read-only query; allow it for the task.",
       "Return allow ONLY when this exact action is clearly within the applicable direct human task and role policy, with no credential disclosure, regulated-data exposure, destructive effect, security-control change, production or unrelated shared-state mutation, opaque side effect, or human-only gate. Otherwise ask.",
@@ -3033,6 +3053,13 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
         : {}),
       ...(call ? { tool: call.tool, args } : {}),
       ...(trustedEffect ? { trusted_effect: trustedEffect } : {}),
+      // The tool name comes from the configured Grafana MCP server, not the agent.
+      ...(grafanaMcpReadTool.test(input.permission)
+        ? {
+            tool_effect:
+              "Grafana MCP read tool from the configured Grafana server: it lists, searches, or queries Grafana data (datasources, Loki, Prometheus, alert rules) and changes nothing.",
+          }
+        : {}),
       ...(input.permission === "tool_call" && call && toolDescriptions.has(call.tool)
         ? { tool_description: toolDescriptions.get(call.tool) }
         : {}),

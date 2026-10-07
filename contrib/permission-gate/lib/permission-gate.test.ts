@@ -1602,6 +1602,23 @@ test("shell segments get module evidence and self-contained segments are judged 
     }
     expect(await shellStatus('grep -n -i "xfs\\|ext4\\|mkfs\\|btrfs" notes.txt')).toBe("allow")
     expect(await shellStatus("rg 'git push|rm -rf' docs")).toBe("allow")
+    // A tool's own scratch cache under the working directory may be removed.
+    expect(await shellStatus('rm -rf ".cache/n4-swap/node-init" ".cache/n4-swap/e2b-common"')).toBe("allow")
+    expect(await shellStatus("rm -rf .validation/tmp")).toBe("allow")
+    expect(
+      await shellStatus("rm -rf /data/rguliyev/tmp/opencode/worktrees/terraform/x/.validation/tf-data-provider-gcp"),
+    ).toBe("allow")
+    for (const command of [
+      "rm -rf /data/rguliyev/tmp/opencode/worktrees/charts",
+      "rm -rf .cache/../src",
+      "rm -rf .cache/*",
+      'rm -rf "$CACHE"',
+      "rm -rf .cache/x src",
+      "rm -rf ~/.cache/x",
+      "rm -rf /data/rguliyev/tmp/opencode/worktrees/terraform/x/src",
+      "rm -rf /data/rguliyev/.cache/x",
+    ])
+      expect(await shellStatus(command)).toBe("ask")
     expect(
       await shellStatus(
         `gcloud logging read 'resource.type="gce_instance" AND textPayload=~"(?i)xfs|mkfs|nvme|rm -rf"' --project=e2b-dev-rauf-guliyev --limit=50`,
@@ -2031,6 +2048,7 @@ test("configured OpenCode the final reviewer resolves Jev escalations with trust
       expect(input.system).toContain("For review or research, read-only inspection of history")
       expect(input.system).toContain("get_goal, get_goal_history, and goal_status only read goal status")
       expect(input.system).toContain("goal_complete only records the agent's completion evidence and ends autonomous work")
+      expect(input.system).toContain("action.tool_effect marks a Grafana MCP read tool")
       if (JSON.parse(input.state).action?.permission === "webfetch")
         expect(JSON.parse(input.state).context.immediate_effect).toContain("changes no remote state")
       if (finalReviewDelayMs) await new Promise((resolve) => setTimeout(resolve, finalReviewDelayMs))
