@@ -1320,7 +1320,11 @@ test("a read-only agent's dual-use shell command needs both the final reviewer a
       }
       for (const id of Object.keys(payload.questions))
         if (id !== "verdict")
-          answers[id] = { type: "noul", noul: id === "reviewer_mutation" ? mutation[payload.state.command] : 0.01 }
+          answers[id] = {
+            type: "noul",
+            // Non-shell actions (MCP tools) carry no command; score them as reads.
+            noul: id === "reviewer_mutation" ? (payload.state.command === undefined ? 0.01 : mutation[payload.state.command]) : 0.01,
+          }
       return Response.json({ model: "typesafe/jev-1.13", answers })
     }
     throw new Error(`Unexpected fetch: ${url}`)
@@ -1365,6 +1369,26 @@ test("a read-only agent's dual-use shell command needs both the final reviewer a
     expect(await batched(['echo "=== DIFF A ==="', 'echo "=== DIFF B ==="'])).toBe("allow")
     expect(await batched(["cd /data/rguliyev/tmp/opencode/worktrees/charts", 'echo "=== DIFF B ==="'])).toBe("allow")
     expect(await batched(['echo "=== DIFF A ==="', 'echo "$GRAFANA_TOKEN"'])).toBe("ask")
+    // Grafana MCP read tools are within the read-only role; other MCP tools are not.
+    finalReviewChoice = "allow"
+    const mcp = async (tool: string) => {
+      const callID = `call_${tool}`
+      await hooks["tool.execute.before"](
+        { tool, sessionID: "ses_reviewer_shell", callID },
+        { args: { datasourceUid: "loki", labelName: "env" } },
+      )
+      const output = { status: "ask" }
+      await hooks["permission.ask"](
+        { permission: tool, sessionID: "ses_reviewer_shell", patterns: ["*"], metadata: {}, tool: { callID } },
+        output,
+      )
+      return output.status
+    }
+    expect(await mcp("grafana-prod_list_loki_label_values")).toBe("allow")
+    expect(await mcp("grafana-prod_query_loki_logs")).toBe("allow")
+    expect(await mcp("grafana-prod_update_dashboard")).toBe("ask")
+    expect(await mcp("grafana-prod_create_incident")).toBe("ask")
+    finalReviewChoice = "ask"
     // Allow once per shape: after the human approves a prompted command, the
     // same command with only new timestamps or IDs passes in this session;
     // a different project, an automatic reply, or a human-only operation does not.

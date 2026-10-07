@@ -942,6 +942,11 @@ const ghReadOnly = new Set([
   "search code", "search prs", "search issues", "search repos",
 ])
 
+// Grafana MCP tools named as reads (grafana-<instance>_list_*, _get_*,
+// _search_*, _query_*, _find_*, _user_info) only read; a read-only agent may
+// ask the reviewers for them. Every other MCP tool stays outside the role.
+const grafanaMcpReadTool = /^grafana-[a-z0-9-]+_(?:(?:list|get|search|query|find)_[a-z0-9_]+|user_info)$/
+
 // "Allow once" for a command shape: after the human directly approves a
 // prompt, a later command in the same session tree that differs only in
 // timestamps, numbers, or long hex IDs, with the same reasons and the same
@@ -2932,7 +2937,8 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
       reviewer &&
       !new Set(["read", "glob", "grep", "lsp", "skill", "webfetch", "websearch", "external_directory"]).has(
         input.permission,
-      )
+      ) &&
+      !grafanaMcpReadTool.test(input.permission)
     const patterns = Array.isArray(input.patterns)
       ? input.patterns.filter((item): item is string => typeof item === "string")
       : []
