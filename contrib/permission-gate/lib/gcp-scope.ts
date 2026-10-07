@@ -64,7 +64,12 @@ function explicitProjects(command: string) {
       command,
       /(?:CLOUDSDK_CORE_PROJECT|CLOUDSDK_CORE_BILLING_PROJECT|GOOGLE_CLOUD_PROJECT|GOOGLE_CLOUD_QUOTA_PROJECT|GCLOUD_PROJECT|TF_VAR_project|TF_VAR_project_id)\s*=\s*(?:"([^"]+)"|'([^']+)'|([A-Za-z0-9][A-Za-z0-9._:-]*))/g,
     ),
-    ...captures(command, /(?:^|[^A-Za-z0-9_-])projects\/([a-z][a-z0-9-]{4,28}[a-z0-9])/g),
+    // A `projects/<id>` path names a GCP project only outside non-Google URLs:
+    // gitlab.com/api/v4/projects/torvalds%2Flinux is a GitLab project.
+    ...captures(
+      command.replace(/\bhttps?:\/\/(?![a-z0-9.-]*\b(?:googleapis|google)\.com(?:[/:?#]|$))[^\s'"`]+/gi, ""),
+      /(?:^|[^A-Za-z0-9_-])projects\/([a-z][a-z0-9-]{4,28}[a-z0-9])/g,
+    ),
     ...captures(command, /([a-z][a-z0-9-]{4,28}[a-z0-9])\.iam\.gserviceaccount\.com/g),
     ...captures(
       command,
