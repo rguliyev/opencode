@@ -296,3 +296,35 @@ test("ambient credential use is reviewer evidence; credential stores stay a huma
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test("a dynamically chosen GCP project is reviewer evidence; credential switches and unlisted projects stay hard", async () => {
+  // Real prompts: Python code passing a quoted --project flag, and a loop variable.
+  const code = `python3 -c 'import subprocess; print(subprocess.run(["gcloud", "logging", "read", "severity>=ERROR", "--project=e2b-staging", "--limit=5"], capture_output=True).stdout)'`
+  await expectEvidence(() => bash(code), "gcp_dynamic_project", "GCP project chosen dynamically")
+  expect(context(harness.final.at(-1)?.state).environment?.gcp_projects).toContainEqual({ project: "e2b-staging", class: "staging" })
+  await expectEvidence(
+    () => bash('for proj in $(cat projects.txt); do gcloud run services list --project="$proj"; done', {
+      patterns: ['gcloud run services list --project="$proj"'],
+    }),
+    "gcp_dynamic_project",
+  )
+  // A loop over listed projects resolves statically: no finding at all.
+  harness.jevAllow = true
+  try {
+    expect(
+      (
+        await bash('for p in e2b-staging e2b-foxtrot; do gcloud container clusters list --project="$p"; done', {
+          patterns: ['gcloud container clusters list --project="$p"'],
+        })
+      ).status,
+    ).toBe("allow")
+    expect(harness.final).toHaveLength(0)
+  } finally {
+    harness.jevAllow = false
+  }
+  await expectHard(() => bash("gcloud compute instances list --account=other@example.test"), "Google Cloud login")
+  await expectHard(() => bash("gcloud compute instances list --impersonate-service-account=sa@e2b-staging.iam.gserviceaccount.com"))
+  await expectHard(() => bash("CLOUDSDK_CONFIG=/tmp/other gcloud projects list"))
+  await expectHard(() => bash("gcloud auth activate-service-account --key-file=/tmp/key.json"))
+  await expectHard(() => bash("gcloud compute instances list --project=some-unlisted-project"), "some-unlisted-project")
+})

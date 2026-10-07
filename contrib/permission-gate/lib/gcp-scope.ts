@@ -144,15 +144,30 @@ function hasDynamicScope(command: string) {
 const sharedGcloudConfig = /\bCLOUDSDK_CONFIG=(["']?)\/data\/rguliyev\/tmp\/opencode\/gcloud-remote-auth\/config\1(?=\s|$)/g
 
 function attemptsScopeSwitch(command: string) {
+  return switchesCredentials(command) || switchesProjectDynamically(command)
+}
+
+// Changing which identity or gcloud configuration acts: credential material.
+function switchesCredentials(command: string) {
+  command = command.replace(sharedGcloudConfig, "")
+  return (
+    /\bCLOUDSDK_(?:ACTIVE_CONFIG_NAME|CONFIG|AUTH_CREDENTIAL_FILE_OVERRIDE)\s*=/.test(command) ||
+    (/\bgcloud\b/.test(command) && /--(?:configuration|account|impersonate-service-account)(?:=|\s+)/.test(command)) ||
+    /\bgcloud\b[^\n;|&]*\bconfig\s+(?:(?:set|unset)\s+(?:account|auth\/impersonate_service_account)|configurations\s+activate)\b/.test(command) ||
+    /\bgcloud\b[^\n;|&]*\bauth\s+(?:login|revoke|activate-service-account|print-access-token|application-default\s+(?:login|set-quota-project|print-access-token))\b/.test(command)
+  )
+}
+
+// A project the gate cannot resolve statically: a variable, a --project flag
+// inside quoted code, an unset project variable, or changing the configured
+// project. The identity stays the same.
+function switchesProjectDynamically(command: string) {
   command = command.replace(sharedGcloudConfig, "")
   return (
     hasDynamicScope(command) ||
-    /\bCLOUDSDK_(?:ACTIVE_CONFIG_NAME|CONFIG|AUTH_CREDENTIAL_FILE_OVERRIDE)\s*=/.test(command) ||
     new RegExp(`(?:\\benv\\b[^;|&]*?\\s-u\\s+|\\bunset\\s+|\\bexport\\s+-n\\s+)(?:${scopeVariables})\\b`).test(command) ||
     new RegExp(`(?:${scopeVariables})\\s*=\\s*(?:$|[;|&])`).test(command) ||
-    (/\bgcloud\b/.test(command) && /--(?:configuration|account|impersonate-service-account)(?:=|\s+)/.test(command)) ||
-    /\bgcloud\b[^\n;|&]*\bconfig\s+(?:(?:set|unset)\s+(?:project|core\/project|billing\/quota_project|account|auth\/impersonate_service_account)|configurations\s+activate)\b/.test(command) ||
-    /\bgcloud\b[^\n;|&]*\bauth\s+(?:login|revoke|activate-service-account|print-access-token|application-default\s+(?:login|set-quota-project|print-access-token))\b/.test(command)
+    /\bgcloud\b[^\n;|&]*\bconfig\s+(?:set|unset)\s+(?:project|core\/project|billing\/quota_project)\b/.test(command)
   )
 }
 
@@ -165,15 +180,39 @@ export function targetsOnlyDefaultProject(command: string) {
   return [...explicitProjects(command)].every((project) => project === policy.default_project)
 }
 
-export function gcpScopeReviewMessage(command: string, sessions?: string[]) {
+export type GcpScopeFinding = {
+  // credential_switch and unlisted_projects are hard human gates;
+  // dynamic_project is evidence for the reviewers.
+  kind: "credential_switch" | "unlisted_projects" | "dynamic_project"
+  message: string
+}
+
+export function gcpScopeFinding(command: string, sessions?: string[]): GcpScopeFinding | undefined {
   const policy = loadPolicy(sessions)
-  if (attemptsScopeSwitch(command)) {
-    return `GCP project or credential selection requires human review. Default project: ${policy.default_project}`
-  }
+  if (switchesCredentials(command))
+    return {
+      kind: "credential_switch",
+      message: `GCP credential selection requires human review. Default project: ${policy.default_project}`,
+    }
   const allowed = new Set(policy.allowed_projects)
-  const denied = [...explicitProjects(command)].filter((project) => !allowed.has(project))
-  if (denied.length === 0) return undefined
-  return `GCP project${denied.length === 1 ? "" : "s"} ${denied.join(", ")} require human review. Default project: ${policy.default_project}`
+  // A captured "$proj" is a variable, not a project ID: it is judged below as
+  // a dynamic choice. Every other value outside the allowlist is unlisted.
+  const denied = [...explicitProjects(command)].filter((project) => !allowed.has(project) && !/[$`]/.test(project))
+  if (denied.length)
+    return {
+      kind: "unlisted_projects",
+      message: `GCP project${denied.length === 1 ? "" : "s"} ${denied.join(", ")} require human review. Default project: ${policy.default_project}`,
+    }
+  if (switchesProjectDynamically(command))
+    return {
+      kind: "dynamic_project",
+      message: `GCP project chosen dynamically; the gate could not resolve it. Default project: ${policy.default_project}`,
+    }
+  return undefined
+}
+
+export function gcpScopeReviewMessage(command: string, sessions?: string[]) {
+  return gcpScopeFinding(command, sessions)?.message
 }
 
 // `for p in e2b-staging e2b-foxtrot; do ... --project="$p"; done` names its
@@ -195,20 +234,22 @@ function loopBindings(fullCommand: string) {
   return bindings
 }
 
-export function gcpScopeReviewMessageInLoop(segment: string, fullCommand: unknown, sessions?: string[]) {
+export function gcpScopeFindingInLoop(segment: string, fullCommand: unknown, sessions?: string[]) {
   const bindings = typeof fullCommand === "string" ? loopBindings(fullCommand) : new Map<string, string[]>()
   const used = [...bindings.keys()].filter((name) => new RegExp(`\\$(?:\\{${name}\\}|${name}\\b)`).test(segment))
-  if (!used.length) return gcpScopeReviewMessage(segment, sessions)
+  if (!used.length) return gcpScopeFinding(segment, sessions)
   let variants = [segment]
   for (const name of used) {
     variants = variants.flatMap((variant) =>
       bindings.get(name)!.map((value) => variant.replace(new RegExp(`\\$(?:\\{${name}\\}|${name}\\b)`, "g"), value)),
     )
-    if (variants.length > 200) return gcpScopeReviewMessage(segment, sessions)
+    if (variants.length > 200) return gcpScopeFinding(segment, sessions)
   }
-  for (const variant of variants) {
-    const message = gcpScopeReviewMessage(variant, sessions)
-    if (message) return message
-  }
-  return undefined
+  // The strictest finding across the loop's values wins.
+  const findings = variants.flatMap((variant) => gcpScopeFinding(variant, sessions) ?? [])
+  return findings.find((finding) => finding.kind !== "dynamic_project") ?? findings[0]
+}
+
+export function gcpScopeReviewMessageInLoop(segment: string, fullCommand: unknown, sessions?: string[]) {
+  return gcpScopeFindingInLoop(segment, fullCommand, sessions)?.message
 }

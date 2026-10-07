@@ -3,10 +3,11 @@ import { createHash } from "node:crypto"
 import { awsScopeReviewMessage } from "../lib/aws-scope"
 import { classifyPath, classifyProject, loadEnvironmentPolicy, reviewerPolicy } from "../lib/environment-policy"
 import {
-  gcpScopeReviewMessage,
-  gcpScopeReviewMessageInLoop,
+  gcpScopeFinding,
+  gcpScopeFindingInLoop,
   projectsNamed,
   targetsOnlyDefaultProject,
+  type GcpScopeFinding,
 } from "../lib/gcp-scope"
 import { containsCredentialMaterial, sanitizeReviewText, sanitizeReviewValue } from "../lib/permission-redaction"
 import { appendFile, readFile, readdir } from "node:fs/promises"
@@ -127,6 +128,18 @@ type ReviewContext = {
 // A finding key names the guidance in environment-policy.json; the detail
 // is the gate's specific observation.
 type Finding = { finding: string; detail: string }
+
+// A credential switch or an unlisted project is a hard gate; a project the
+// gate cannot resolve is evidence: the reviewers read the code that picks it.
+function addGcpScope(found: (GcpScopeFinding | undefined)[], hard: string[], evidence: Finding[]) {
+  for (const finding of found) {
+    if (!finding) continue
+    if (finding.kind === "dynamic_project") {
+      if (!evidence.some((item) => item.finding === "gcp_dynamic_project"))
+        evidence.push({ finding: "gcp_dynamic_project", detail: finding.message })
+    } else if (!hard.includes(finding.message)) hard.push(finding.message)
+  }
+}
 
 function gateEvidence(findings: Finding[]) {
   return findings.map((item) => ({ finding: item.finding, detail: item.detail }))
@@ -1047,7 +1060,7 @@ const grafanaMcpReadTool =
 // inspected script contents, is allowed for 8 hours. Human-only operations,
 // protected configuration, credentials, secrets, and commands with withheld
 // text are never remembered.
-const rememberedReasons = /^(?:GCP project or credential selection requires human review|GCP projects? \S.* require human review)/
+const rememberedReasons = /^(?:GCP project chosen dynamically|GCP projects? \S.* require human review)/
 const approvedShapeTtlMs = 8 * 60 * 60 * 1000
 
 function commandShape(command: string) {
@@ -2110,8 +2123,10 @@ const plainReasons: [RegExp, string][] = [
 ]
 
 function plainReason(reason: string) {
-  const gcp = reason.match(/^GCP project or credential selection requires human review\.?\s*(.*)$/s)
-  if (gcp) return `It uses a Google Cloud project or login other than your default.${gcp[1] ? ` ${gcp[1]}` : ""}`
+  const login = reason.match(/^GCP credential selection requires human review\.?\s*(.*)$/s)
+  if (login) return `It switches the Google Cloud login or configuration.${login[1] ? ` ${login[1]}` : ""}`
+  const dynamic = reason.match(/^GCP project chosen dynamically[^.]*\.?\s*(.*)$/s)
+  if (dynamic) return `It picks a Google Cloud project at run time.${dynamic[1] ? ` ${dynamic[1]}` : ""}`
   const aws = reason.match(/^AWS (?:account|profile|credential)[^.]*\.?\s*(.*)$/s)
   if (aws) return `It uses an AWS account or profile other than your default.${aws[1] ? ` ${aws[1]}` : ""}`
   return plainReasons.find(([pattern]) => pattern.test(reason))?.[1] ?? reason
@@ -3411,9 +3426,11 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
     // project named "recent". The subagent's actual commands are still scoped.
     // Task prompts and edit diffs are text being handed over or written; they
     // run nothing. Terraform that mentions projects/<id> is not a gcloud call.
-    if (input.permission !== "task" && input.permission !== "edit")
-      for (const scope of [gcpScopeReviewMessage(policyRaw, sessions), awsScopeReviewMessage(policyRaw, sessions)])
-        if (scope) reasons.push(scope)
+    if (input.permission !== "task" && input.permission !== "edit") {
+      const aws = awsScopeReviewMessage(policyRaw, sessions)
+      if (aws) reasons.push(aws)
+      addGcpScope([gcpScopeFinding(policyRaw, sessions)], reasons, evidence)
+    }
     const policy = loadEnvironmentPolicy()
     if (evidence.length && !policy) reasons.push("environment policy unavailable: gate findings need the human")
     if (policy) context.environment_policy = reviewerPolicy(policy, evidence.map((item) => item.finding))
@@ -3987,18 +4004,18 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
               evidence.push({ finding: "publish", detail: "publish: needs the final reviewer to confirm an explicit human request" })
             else hard.push("human-only operation")
           }
-          const scopes = [gcpScopeReviewMessageInLoop(hardChecked, fullCommand, sessions), awsScopeReviewMessage(hardChecked, sessions)]
+          const scopes = [awsScopeReviewMessage(hardChecked, sessions)]
+          const gcpScopes = [gcpScopeFindingInLoop(hardChecked, fullCommand, sessions)]
           for (const script of inspection.scripts) {
             if (requiresHuman(script.content)) hard.push("script credential or secret access")
             else if (usesAmbientCredentials(script.content))
               evidence.push({ finding: "ambient_credentials", detail: "inspected script uses ambient credentials without printing them" })
             if (scriptRequiresHumanOperation(script.content)) hard.push("script human-only operation")
-            scopes.push(
-              gcpScopeReviewMessage(script.content, sessions),
-              awsScopeReviewMessage(script.content, sessions),
-            )
+            scopes.push(awsScopeReviewMessage(script.content, sessions))
+            gcpScopes.push(gcpScopeFinding(script.content, sessions))
           }
           for (const scope of scopes) if (scope) hard.push(scope)
+          addGcpScope(gcpScopes, hard, evidence)
           if (inspection.error)
             evidence.push({ finding: "missing_script_evidence", detail: `no script evidence: ${inspection.error}` })
           if (evidence.length && !policy) hard.push("environment policy unavailable: gate findings need the human")
