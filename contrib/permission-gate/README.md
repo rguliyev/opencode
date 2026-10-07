@@ -13,7 +13,45 @@ The files map to the user's OpenCode configuration as follows:
 | `lib/aws-scope.ts`             | `~/.config/opencode/lib/aws-scope.ts`                |
 | `lib/gcp-scope.ts`             | `~/.config/opencode/lib/gcp-scope.ts`                |
 | `lib/permission-redaction.ts`  | `~/.config/opencode/lib/permission-redaction.ts`     |
+| `lib/environment-policy.json`  | `~/.config/opencode/lib/environment-policy.json`     |
+| `lib/environment-policy.ts`    | `~/.config/opencode/lib/environment-policy.ts`       |
+| `lib/answer-history.ts`        | `~/.config/opencode/lib/answer-history.ts`           |
 | `kev/score_worker.py`          | Source for a separately managed Kev v2 socket worker |
+
+## Decision model
+
+Local checks sort what they find into two kinds. Hard reasons always ask the
+human, whatever the reviewers say: force pushes, pushes to shared branches,
+merges, PR close; terraform/terragrunt apply and destroy outside local dev;
+live kubectl mutations; IAM, secret, and security-control changes; disk
+formatting and exit-node changes; Secret Manager payloads, minting or
+printing tokens, provider-format tokens, private keys, JWTs, and webhook
+URLs; credential stores (`~/.ssh`, `~/.gnupg`, `~/.aws`, netrc, git and
+Docker credentials, OpenCode's `auth.json`, gcloud credential files, `.env`
+files); GCP credential switches and projects outside the allowlist; protected
+OpenCode configuration; read-only agents asking for non-read actions;
+unverified task lineage; and any review whose evidence had to be withheld
+because redaction failed.
+
+Everything else the gate notices is evidence, sent to both Jev and the final
+reviewer as `context.gate_evidence` (generic credential-like patterns,
+ambient credential use, dynamically chosen GCP projects, recursive deletes
+inside worktrees or scratch, policy-named edits outside worktrees, sensitive
+file names, paths outside the pre-approved roots, unattested custom tools,
+unreadable scripts, publishing, Google API token reads). The final
+reviewer's allow resolves it. Each finding carries `human_history`: how the
+human answered prompts with that finding over the last seven days (counts
+only, from `outcomes/*.jsonl`).
+
+Both reviewers also receive `context.environment_policy`, the human's
+standing policy from `lib/environment-policy.json`: GCP project classes
+(dev, staging, production, shared), local path classes (worktrees, scratch,
+the gate runtime directory), service rules, reviewer rules, and guidance for
+each finding present. `context.environment` classifies the request's GCP
+projects and local paths under it. Edit the JSON file, not the plugin, to
+change what the reviewers may approve; it is reloaded when it changes, and a
+missing or invalid file turns every finding back into a human ask. The final
+reviewer additionally gets `context.jev_signal`, Jev's advisory answer.
 
 The staged gate consults Jev through OpenRouter for Bash commands and other
 permission-checked actions. It sends every reviewable Bash or non-Bash action
