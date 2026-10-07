@@ -493,3 +493,60 @@ test("the final reviewer sees Jev's advisory answer; Jev never sees its own", as
   })
   expect(context(harness.jev.at(-1)?.state as Record<string, unknown>).jev_signal).toBeUndefined()
 })
+
+test("reviewers see how the human answered similar prompts this week, as counts only", async () => {
+  const { answerHistory, findingKey } = await import("./answer-history")
+  const state = mkdtempSync(path.join(tmpdir(), "gate-answer-history-"))
+  const outcomes = path.join(state, "opencode-gate", "outcomes")
+  ;(await import("node:fs")).mkdirSync(outcomes, { recursive: true })
+  const today = new Date().toISOString().slice(0, 10)
+  const record = (outcome: string, reasons: string[]) =>
+    JSON.stringify({ call: Math.random().toString(36), cmd_sha256: "x", outcome, reasons }) + "\n"
+  writeFileSync(
+    path.join(outcomes, `${today}.jsonl`),
+    record("approved", ["GCP project or credential selection requires human review. Default project: x"]) +
+      record("approved", ["GCP project chosen dynamically; the gate could not resolve it. Default project: x"]) +
+      record("denied", ["GCP project chosen dynamically; the gate could not resolve it. Default project: x"]) +
+      record("approved", ["credential-like literal in command", "credential-like literal in full Bash call"]) +
+      record("approved", ["human-only operation"]) +
+      "not json\n",
+  )
+  writeFileSync(path.join(outcomes, "2020-01-01.jsonl"), record("denied", ["credential-like literal in command"]))
+  try {
+    expect(findingKey("human-only operation")).toBeUndefined()
+    const counts = answerHistory(outcomes)
+    expect(counts.get("gcp_dynamic_project")).toEqual({ asked: 3, approved: 2, denied: 1, days: 7 })
+    // One record counts once per finding, and old files are outside the window.
+    expect(counts.get("credential_pattern")).toEqual({ asked: 1, approved: 1, denied: 0, days: 7 })
+    expect([...counts.keys()].sort()).toEqual(["credential_pattern", "gcp_dynamic_project"])
+
+    // A gate whose state directory holds those outcomes attaches the counts.
+    const previousState = process.env.XDG_STATE_HOME
+    process.env.XDG_STATE_HOME = state
+    const hooks = await (CommandApproval as any)({
+      directory,
+      serverUrl: new URL("http://gate.test"),
+      reviewPermission: async (input: { system: string; state: string }) => {
+        harness.final.push({ system: input.system, state: JSON.parse(input.state) })
+        return { model: "google/gemini-3.8-flash", choice: "allow", reason: "Judged against the policy." }
+      },
+    })
+    process.env.XDG_STATE_HOME = previousState
+    await hooks.provider.models({ models: {} }, { auth: { type: "api", key: "fake-test-key" } })
+    harness.final = []
+    const command = 'gcloud run services list --project="$proj"'
+    await hooks["permission.ask"](
+      { permission: "bash", sessionID: session, patterns: [command], metadata: { command, core_execution_agent: "solo" } },
+      { status: "ask" },
+    )
+    expect(context(harness.final.at(-1)?.state).gate_evidence).toEqual([
+      {
+        finding: "gcp_dynamic_project",
+        detail: "GCP project chosen dynamically; the gate could not resolve it. Default project: e2b-dev-rauf-guliyev",
+        human_history: { asked: 3, approved: 2, denied: 1, days: 7 },
+      },
+    ])
+  } finally {
+    rmSync(state, { recursive: true, force: true })
+  }
+})
