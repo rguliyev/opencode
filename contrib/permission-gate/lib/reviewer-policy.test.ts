@@ -248,6 +248,8 @@ test("generic credential-like patterns are reviewer evidence; credential materia
     // Secret values and token minting stay hard.
     await expectHard(() => bash("gcloud secrets versions access latest --secret=grafana-token --project=e2b-staging"))
     await expectHard(() => bash("echo $(gcloud auth print-access-token)"))
+    await expectHard(() => bash("gcloud auth print-access-token"))
+    await expectHard(() => bash("gcloud auth print-access-token; gcloud auth print-access-token", { patterns: ["gcloud auth print-access-token"] }))
     // An action whose review copy cannot be redacted is withheld and asks.
     await expectHard(() => action("tool_call", ["custom_tool"], { tool: "custom_tool", ["token=" + "k".repeat(20)]: 1 }))
   } finally {

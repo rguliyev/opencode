@@ -650,7 +650,9 @@ function readOnlyGoogleApiTokenCall(command: string, fullCommand: unknown) {
     const urls = [...segment.matchAll(/https?:\/\/[^\s"']+/g)].map((match) => match[0])
     return urls.length > 0 && urls.every((url) => /^https:\/\/[a-z0-9.-]+\.googleapis\.com\//.test(url))
   })
-  if (!valid || !users.length) return undefined
+  // A bare print-access-token prints the token; it qualifies only as the
+  // substitution inside a qualifying curl in the same call.
+  if (!valid || !users.some((segment) => segment.trim() !== "gcloud auth print-access-token")) return undefined
   if (command.trim() === "gcloud auth print-access-token") return ""
   return command.includes("gcloud auth print-access-token") ? command.replace(googleTokenHeader, "") : undefined
 }
