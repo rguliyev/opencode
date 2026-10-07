@@ -6,7 +6,9 @@ import { readFileSync, statSync } from "node:fs"
 import path from "node:path"
 
 type ProjectClass = { class: string; match: string[]; policy: string }
-type PathClass = { class: string; prefix: string; policy: string }
+// writable: the gate may treat deletes inside (not of) this class's root as
+// reviewer evidence instead of a hard human gate.
+type PathClass = { class: string; prefix: string; writable: boolean; policy: string }
 
 export type EnvironmentPolicy = {
   version: 1
@@ -62,6 +64,7 @@ function validate(value: unknown): EnvironmentPolicy | undefined {
         text(item.class) &&
         text(item.policy) &&
         typeof item.prefix === "string" &&
+        typeof item.writable === "boolean" &&
         path.isAbsolute(item.prefix) &&
         path.normalize(item.prefix) === item.prefix &&
         !item.prefix.endsWith("/"),

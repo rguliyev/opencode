@@ -328,3 +328,58 @@ test("a dynamically chosen GCP project is reviewer evidence; credential switches
   await expectHard(() => bash("gcloud auth activate-service-account --key-file=/tmp/key.json"))
   await expectHard(() => bash("gcloud compute instances list --project=some-unlisted-project"), "some-unlisted-project")
 })
+
+test("recursive deletes inside worktrees and scratch are reviewer evidence; other human-only operations stay hard", async () => {
+  const worktree = mkdtempSync("/data/rguliyev/tmp/opencode/worktrees/reviewer-policy-")
+  const scratch = mkdtempSync("/data/rguliyev/tmp/opencode/reviewer-policy-scratch-")
+  const outside = mkdtempSync("/data/rguliyev/tmp/reviewer-policy-outside-")
+  const { symlinkSync } = await import("node:fs")
+  symlinkSync(outside, path.join(scratch, "link"), "dir")
+  try {
+    await expectEvidence(
+      () => bash("rm -rf versions.tf schema.json .terraform .terraform.lock.hcl", { workdir: worktree }),
+      "local_delete",
+      ".terraform (worktree)",
+    )
+    await expectEvidence(() => bash(`rm -rf ${scratch}/cache/* 2>/dev/null`), "local_delete", "(scratch)")
+    const full = `cd ${scratch} && rm -rf out`
+    await expectEvidence(() => bash(full, { patterns: [`cd ${scratch}`, "rm -rf out"] }), "local_delete")
+    const script = path.join(scratch, "clean.sh")
+    writeFileSync(script, `#!/usr/bin/env bash\nrm -rf ${scratch}/build\necho done\n`)
+    await expectEvidence(() => bash(`bash ${script}`), "local_delete")
+
+    for (const command of [
+      "rm -rf /data/rguliyev/tmp/opencode/worktrees",
+      "rm -rf /tmp/*",
+      "rm -rf ~/scratch",
+      'rm -rf "$DIR"',
+      "rm -rf /data/rguliyev/src/infra",
+      "rm -rf /data/rguliyev/tmp/opencode/gate-delegation-runtime/x",
+      `sudo rm -rf ${scratch}/x`,
+      `rm -rf ${scratch}/link/sub`,
+      "git push --force origin feature-x",
+      "git push --force-with-lease=main:abc123 origin HEAD:main",
+      "git push origin main",
+      "gh pr merge 12 --squash",
+      "gh pr close 1397 --repo e2b-dev/argocd",
+      "kubectl delete pod web-0 -n team",
+      "kubectl scale deploy web --replicas=0",
+      "gcloud projects add-iam-policy-binding e2b-staging --member=user:x@example.test --role=roles/owner",
+      "gcloud iam service-accounts keys create /tmp/k.json --iam-account=sa@e2b-staging.iam.gserviceaccount.com",
+      "gcloud secrets create new-secret --project=e2b-staging",
+      "mkfs.ext4 /dev/sdb",
+      "tailscale set --exit-node=100.64.0.1",
+    ])
+      await expectHard(() => bash(command, { workdir: worktree }))
+    // terraform apply is local-dev only in a worktree against the default project.
+    await expectHard(() => bash("terraform apply -auto-approve", { workdir: scratch }))
+    await expectHard(() => bash("terragrunt apply -var project=e2b-staging", { workdir: worktree }))
+    const deleting = path.join(scratch, "delete-src.sh")
+    writeFileSync(deleting, '#!/usr/bin/env bash\nrm -rf "$HOME/work"\n')
+    await expectHard(() => bash(`bash ${deleting}`))
+  } finally {
+    rmSync(worktree, { recursive: true, force: true })
+    rmSync(scratch, { recursive: true, force: true })
+    rmSync(outside, { recursive: true, force: true })
+  }
+})

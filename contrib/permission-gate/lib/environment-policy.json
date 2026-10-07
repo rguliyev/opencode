@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "about": "Standing human policy that the permission gate sends to both reviewers (Jev and the final reviewer) as context.environment_policy. Edit this file, not the plugin code, to change what the reviewers may approve. The hard human gates (force push and history rewrites, merges, PR close, terraform/terragrunt apply and destroy outside local dev, live kubectl mutations, IAM and policy changes, secret values and credential material, protected OpenCode configuration, ~/.ssh, and evidence withheld because redaction failed) are enforced in code and cannot be relaxed here. Classes match in order; the first match wins; a trailing * matches any suffix.",
+  "about": "Standing human policy that the permission gate sends to both reviewers (Jev and the final reviewer) as context.environment_policy. Edit this file, not the plugin code, to change what the reviewers may approve. The hard human gates (force push and history rewrites, merges, PR close, terraform/terragrunt apply and destroy outside local dev, live kubectl mutations, IAM and policy changes, secret values and credential material, protected OpenCode configuration, ~/.ssh, and evidence withheld because redaction failed) are enforced in code and cannot be relaxed here. Classes match in order; the first match wins; a trailing * matches any suffix. A local path class marked writable lets the gate send deletes inside it to the reviewers; deletes anywhere else stay a human gate.",
   "gcp_projects": {
     "classes": [
       {
@@ -50,21 +50,25 @@
       {
         "class": "gate_runtime",
         "prefix": "/data/rguliyev/tmp/opencode/gate-delegation-runtime",
+        "writable": false,
         "policy": "The gate's own runtime directory (scripts the human runs with sudo). Any write or delete asks."
       },
       {
         "class": "worktree",
         "prefix": "/data/rguliyev/tmp/opencode/worktrees",
+        "writable": true,
         "policy": "Dedicated git worktrees. Creating, editing, generating, and deleting files here, including configuration, Terraform, and IAM files, is fine when it serves the task: nothing changes live until a separately gated push, PR, apply, or deploy. An instruction not to change configuration does not forbid worktree edits. Removing a whole worktree needs the human's request."
       },
       {
         "class": "scratch",
         "prefix": "/data/rguliyev/tmp/opencode",
+        "writable": true,
         "policy": "Scratch space outside repositories. Creating, editing, and deleting task folders, notes, scripts, query output, and caches here is fine."
       },
       {
         "class": "scratch",
         "prefix": "/tmp",
+        "writable": true,
         "policy": "Scratch space. Creating, editing, and deleting temporary files here is fine."
       }
     ],
@@ -98,6 +102,7 @@
     "publish": "A push of a named feature branch or a PR create/edit/ready/comment. Follow the publishing rule in reviewer_rules.",
     "token_read": "A read-only GET to *.googleapis.com using the human's gcloud login as a Bearer header. Follow the google_apis service rule.",
     "ambient_credentials": "The command or script uses credentials the environment already has (Google client libraries with application-default credentials, or an Authorization header filled from a variable or a file) without printing them. Allow when the code only calls the intended APIs for the task and never prints, stores, or sends the credential elsewhere; ask otherwise.",
-    "gcp_dynamic_project": "The GCP project is chosen dynamically (a variable, a quoted --project flag inside code, an unset project variable) so the gate could not resolve it. Read the code: allow when every project it can reach is named in it and the operations respect each project's class; ask when the project could be anything or a change reaches production or shared projects."
+    "gcp_dynamic_project": "The GCP project is chosen dynamically (a variable, a quoted --project flag inside code, an unset project variable) so the gate could not resolve it. Read the code: allow when every project it can reach is named in it and the operations respect each project's class; ask when the project could be anything or a change reaches production or shared projects.",
+    "local_delete": "A recursive delete whose targets all resolve inside worktrees or scratch space. Allow when the targets are caches, build output, generated or temporary files, or task folders the task produced; ask for a whole worktree, source the human may need, or anything the task did not create."
   }
 }

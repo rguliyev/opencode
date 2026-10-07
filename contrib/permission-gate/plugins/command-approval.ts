@@ -757,18 +757,69 @@ function segmentRequiresHumanOperation(raw: string) {
   )
 }
 
+// `rm -rf` whose every target resolves, after symlinks, strictly inside a
+// local path class the environment policy marks writable (worktrees and
+// scratch). Returns those targets, or undefined when the delete must stay a
+// human gate: variables, home-relative paths, substitutions, sudo, a target
+// outside those classes or equal to a class root, or relative targets with no
+// known base directory.
+function localDeleteTargets(raw: string, fullCommand: unknown, workdir: string | undefined) {
+  const policy = loadEnvironmentPolicy()
+  // Discarding the delete's own output changes nothing else.
+  const segment = raw
+    .replace(/^(?:(?:if|then|elif|else|while|until|do|!|\{|\()\s+)+/, "")
+    .replace(/\s\d?>>?\s*\/dev\/null(?=\s|$)|\s\d?>&\d(?=\s|$)/g, "")
+  if (!policy || /[$`<>~]|\bsudo\b/.test(segment)) return undefined
+  const parts = commandParts(segment)
+  if (parts.error || parts.directory || executableName(parts.verb) !== "rm") return undefined
+  const flags = parts.args.filter((argument) => argument.startsWith("-"))
+  const targets = parts.args.filter((argument) => !argument.startsWith("-"))
+  if (!targets.length || !flags.every((flag) => /^-[rRfv]+$/.test(flag) || flag === "--")) return undefined
+  const base = deleteBase(raw, fullCommand, workdir)
+  const resolved: { path: string; class: string }[] = []
+  for (const target of targets) {
+    const glob = target.search(/[*?[]/)
+    const literal = glob < 0 ? target : target.slice(0, target.lastIndexOf("/", glob) + 1)
+    if (!path.isAbsolute(literal) && !base) return undefined
+    const lexical = path.resolve(base ?? "/", literal || ".")
+    const real = resolvedThroughAncestor(lexical)
+    const kind = policy.local_paths.classes.find(
+      (item) => real.startsWith(item.prefix + path.sep) || real === item.prefix,
+    )
+    // A glob removes the children of its static directory, so that directory
+    // must itself lie strictly inside the class root, like a plain target.
+    if (!kind?.writable || real === kind.prefix || classifyPath(policy, lexical) !== kind.class) return undefined
+    resolved.push({ path: target, class: kind.class })
+  }
+  return resolved
+}
+
+// The directory a segment runs in: the workdir, changed by literal `cd`
+// segments before it in the same call. A dynamic `cd` leaves it unknown.
+function deleteBase(raw: string, fullCommand: unknown, workdir: string | undefined) {
+  if (!workdir) return undefined
+  let base: string | undefined = workdir
+  for (const segment of typeof fullCommand === "string" ? splitSegments(fullCommand) : []) {
+    if (segment === raw.trim()) return base
+    const parts = commandParts(segment)
+    if (executableName(parts.verb) !== "cd") continue
+    const target = parts.args[0]
+    base = parts.args.length === 1 && base && !/[$`~]/.test(target) ? path.resolve(base, target) : undefined
+  }
+  return base
+}
+
 // Scripts are checked segment by segment with the same rule as commands, so
 // `if grep -Eq 'secondary|mkfs.xfs' "$manifest"; then exit 1; fi` in a test
-// is a search, while a bare `mkfs.xfs /dev/sdb` line still stops.
-function scriptRequiresHumanOperation(content: string) {
-  // `tmp=$(mktemp -d ...)` ... `trap 'rm -rf "$tmp"' EXIT` removes only the
-  // directory this script just created; that cleanup is not a human-only
-  // delete. Any other rm -rf target is still checked.
+// is a search, while a bare `mkfs.xfs /dev/sdb` line still stops. Deletes
+// whose absolute literal targets lie in writable local classes are evidence;
+// any other human-only line keeps the script hard. `tmp=$(mktemp -d ...)`
+// ... `trap 'rm -rf "$tmp"' EXIT` removes only the directory this script just
+// created, when that variable is assigned once, by mktemp.
+function scriptHumanOperations(content: string) {
   const ownTemp = new Set(
     [...content.matchAll(/(?:^|[\s;&(])([A-Za-z_][A-Za-z0-9_]*)=["']?\$\(mktemp\s+-d\b[^)\n]*\)["']?/g)]
       .map((match) => match[1])
-      // Only a variable assigned once, by mktemp; a later reassignment could
-      // point it anywhere.
       .filter((name) => (content.match(new RegExp(`(?:^|[\\s;&(])(?:export\\s+|local\\s+|readonly\\s+)?${name}=`, "g")) ?? []).length === 1),
   )
   const checked = ownTemp.size
@@ -776,7 +827,15 @@ function scriptRequiresHumanOperation(content: string) {
         ownTemp.has(name) ? "true" : found,
       )
     : content
-  return splitSegments(checked).some(segmentRequiresHumanOperation)
+  const deletes: { path: string; class: string }[] = []
+  let hard = false
+  for (const segment of splitSegments(checked)) {
+    if (!segmentRequiresHumanOperation(segment)) continue
+    const local = localDeleteTargets(segment, undefined, undefined)
+    if (local) deletes.push(...local)
+    else hard = true
+  }
+  return { hard, deletes }
 }
 
 function infraTargetClass(command: string, workdir: string): "local-dev" | "production" | undefined {
@@ -3999,9 +4058,12 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
           // A local-dev terraform/terragrunt apply stays with Jev. The same verb
           // aimed at any other project, and every live kubectl mutation, stays
           // a human ask even when Jev allows. Kev still receives both.
+          const deletes: { path: string; class: string }[] = []
           if (segmentRequiresHumanOperation(command) && !(targetClass === "local-dev" && !reviewer)) {
+            const local = localDeleteTargets(command, fullCommand, workdir)
             if (finalReviewMayApprovePublish(command))
               evidence.push({ finding: "publish", detail: "publish: needs the final reviewer to confirm an explicit human request" })
+            else if (local) deletes.push(...local)
             else hard.push("human-only operation")
           }
           const scopes = [awsScopeReviewMessage(hardChecked, sessions)]
@@ -4010,12 +4072,22 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
             if (requiresHuman(script.content)) hard.push("script credential or secret access")
             else if (usesAmbientCredentials(script.content))
               evidence.push({ finding: "ambient_credentials", detail: "inspected script uses ambient credentials without printing them" })
-            if (scriptRequiresHumanOperation(script.content)) hard.push("script human-only operation")
+            const operations = scriptHumanOperations(script.content)
+            if (operations.hard) hard.push("script human-only operation")
+            deletes.push(...operations.deletes)
             scopes.push(awsScopeReviewMessage(script.content, sessions))
             gcpScopes.push(gcpScopeFinding(script.content, sessions))
           }
           for (const scope of scopes) if (scope) hard.push(scope)
           addGcpScope(gcpScopes, hard, evidence)
+          if (deletes.length)
+            evidence.push({
+              finding: "local_delete",
+              detail: `recursive delete inside writable local paths: ${deletes
+                .slice(0, 8)
+                .map((item) => `${item.path} (${item.class})`)
+                .join(", ")}`,
+            })
           if (inspection.error)
             evidence.push({ finding: "missing_script_evidence", detail: `no script evidence: ${inspection.error}` })
           if (evidence.length && !policy) hard.push("environment policy unavailable: gate findings need the human")
