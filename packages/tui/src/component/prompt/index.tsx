@@ -35,6 +35,7 @@ import { computePromptTraits } from "../../prompt/traits"
 import { expandPastedTextPlaceholders, expandTrackedPastedText } from "../../prompt/part"
 import { usePromptStash } from "../../prompt/stash"
 import { DialogStash } from "../dialog-stash"
+import { ModelVariantControl } from "../dialog-variant"
 import { type AutocompleteRef, Autocomplete } from "./autocomplete"
 import { useRenderer, useTerminalDimensions, type JSX } from "@opentui/solid"
 import type { AssistantMessage, FilePart, UserMessage } from "@opencode-ai/sdk/v2"
@@ -1354,12 +1355,7 @@ export function Prompt(props: PromptProps) {
     return local.agent.color(agent.name)
   })
 
-  const showVariant = createMemo(() => {
-    const variants = local.model.variant.list()
-    if (variants.length === 0) return false
-    const current = local.model.variant.current()
-    return !!current
-  })
+  const showVariant = createMemo(() => local.model.variant.list().length > 0)
 
   const agentMetaAlpha = createFadeIn(() => !!local.agent.current(), animationsEnabled)
   const modelMetaAlpha = createFadeIn(() => !!local.agent.current() && store.mode === "normal", animationsEnabled)
@@ -1525,11 +1521,7 @@ export function Prompt(props: PromptProps) {
                           <text fg={fadeColor(theme.textMuted, modelMetaAlpha())}>{currentProviderLabel()}</text>
                           <Show when={showVariant()}>
                             <text fg={fadeColor(theme.textMuted, variantMetaAlpha())}>·</text>
-                            <text>
-                              <span style={{ fg: fadeColor(theme.warning, variantMetaAlpha()), bold: true }}>
-                                {local.model.variant.current()}
-                              </span>
-                            </text>
+                            <ModelVariantControl color={fadeColor(theme.warning, variantMetaAlpha())} />
                           </Show>
                         </box>
                       </Show>

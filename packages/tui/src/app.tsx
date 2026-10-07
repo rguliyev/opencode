@@ -460,8 +460,7 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
   createEffect(() => {
     const current = route.data
     permissionIndicator.set(
-      current.type === "session" &&
-        hasPendingPermission(current.sessionID, sync.data.session, sync.data.permission),
+      current.type === "session" && hasPendingPermission(current.sessionID, sync.data.session, sync.data.permission),
     )
   })
   onCleanup(() => permissionIndicator.dispose())
@@ -720,7 +719,7 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
       },
       {
         name: "variant.cycle",
-        title: "Variant cycle",
+        title: "Cycle reasoning / model variant",
         category: "Agent",
         run: () => {
           local.model.variant.cycle()
@@ -728,10 +727,11 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
       },
       {
         name: "variant.list",
-        title: "Switch model variant",
+        title: "Change reasoning / model variant",
         category: "Agent",
         hidden: local.model.variant.list().length === 0,
-        slashName: "variants",
+        slashName: "reasoning",
+        slashAliases: ["variants"],
         run: () => {
           if (local.model.variant.list().length === 0) {
             return toast.show({
