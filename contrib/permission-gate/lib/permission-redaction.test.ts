@@ -187,3 +187,12 @@ test("jq field paths after a token-like key are not credentials", () => {
   expect(sanitizeReviewText(bracketed).value).toBe(bracketed)
   expect(sanitizeReviewText("token: " + ".abcDEF123456").value).toContain("[REDACTED:CREDENTIAL]")
 })
+
+test("an expression after a token-named key is not a credential", () => {
+  const jq = `jq -c '{types:[.metricDescriptors[]?.type],nextPageToken:(.nextPageToken//null)}'`
+  expect(sanitizeReviewText(jq)).toMatchObject({ value: jq, kinds: [] })
+  expect(sanitizeReviewText("token: $API_TOKEN").value).toBe("token: $API_TOKEN")
+  // A literal value after the same key is still masked.
+  expect(sanitizeReviewText("nextPageToken: Zx9fA7c2Lm4Qw8Rt").value).toBe("nextPageToken: [REDACTED:CREDENTIAL]")
+  expect(sanitizeReviewText("password=hunter2-real").value).toBe("password=[REDACTED:CREDENTIAL]")
+})

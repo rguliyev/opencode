@@ -142,6 +142,9 @@ function sanitizeText(input: string): RedactionResult<string> {
       // A value with no letters or digits ("=== ClusterSecretStore ===") is
       // punctuation, not a credential.
       /[A-Za-z0-9]/.test(secret) &&
+      // An expression such as jq's `nextPageToken:(.nextPageToken//null)` or a
+      // `$TOKEN` reference names where a value comes from; it is not a value.
+      !/^[(.$[]/.test(secret) &&
       // Prose such as "needs the dev-scoped token: the adapter reads ..."
       !/^(?:the|a|an|it|its|this|that|these|those|is|are|was|and|or|to|in|on|for|with|from|see|use|via|per|not|none|each|any|same)$/i.test(
         secret,
