@@ -123,6 +123,8 @@ type ReviewContext = {
   environment?: EnvironmentFacts
   // Local findings the gate cannot settle itself; reviewers weigh them.
   gate_evidence?: ReturnType<typeof gateEvidence>
+  // Jev's answer, for the final reviewer only.
+  jev_signal?: ReturnType<typeof jevSignal>
 }
 
 // A finding key names the guidance in environment-policy.json; the detail
@@ -1697,6 +1699,29 @@ function validResponse(value: unknown): value is JevResponse {
   return !!value && typeof value === "object"
 }
 
+// A compact, advisory view of Jev's answer for the final reviewer: the
+// verdict, its confidence, and any risk at or above its threshold.
+function jevSignal(result: JevReview) {
+  const verdict = result.raw?.verdict
+  if (!result.raw || verdict?.type !== "choice")
+    return { status: "unavailable" as const, gate_outcome: result.allow ? ("allow" as const) : ("escalated" as const) }
+  const flagged = Object.entries(result.raw)
+    .filter(([id]) => id !== "verdict")
+    .flatMap(([id, answer]) => {
+      if (answer?.type !== "noul" || !finiteProbability(answer.noul)) return []
+      const threshold =
+        id === "reviewer_mutation" ? reviewerMutationThreshold : id.startsWith("gcp_") ? gcpRiskThreshold : riskThreshold
+      return answer.noul >= threshold ? [{ risk: id, score: Math.round(answer.noul * 100) / 100 }] : []
+    })
+  return {
+    status: "scored" as const,
+    verdict: verdict.choice,
+    confidence: finiteProbability(verdict.confidence) ? Math.round(verdict.confidence * 100) / 100 : null,
+    gate_outcome: result.allow ? ("allow" as const) : ("escalated" as const),
+    ...(flagged.length ? { flagged_risks: flagged } : {}),
+  }
+}
+
 function needsReview(explanation: string): ReviewResult {
   return { allow: false, explanation }
 }
@@ -2986,7 +3011,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
       "When context.role_policy restricts the agent to read-only inspection, your allow also asserts that you independently judged this exact action or command to be read-only in effect: no change to files, Git refs, index, or worktrees, remote services, or machine state, and no build, test, download, or delegation. Dual-use tools are read-only only in read-only forms, for example git status, log, diff, or show but not commit, checkout, reset, fetch, or push; sed without -i; find without -delete or -exec that writes. Output saved only to scratch files that context.redirect_evidence confirms is not a file change. If read-only effect cannot be established, ask.",
       "For local read, grep, glob, and lsp actions, reading data into the agent's context for the human's task is not credential disclosure; disclosure means printing, logging, exporting, or sending secret values. Judge from action.local_evidence: when literal_scan is none_found for a task-relevant target, the chance that a file could hold credentials is not grounds to ask. Configuration that names or references a secret is not a credential, and a redacted literal elsewhere in the history is not grounds to ask about an unrelated action. A directory read (not_scanned: directory) only lists names. A read or grep whose target_facts include opencode_tool_output re-reads the agent's own earlier tool results, already permission-checked; it is within the task.",
       "context.session_decisions lists recent gate outcomes in the same task; human_approved marks requests the human approved. Treat them as evidence of what the human accepts for this task, not as authorization for a materially different action. context.local_rules lists local rules that already require human review for this request.",
-      "context.environment_policy is the human's standing policy, supplied by the gate and trusted like role_policy: apply its GCP project classes, local path classes, services, and reviewer_rules. context.environment classifies this request's GCP projects and local paths under it. context.gate_evidence lists local findings the gate could not settle itself; environment_policy.finding_guidance says how to judge each. Weigh them against the human's task: they are evidence, neither approvals nor automatic reasons to ask.",
+      "context.environment_policy is the human's standing policy, supplied by the gate and trusted like role_policy: apply its GCP project classes, local path classes, services, and reviewer_rules. context.environment classifies this request's GCP projects and local paths under it. context.gate_evidence lists local findings the gate could not settle itself; environment_policy.finding_guidance says how to judge each. Weigh them against the human's task: they are evidence, neither approvals nor automatic reasons to ask. context.jev_signal is an independent classifier's advisory answer; it does not bind you.",
       "When a shell segment's context has no full_command, the gate judged it self-contained (it only prints or filters stdin): judge it alone. context.module_evidence says whether a go run module is go.sum-pinned (a verified dependency). context.command_evidence is the gate's local reading of the command's flags, e.g. a read-only gh api GET or a validator that writes nothing. A read-only remote query (a GET, gh pr view/diff/list, gh run view) is read-only inspection. For review or research, read-only inspection of history, changelogs, adjacent versions, sibling repositories, and related files is within the task; ask only when the target is clearly unrelated.",
       "Pushes to shared branches, force pushes, and PR or remote merges are never yours to allow.",
       "Return allow ONLY when this exact action is clearly within the applicable direct human task, role policy, and environment policy, with no credential disclosure, regulated-data exposure, destructive effect, security-control change, production or unrelated shared-state mutation, opaque side effect, or human-only gate. Otherwise ask.",
@@ -3526,7 +3551,13 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
     const finalReviewNeeded =
       !result.allow || reasons.length > 0 || evidence.length > 0 || input.permission === "tool_call"
     const finalReview = finalReviewNeeded
-      ? await reviewFinal(safeRaw, [], reasons.length ? { ...context, local_rules: reasons } : context, undefined, action)
+      ? await reviewFinal(
+          safeRaw,
+          [],
+          { ...context, ...(reasons.length ? { local_rules: reasons } : {}), jev_signal: jevSignal(result) },
+          undefined,
+          action,
+        )
       : ({ status: "not_needed" } as FinalReviewResult)
     if (finalReview.withheld) reasons.push("review evidence withheld because redaction failed")
     // Core's built-in read, search, and skill-load tools cannot mutate
@@ -4145,7 +4176,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
           const needsFinalAllow = evidence.some((item) => item.finding !== "missing_script_evidence")
           const finalReviewNeeded = !hard.length && (!result.allow || needsFinalAllow)
           const finalReview = finalReviewNeeded
-            ? await reviewFinal(command, inspection.scripts, context, inspection.error ?? undefined)
+            ? await reviewFinal(command, inspection.scripts, { ...context, jev_signal: jevSignal(result) }, inspection.error ?? undefined)
             : ({ status: "not_needed" } as FinalReviewResult)
           if (finalReview.withheld) hard.push("review evidence withheld because redaction failed")
           const finalReviewAllow =

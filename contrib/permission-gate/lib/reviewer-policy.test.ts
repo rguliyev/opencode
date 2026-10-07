@@ -482,3 +482,14 @@ test("policy-file edits, sensitive names, outside paths, and unattested tools ar
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test("the final reviewer sees Jev's advisory answer; Jev never sees its own", async () => {
+  await bash("gcloud compute instances list --project=e2b-staging")
+  expect(context(harness.final.at(-1)?.state).jev_signal).toEqual({
+    status: "scored",
+    verdict: "deny",
+    confidence: 0.3,
+    gate_outcome: "escalated",
+  })
+  expect(context(harness.jev.at(-1)?.state as Record<string, unknown>).jev_signal).toBeUndefined()
+})
