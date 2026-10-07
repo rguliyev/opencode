@@ -383,3 +383,102 @@ test("recursive deletes inside worktrees and scratch are reviewer evidence; othe
     rmSync(outside, { recursive: true, force: true })
   }
 })
+
+test("policy-file edits, sensitive names, outside paths, and unattested tools are reviewer evidence", async () => {
+  const dir = mkdtempSync("/data/rguliyev/tmp/opencode/reviewer-policy-names-")
+  try {
+    await expectEvidence(
+      () =>
+        action("edit", ["data/rguliyev/src/infra/iam/policy.tf"], {
+          filepath: "/data/rguliyev/src/infra/iam/policy.tf",
+          diff: '+role = "roles/viewer"',
+        }),
+      "policy_file_edit",
+    )
+    // A scratch task folder named like a policy area is not a policy file.
+    harness.finalChoice = "allow"
+    await action("edit", [`${dir.slice(1)}/prod-audit/summary.py`], { filepath: `${dir}/prod-audit/summary.py`, diff: "+print(1)" })
+    expect(JSON.stringify(context(harness.final.at(-1)?.state).gate_evidence ?? [])).not.toContain("policy_file_edit")
+
+    const secrets = path.join(dir, "secrets.yaml")
+    writeFileSync(secrets, "name: example\n")
+    await expectEvidence(() => action("read", [secrets], { filepath: secrets }, { tool: "read", args: { filePath: secrets } }), "sensitive_name")
+    const example = path.join(dir, ".env.example")
+    writeFileSync(example, "PORT=8080\n")
+    await expectEvidence(() => action("read", [example], { filepath: example }, { tool: "read", args: { filePath: example } }), "sensitive_name")
+    await expectEvidence(
+      () =>
+        action(
+          "glob",
+          ["**/*.csv"],
+          { pattern: "**/*.csv", matched_paths: [path.join(directory, "exports/patients.csv")], truncated: false, core_trusted_builtin: true },
+          { tool: "glob", args: { pattern: "**/*.csv" } },
+        ),
+      "sensitive_name",
+      "1 matched file name(s)",
+    )
+    await expectEvidence(
+      () =>
+        action(
+          "external_directory",
+          ["/data/rguliyev/tmp/openrig/*"],
+          {
+            filepath: "/data/rguliyev/tmp/openrig/state.json",
+            resolved_filepath: "/data/rguliyev/tmp/openrig/state.json",
+            parentDir: "/data/rguliyev/tmp/openrig",
+            core_trusted_builtin: true,
+          },
+          { tool: "read", args: { filePath: "/data/rguliyev/tmp/openrig/state.json" } },
+        ),
+      "external_path",
+    )
+    await expectEvidence(
+      () =>
+        action(
+          "tool_call",
+          ["goal_complete"],
+          { tool: "goal_complete", trusted_builtin: false, internal_permission_check: false },
+          { tool: "goal_complete", args: { evidence: "All checks passed." } },
+        ),
+      "unattested_tool",
+    )
+
+    // Protected OpenCode configuration stays a human gate.
+    const home = (await import("node:os")).homedir()
+    await expectHard(
+      () =>
+        action("edit", [path.join(home, ".opencode/opencode.jsonc").slice(1)], {
+          filepath: path.join(home, ".opencode/opencode.jsonc"),
+          diff: '+  "permission": {}',
+        }),
+      "protected OpenCode configuration",
+    )
+    await expectHard(() =>
+      action(
+        "external_directory",
+        [path.join(home, ".config/opencode/*")],
+        {
+          filepath: path.join(home, ".config/opencode/opencode.json"),
+          resolved_filepath: path.join(home, ".config/opencode/opencode.json"),
+          parentDir: path.join(home, ".config/opencode"),
+          core_trusted_builtin: true,
+        },
+        { tool: "edit", args: { filePath: path.join(home, ".config/opencode/opencode.json") } },
+      ),
+    )
+    await expectHard(() => bash(`sudo chattr -i ${home}/.opencode/opencode.jsonc`))
+    // Integrity failures still veto the final reviewer's allow: a glob the
+    // core did not attest as its built-in tool.
+    harness.finalChoice = "allow"
+    const unattested = await action(
+      "glob",
+      ["**/*.ts"],
+      { pattern: "**/*.ts", matched_paths: [], truncated: false, core_trusted_builtin: false },
+      { tool: "glob", args: { pattern: "**/*.ts" } },
+    )
+    expect(unattested.status).toBe("ask")
+    expect(harness.final).toHaveLength(1)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})

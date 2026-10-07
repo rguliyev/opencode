@@ -586,7 +586,8 @@ test("Jev classifies non-Bash actions with redacted context", async () => {
       },
       sensitiveSkill,
     )
-    expect(sensitiveSkill.status).toBe("ask")
+    expect(sensitiveSkill.status).toBe("allow")
+    expect(JSON.stringify((seen.at(-1) as { state: { context: unknown } }).state.context)).toContain('"finding":"sensitive_name"')
     const beforePluginQuestion = seen.length
     await questionCall("call_question_plugin", false)
     expect(seen.length).toBeGreaterThan(beforePluginQuestion)
@@ -2419,10 +2420,14 @@ test("configured OpenCode the final reviewer resolves Jev escalations with trust
       return output.status
     }
     expect(await listed("docs/tech-radar/cilium-2026-09-10.md")).toBe("allow")
-    expect(await listed("people/jane_1985-03-12.pdf")).toBe("ask")
+    // A name with a plausible birth date is evidence; names are never sent.
+    expect(await listed("people/jane_1985-03-12.pdf")).toBe("allow")
+    expect(JSON.stringify(finalReviewState)).toContain("matched file name(s) suggest secrets or personal data")
+    expect(JSON.stringify(finalReviewState)).not.toContain("jane_1985")
     // Feature names in source code are not personal data; data files still are.
     expect(await listed("pkg/sandbox/health.go")).toBe("allow")
-    expect(await listed("exports/patient_health.csv")).toBe("ask")
+    expect(await listed("exports/patient_health.csv")).toBe("allow")
+    expect(JSON.stringify(finalReviewState)).not.toContain("patient_health")
     // A built-in read outside the worktrees may reach a helper-script
     // directory; OpenCode's data directory and shell access may not.
     const external = async (tool: string, target: string, callID: string) => {
@@ -2449,7 +2454,9 @@ test("configured OpenCode the final reviewer resolves Jev escalations with trust
     expect(
       await external("read", path.join(homedir(), ".local/share/opencode/opencode.db"), "call_ext_db"),
     ).toBe("ask")
-    expect(await external("bash", path.join(homedir(), "opencode/scripts/gcloud-remote-auth.sh"), "call_ext_bash")).toBe("ask")
+    // Outside the pre-approved read roots the reviewer judges the path's class.
+    expect(await external("bash", path.join(homedir(), "opencode/scripts/gcloud-remote-auth.sh"), "call_ext_bash")).toBe("allow")
+    expect(JSON.stringify(finalReviewState)).toContain('"finding":"external_path"')
     earlierUpdates = []
 
     const token = "sk-" + "C".repeat(40)
@@ -2615,10 +2622,15 @@ test("configured OpenCode the final reviewer resolves Jev escalations with trust
       },
       policyEdit,
     )
-    expect(policyEdit.status).toBe("ask")
+    // A policy-named file outside worktrees is evidence the reviewer weighs.
+    expect(policyEdit.status).toBe("allow")
+    expect((finalReviewState?.context as { gate_evidence?: { finding: string }[] })?.gate_evidence?.map((item) => item.finding)).toEqual([
+      "policy_file_edit",
+    ])
 
     // Proposed IAM/policy files in a dedicated worktree change nothing live;
-    // push, PR, and deploy are separately gated. A symlink escape still asks.
+    // push, PR, and deploy are separately gated. A symlink escape is not a
+    // worktree edit: the reviewer sees the policy-file finding and decides.
     const worktree = mkdtempSync("/data/rguliyev/tmp/opencode/worktrees/permission-gate-test-")
     const outsideTarget = mkdtempSync("/data/rguliyev/tmp/permission-gate-outside-")
     symlinkSync(outsideTarget, path.join(worktree, "escape"), "dir")
@@ -2638,6 +2650,7 @@ test("configured OpenCode the final reviewer resolves Jev escalations with trust
         "changing files inside dedicated worktrees",
       )
       const escapedFile = path.join(worktree, "escape", "iam", "main.tf")
+      finalReviewContent = JSON.stringify({ choice: "ask", reason: "This edits IAM outside the worktree." })
       const escapedEdit = { status: "allow", message: "" }
       await hooks["permission.ask"](
         {
@@ -2647,14 +2660,16 @@ test("configured OpenCode the final reviewer resolves Jev escalations with trust
         },
         escapedEdit,
       )
+      finalReviewContent = JSON.stringify({ choice: "allow", reason: "The local request is in scope." })
       expect(escapedEdit.status).toBe("ask")
       expect(escapedEdit.message).toContain("security, permission, or data-migration file outside a dedicated worktree")
+      expect(escapedEdit.message).toContain("Reviewer: This edits IAM outside the worktree.")
     } finally {
       rmSync(worktree, { recursive: true, force: true })
       rmSync(outsideTarget, { recursive: true, force: true })
     }
-    expect((finalReviewState?.context as { local_rules?: string[] })?.local_rules).toContain(
-      "human-only policy or data change may apply",
+    expect(JSON.stringify((finalReviewState?.context as { gate_evidence?: unknown })?.gate_evidence)).toContain(
+      "policy_file_edit",
     )
     expect(seen.slice(-2)).toEqual(["jev", "final_review"])
     // A scratch task folder whose name contains "audit" is not a policy file.
@@ -2761,7 +2776,12 @@ test("configured OpenCode the final reviewer resolves Jev escalations with trust
     }
     const goalAllowed = { status: "ask" }
     await hooks["permission.ask"](goalRequest, goalAllowed)
-    expect(goalAllowed.status).toBe("ask")
+    // An unattested custom tool is evidence: the reviewer judges its name,
+    // description, and arguments.
+    expect(goalAllowed.status).toBe("allow")
+    expect((finalReviewState?.context as { gate_evidence?: unknown })?.gate_evidence).toEqual([
+      { finding: "unattested_tool", detail: "custom tool goal_block has no attested effect" },
+    ])
     expect(seen.slice(-2)).toEqual(["jev", "final_review"])
     expect(finalReviewState?.action).toMatchObject({
       permission: "tool_call",
@@ -2785,7 +2805,9 @@ test("configured OpenCode the final reviewer resolves Jev escalations with trust
       },
       forgedOrigin,
     )
-    expect(forgedOrigin.status).toBe("ask")
+    // A forged origin earns no trusted effect; it stays an unattested tool.
+    expect((finalReviewState?.action as { trusted_effect?: string })?.trusted_effect).toBeUndefined()
+    expect(JSON.stringify((finalReviewState?.context as { gate_evidence?: unknown })?.gate_evidence)).toContain("unattested_tool")
     expect(JSON.stringify(finalReviewState)).not.toContain("core_plugin_origin")
     finalReviewContent = JSON.stringify({ choice: "ask", reason: "The tool's effect is unclear." })
     const goalAsked = { status: "allow" }
@@ -2809,7 +2831,9 @@ test("configured OpenCode the final reviewer resolves Jev escalations with trust
       },
       hidden,
     )
-    expect(hidden.status).toBe("ask")
+    // Listing .env names discloses no values (reading one is a hard gate).
+    expect(hidden.status).toBe("allow")
+    expect(JSON.stringify((finalReviewState?.context as { gate_evidence?: unknown })?.gate_evidence)).toContain("sensitive_name")
 
     await hooks["tool.execute.before"](
       { tool: "glob", sessionID: "ses_final_review_test", callID: "call_final_review_safe_wildcard" },
@@ -2852,7 +2876,7 @@ test("configured OpenCode the final reviewer resolves Jev escalations with trust
       },
       wildcard,
     )
-    expect(wildcard.status).toBe("ask")
+    expect(wildcard.status).toBe("allow")
     expect(JSON.stringify(jevState)).not.toContain("Alice-1987-08-30")
     expect(JSON.stringify(finalReviewState)).not.toContain("Alice-1987-08-30")
 
@@ -2877,7 +2901,8 @@ test("configured OpenCode the final reviewer resolves Jev escalations with trust
       },
       outside,
     )
-    expect(outside.status).toBe("ask")
+    expect(outside.status).toBe("allow")
+    expect(JSON.stringify((finalReviewState?.context as { gate_evidence?: unknown })?.gate_evidence)).toContain("external_path")
 
     // A glob with an explicit path under the workdir is eligible like one
     // without a path; the final reviewer's allow is honoured.
@@ -2930,7 +2955,8 @@ test("configured OpenCode the final reviewer resolves Jev escalations with trust
     expect(await globWithMatches("call_glob_service", "go/secret-manager/internal/db/migrations.go")).toBe("allow")
     // Credential words in a listed name leak nothing; reading the file is gated separately.
     expect(await globWithMatches("call_glob_secret_file", "tests/access_token.tftest.hcl")).toBe("allow")
-    expect(await globWithMatches("call_glob_pii_file", "exports/patient-records.csv")).toBe("ask")
+    expect(await globWithMatches("call_glob_pii_file", "exports/patient-records.csv")).toBe("allow")
+    expect(JSON.stringify(finalReviewState)).not.toContain("patient-records")
 
     const untrustedTool = { status: "allow" }
     await hooks["permission.ask"](
@@ -2960,9 +2986,8 @@ test("configured OpenCode the final reviewer resolves Jev escalations with trust
       },
       sensitiveMatch,
     )
-    expect(sensitiveMatch.status).toBe("ask")
-    expect(seen).toHaveLength(beforeSensitive + 1)
-    expect(seen.at(-1)).toBe("final_review")
+    expect(sensitiveMatch.status).toBe("allow")
+    expect(seen.slice(beforeSensitive)).toEqual(["jev", "final_review"])
     expect(JSON.stringify(finalReviewState)).not.toContain("patient-123-45-6789.ts")
 
     // Reads carry the gate's local scan, never the file content.
@@ -3308,7 +3333,9 @@ test("source files named for tokens are readable once the scan finds no literal"
     }
     expect(await read("inject_tokens.go")).toBe("allow")
     expect(await read("leaky_tokens.go")).toBe("ask")
-    expect(await read("secrets.yaml")).toBe("ask")
+    // A secrets-named file whose scan found no literal is evidence the
+    // reviewer weighs, not a human gate.
+    expect(await read("secrets.yaml")).toBe("allow")
   } finally {
     globalThis.fetch = previousFetch
     if (previousStateHome === undefined) delete process.env.XDG_STATE_HOME

@@ -631,16 +631,21 @@ function credentialStoreReference(text: string) {
   )
 }
 
-// The same stores as resolved paths, plus .env files, for file targets. For
-// a search or directory grant, a target that contains a store counts too.
+// The same stores as paths, plus .env files, for file targets. For a search
+// or directory grant, a target that contains a store counts too. Both the
+// target and the stores are compared lexically and with symlinks resolved.
 function credentialStorePath(file: string, containing: boolean) {
   const home = homedir()
   const stores = [
     ...[".ssh", ".gnupg", ".aws", ".netrc", ".git-credentials", ".docker/config.json"].map((name) => path.join(home, name)),
     path.join(opencodeDataDir(), "auth.json"),
     path.join(process.env.XDG_DATA_HOME || path.join(home, ".local", "share"), "opencode", "auth.json"),
-  ]
-  const target = path.normalize(file.replace(/\/\*+$/, "")) || "/"
+  ].flatMap((store) => [store, resolvedThroughAncestor(store)])
+  const lexical = path.normalize(file.replace(/\/\*+$/, "")) || "/"
+  return [lexical, resolvedThroughAncestor(lexical)].some((target) => credentialStoreTarget(target, stores, containing))
+}
+
+function credentialStoreTarget(target: string, stores: string[], containing: boolean) {
   const base = path.basename(target)
   return (
     stores.some((store) => target === store || target.startsWith(store + path.sep)) ||
@@ -2030,46 +2035,61 @@ const readOnlyExternalRoots = () => [
   "/usr/share",
 ]
 
-function finalReviewMayAutoAllowAction(
+// Whether the final reviewer's allow may resolve this action, and which
+// findings it must weigh. Integrity failures (core attestation, metadata that
+// does not match the call) veto automatic approval; policy questions such as
+// a path outside the pre-approved roots or an unattested custom tool are
+// evidence for the reviewers.
+function finalReviewEligibility(
   action: ActionEvidence,
   context: ReviewContext,
   matchedPaths: unknown,
   continuation: TaskContinuation = "absent",
-) {
-  if (action.permission === "task") return finalReviewMayAutoAllowTask(action, continuation)
+): { eligible: boolean; evidence: Finding[] } {
+  const veto = { eligible: false, evidence: [] as Finding[] }
+  const eligible = (evidence: Finding[] = []) => ({ eligible: true, evidence })
+  if (action.permission === "task") return finalReviewMayAutoAllowTask(action, continuation) ? eligible() : veto
   if (action.permission === "external_directory") {
-    // A built-in read, glob, grep, or list outside the worktrees may reach a
-    // repository or helper-script directory; the read itself is reviewed
-    // separately. Data, credential, and config directories are not listed.
+    // A built-in read, glob, grep, or list may reach a repository or
+    // helper-script directory under the pre-approved read-only roots.
     const resolved = action.metadata?.resolved_filepath
-    return (
+    if (action.metadata?.core_trusted_builtin !== true) return veto
+    const preApproved =
       ["read", "glob", "grep", "list"].includes(action.tool ?? "") &&
-      action.metadata?.core_trusted_builtin === true &&
       typeof resolved === "string" &&
       path.isAbsolute(resolved) &&
       path.normalize(resolved) === resolved &&
       readOnlyExternalRoots().some((root) => resolved === root || resolved.startsWith(root + path.sep)) &&
       !sensitiveFilename(resolved)
-    )
+    return preApproved
+      ? eligible()
+      : eligible([
+          {
+            finding: "external_path",
+            detail: `${action.tool ?? "a tool"} requests ${action.patterns.join(", ")} outside the workdir and the pre-approved read-only roots`,
+          },
+        ])
   }
-  if (action.permission === "tool_call")
-    return (
-      !!action.tool &&
-      !!action.trusted_effect &&
-      action.patterns.length === 1 &&
-      action.patterns[0] === action.tool &&
-      action.metadata?.tool === action.tool &&
-      action.metadata.trusted_builtin === false &&
-      action.metadata.internal_permission_check === false
+  if (action.permission === "tool_call") {
+    if (
+      !action.tool ||
+      action.patterns.length !== 1 ||
+      action.patterns[0] !== action.tool ||
+      action.metadata?.tool !== action.tool ||
+      action.metadata.trusted_builtin !== false ||
+      action.metadata.internal_permission_check !== false
     )
-  if (action.permission !== "glob") return true
-  if (action.tool !== "glob" || action.patterns.length !== 1) return false
-  if (!action.args || typeof action.args !== "object" || Array.isArray(action.args)) return false
+      return veto
+    return action.trusted_effect
+      ? eligible()
+      : eligible([{ finding: "unattested_tool", detail: `custom tool ${action.tool} has no attested effect` }])
+  }
+  if (action.permission !== "glob") return eligible()
+  if (action.tool !== "glob" || action.patterns.length !== 1) return veto
+  if (!action.args || typeof action.args !== "object" || Array.isArray(action.args)) return veto
   const args = action.args
-  // Only a verified snapshot wholly within this session's directory is safe
-  // to auto-allow. Discovery patterns themselves need not be literal.
-  if (Object.keys(args).some((key) => key !== "pattern" && key !== "path")) return false
-  if (action.metadata?.core_trusted_builtin !== true) return false
+  if (Object.keys(args).some((key) => key !== "pattern" && key !== "path")) return veto
+  if (action.metadata?.core_trusted_builtin !== true) return veto
   if (
     Object.keys(action.metadata).some(
       (key) =>
@@ -2080,47 +2100,48 @@ function finalReviewMayAutoAllowAction(
         key !== "core_trusted_builtin",
     )
   )
-    return false
+    return veto
   const pattern = "pattern" in args ? args.pattern : undefined
-  if (typeof pattern !== "string" || !pattern || pattern.length > 512) return false
-  if (action.patterns[0] !== pattern || action.metadata?.pattern !== pattern) return false
+  if (typeof pattern !== "string" || !pattern || pattern.length > 512) return veto
+  if (action.patterns[0] !== pattern || action.metadata?.pattern !== pattern) return veto
   const searchPath = "path" in args ? args.path : undefined
-  if (searchPath !== undefined && (typeof searchPath !== "string" || sensitiveFilename(searchPath))) return false
-  if (action.metadata.path !== searchPath) return false
-  const roots = [context.workdir, configuredExternalRoot]
-  if (searchPath !== undefined) {
-    const resolved = path.resolve(context.workdir, searchPath)
-    if (!roots.some((root) => resolved === root || resolved.startsWith(root + path.sep))) return false
-  }
-  if (
-    sensitiveFilename(pattern) ||
-    path.isAbsolute(pattern) ||
-    pattern.includes("\\") ||
-    pattern.split("/").includes("..")
-  )
-    return false
+  if (searchPath !== undefined && typeof searchPath !== "string") return veto
+  if (action.metadata.path !== searchPath) return veto
   // A truncated listing shows the agent only the paths checked below; the
   // names past the limit are never returned, so truncation discloses nothing.
-  if (!Array.isArray(matchedPaths) || typeof action.metadata.truncated !== "boolean") return false
-  if (action.metadata.match_count !== matchedPaths.length) return false
-  if (
+  if (!Array.isArray(matchedPaths) || typeof action.metadata.truncated !== "boolean") return veto
+  if (action.metadata.match_count !== matchedPaths.length) return veto
+  if (matchedPaths.some((file) => typeof file !== "string" || file.length > 2048)) return veto
+  const evidence: Finding[] = []
+  const roots = [context.workdir, configuredExternalRoot]
+  const outside =
+    (searchPath !== undefined &&
+      !roots.some((root) => {
+        const resolved = path.resolve(context.workdir, searchPath)
+        return resolved === root || resolved.startsWith(root + path.sep)
+      })) ||
+    path.isAbsolute(pattern) ||
+    pattern.includes("\\") ||
+    pattern.split("/").includes("..") ||
     matchedPaths.some((file) => {
-      if (typeof file !== "string" || file.length > 2048) return true
       const root = roots.find((candidate) => file.startsWith(candidate + path.sep))
-      if (!root) return true
-      const safe = sanitizeReviewText(file)
-      return (
-        !safe.complete ||
-        safe.kinds.length > 0 ||
-        safe.value !== file ||
-        sensitiveMatchedPath(file) ||
-        !path.relative(root, file) ||
-        path.relative(root, file).startsWith("..")
-      )
+      return !root || !path.relative(root, file) || path.relative(root, file).startsWith("..")
     })
-  )
-    return false
-  return true
+  if (outside)
+    evidence.push({ finding: "external_path", detail: "glob reaches outside the workdir and the scratch root" })
+  // Matched names never leave the gate; reviewers get only the count.
+  const sensitive = matchedPaths.filter((file) => {
+    const safe = sanitizeReviewText(file)
+    return !safe.complete || safe.kinds.length > 0 || safe.value !== file || sensitiveMatchedPath(file)
+  }).length
+  if (sensitive || sensitiveFilename(pattern) || (typeof searchPath === "string" && sensitiveFilename(searchPath)))
+    evidence.push({
+      finding: "sensitive_name",
+      detail: sensitive
+        ? `${sensitive} matched file name(s) suggest secrets or personal data (names withheld)`
+        : "glob pattern or path names secrets or personal data",
+    })
+  return eligible(evidence)
 }
 
 type FinalReviewResult = {
@@ -2171,8 +2192,10 @@ const plainReasons: [RegExp, string][] = [
   [/^(?:human-only operation|script human-only operation)/, "It is an action reserved for you: push, merge, apply, destroy, recursive delete, or disk formatting."],
   [/^publish:/, "It pushes code or changes a pull request; approve if you asked for that."],
   [/^token-read:/, "It calls a Google API with your gcloud login."],
-  [/^(?:sensitive file or search target|sensitive matched path)/, "It touches a file whose name suggests secrets or personal data."],
-  [/^human-only policy or data change may apply/, "It edits a security, permission, or data-migration file outside a dedicated worktree."],
+  [/^(?:sensitive file or search target|sensitive matched path|file or search target name suggests|glob pattern or path names|\d+ matched file name)/, "It touches a file whose name suggests secrets or personal data."],
+  [/^(?:human-only policy or data change may apply|edits an auth, permission)/, "It edits a security, permission, or data-migration file outside a dedicated worktree."],
+  [/^custom tool \S+ has no attested effect/, "It runs a plugin or MCP tool whose effect the gate cannot verify."],
+  [/^(?:\S+ requests .* outside the workdir|glob reaches outside)/, "It reaches a directory outside the working directory and the pre-approved folders."],
   [/^protected OpenCode configuration/, "It touches the protected OpenCode configuration; only you can approve this."],
   [/^referenced shell script loads another file/, "It runs a script that loads another file the gate cannot inspect."],
   [/^no script evidence: script in a dedicated worktree sources/, "It runs a worktree script that sources a file generated at run time, which the gate cannot read in advance."],
@@ -3272,15 +3295,6 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
       action.search.resolution = verified
       metadata.path_resolution = verified
     }
-    if (
-      input.permission === "glob" &&
-      Array.isArray(matchedPaths) &&
-      matchedPaths.some((file) => typeof file !== "string" || sensitiveMatchedPath(file))
-    ) {
-      output.message = "Some of the matching file names suggest secrets or personal data."
-      await settle("ask", "guard", ["sensitive matched path"])
-      return
-    }
     let raw: string
     try {
       raw = JSON.stringify(action)
@@ -3382,7 +3396,11 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
     if (
       (input.permission === "edit" &&
         [...patterns, metadata.filepath].some((value) => typeof value === "string" && protectedConfigReference(value))) ||
-      (input.permission === "tool_call" && protectedConfigReference(raw))
+      (input.permission === "tool_call" && protectedConfigReference(raw)) ||
+      (input.permission === "external_directory" &&
+        [...patterns, metadata.filepath, metadata.resolved_filepath].some(
+          (value) => typeof value === "string" && protectedConfigReference(value),
+        ))
     )
       reasons.push("protected OpenCode configuration")
     // Only high-precision detections force a human: known token formats,
@@ -3433,7 +3451,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
     ]
     if (
       fileTargetPaths.some((file) =>
-        credentialStorePath(resolvedThroughAncestor(file), ["grep", "glob", "external_directory", "list"].includes(input.permission)),
+        credentialStorePath(file, ["grep", "glob", "external_directory", "list"].includes(input.permission)),
       )
     )
       reasons.push("credential store: ~/.ssh, cloud or OpenCode credentials, or a .env file")
@@ -3464,7 +3482,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
       new Set(["read", "grep", "glob", "edit", "skill"]).has(input.permission) &&
       fileTargets.some((target) => sensitiveFilename(target) && !cleanSourceFile(target))
     )
-      reasons.push("sensitive file or search target")
+      evidence.push({ finding: "sensitive_name", detail: "file or search target name suggests secrets or personal data" })
     if (
       input.permission === "edit" &&
       patterns.some((pattern) =>
@@ -3478,7 +3496,10 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
         scratchFolder(path.dirname(path.normalize(metadata.filepath)))
       )
     )
-      reasons.push("human-only policy or data change may apply")
+      evidence.push({
+        finding: "policy_file_edit",
+        detail: "edits an auth, permission, policy, IAM, audit, crypto, certificate, personal-data, or migration file outside dedicated worktrees",
+      })
     const sessions = humanContext!.sessions
     // A task prompt is prose handed to a subagent; it runs nothing. Parsing it
     // as a shell command mistook "projects produced recent entries" for a GCP
@@ -3490,6 +3511,8 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
       if (aws) reasons.push(aws)
       addGcpScope([gcpScopeFinding(policyRaw, sessions)], reasons, evidence)
     }
+    const eligibility = finalReviewEligibility(action, context, matchedPaths, continuation)
+    evidence.push(...eligibility.evidence)
     const policy = loadEnvironmentPolicy()
     if (evidence.length && !policy) reasons.push("environment policy unavailable: gate findings need the human")
     if (policy) context.environment_policy = reviewerPolicy(policy, evidence.map((item) => item.finding))
@@ -3517,7 +3540,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
       finalReviewNeeded &&
       reasons.length === 0 &&
       (!reviewer || inherentlyReadOnly || jevJudgedReadOnly(rawAnswers)) &&
-      finalReviewMayAutoAllowAction(action, context, matchedPaths, continuation) &&
+      eligibility.eligible &&
       finalReview.status === "score" &&
       finalReview.choice === "allow"
     const allReasons = [...reasons, ...evidence.map((item) => item.detail)]
