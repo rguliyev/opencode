@@ -4044,6 +4044,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
               final_review: finalReviewAudit({ status: "not_needed" }),
               ask: false,
               reasons: [],
+              hard_reasons: [],
               jev: null,
               explanation: "creates only scratch folders outside repositories and worktrees; no effect to review",
               checks: [],
@@ -4055,6 +4056,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
               final_review: finalReviewAudit({ status: "not_needed" }),
               ask: false,
               reasons: [],
+              hard_reasons: [],
               jev: null,
               explanation: "self-contained output-only segment; no effect to review",
               checks: [],
@@ -4106,7 +4108,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
             if (redact(command) !== command || containsCredentialLiteral(command))
               evidence.push({ finding: "credential_pattern", detail: "credential-like literal in command" })
           }
-          if (inspection.credentialMaterial)
+          if ((inspection as { credentialMaterial?: boolean }).credentialMaterial)
             hard.push("credential material: provider-format token, private key, or webhook URL in an inspected script")
           else if (inspection.scripts.some((script) => script.redactions?.length))
             evidence.push({ finding: "credential_pattern", detail: "credential-like literal in inspected script" })
