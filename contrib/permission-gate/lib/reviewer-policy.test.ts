@@ -175,3 +175,82 @@ test("both reviewers receive the environment policy and this request's classific
   await action("edit", [file.slice(1)], { filepath: file, diff: "+notes" }, { tool: "edit", args: { filePath: file } })
   expect(context(harness.final[0]?.state).environment?.paths).toContainEqual({ path: file, class: "scratch" })
 })
+
+// Asserts the request reached both reviewers with the finding, was allowed on
+// the final reviewer's allow, and asks when the final reviewer asks.
+async function expectEvidence(run: () => Promise<{ status: string; message?: string }>, finding: string, detail?: string) {
+  harness.finalChoice = "allow"
+  const allowed = await run()
+  expect(allowed.status).toBe("allow")
+  for (const state of [harness.jev.at(-1)?.state as Record<string, unknown>, harness.final.at(-1)?.state]) {
+    const items = (context(state).gate_evidence ?? []) as { finding: string; detail: string }[]
+    expect(items.map((item) => item.finding)).toContain(finding)
+    if (detail) expect(items.map((item) => item.detail).join("\n")).toContain(detail)
+    expect(context(state).environment_policy?.finding_guidance?.[finding]).toBeString()
+  }
+  harness.finalChoice = "ask"
+  try {
+    expect((await run()).status).toBe("ask")
+  } finally {
+    harness.finalChoice = "allow"
+  }
+}
+
+async function expectHard(run: () => Promise<{ status: string; message?: string }>, reason?: string) {
+  harness.finalChoice = "allow"
+  harness.jevAllow = true
+  try {
+    const output = await run()
+    expect(output.status).toBe("ask")
+    if (reason) expect(output.message).toContain(reason)
+  } finally {
+    harness.jevAllow = false
+  }
+}
+
+test("generic credential-like patterns are reviewer evidence; credential material stays a human gate", async () => {
+  const dir = mkdtempSync("/data/rguliyev/tmp/opencode/reviewer-policy-test-")
+  try {
+    // Secret names, go-getter sources, and pagination fields trip the
+    // generic detectors; reviewers see the redacted text and decide.
+    await expectEvidence(
+      () => bash(`curl -s -u deploy:hunter22pass https://registry.example.test/v2/_catalog`),
+      "credential_pattern",
+      "credential-like literal in command",
+    )
+    await expectEvidence(
+      () => bash(`terraform init -backend-config="password=correcthorse99"`),
+      "credential_pattern",
+    )
+    const compose = path.join(dir, "compose.yaml")
+    writeFileSync(compose, "services:\n  db:\n    environment:\n      DATABASE_URL: postgres://app:localdevpass@db:5432/app\n")
+    await expectEvidence(
+      () => action("read", [compose], { filepath: compose }, { tool: "read", args: { filePath: compose } }),
+      "credential_pattern",
+      "credential-like literal in read target",
+    )
+    const script = path.join(dir, "sweep.py")
+    writeFileSync(script, 'API = "https://api.example.test"\nheaders = {"api_key": "placeholder-value-123"}\nprint(API)\n')
+    await expectEvidence(() => bash(`python3 ${script}`), "credential_pattern", "credential-like literal in inspected script")
+
+    // Provider-format tokens, private keys, and webhook URLs are credential material.
+    const token = "ghp_" + "Q".repeat(36)
+    await expectHard(() => bash(`curl -H "Authorization: token ${token}" https://api.github.com/user`), "It reads, uses, or contains a secret")
+    const keyFile = path.join(dir, "deploy-notes.txt")
+    writeFileSync(keyFile, "-----BEGIN OPENSSH PRIVATE KEY-----\nAAAA\n-----END OPENSSH PRIVATE KEY-----\n")
+    await expectHard(() => action("read", [keyFile], { filepath: keyFile }, { tool: "read", args: { filePath: keyFile } }))
+    const tokenScript = path.join(dir, "push.sh")
+    writeFileSync(tokenScript, `#!/usr/bin/env bash\nexport GH_TOKEN=${token}\ngh pr list\n`)
+    await expectHard(() => bash(`bash ${tokenScript}`))
+    await expectHard(() =>
+      action("edit", ["README.md"], { filepath: "README.md", diff: `+webhook: https://hooks.slack.com/services/T000/B000/${"x".repeat(24)}` }),
+    )
+    // Secret values and token minting stay hard.
+    await expectHard(() => bash("gcloud secrets versions access latest --secret=grafana-token --project=e2b-staging"))
+    await expectHard(() => bash("echo $(gcloud auth print-access-token)"))
+    // An action whose review copy cannot be redacted is withheld and asks.
+    await expectHard(() => action("tool_call", ["custom_tool"], { tool: "custom_tool", ["token=" + "k".repeat(20)]: 1 }))
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})

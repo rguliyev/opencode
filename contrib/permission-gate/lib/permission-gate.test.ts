@@ -546,7 +546,29 @@ test("Jev classifies non-Bash actions with redacted context", async () => {
       },
       credentialSkill,
     )
-    expect(credentialSkill.status).toBe("ask")
+    // A generic credential-like pattern is evidence for the reviewers, who
+    // allow here; a provider-format token is credential material and asks.
+    expect(credentialSkill.status).toBe("allow")
+    expect(JSON.stringify((seen.at(-1) as { state: { context: unknown } }).state.context)).toContain(
+      "credential-like literal in skill content",
+    )
+    const tokenSkill = { status: "ask" }
+    await hooks["permission.ask"](
+      {
+        permission: "skill",
+        sessionID: "ses_all_actions_test",
+        patterns: ["grafana-cloud-auth"],
+        metadata: {
+          name: "grafana-cloud-auth",
+          location: "/skills/grafana-cloud-auth/SKILL.md",
+          content: `Use ${"glpat-" + "T".repeat(24)} for the API.`,
+          core_trusted_builtin: true,
+        },
+        tool: { callID: "call_skill_instructions" },
+      },
+      tokenSkill,
+    )
+    expect(tokenSkill.status).toBe("ask")
 
     const sensitiveSkill = { status: "ask" }
     await hooks["permission.ask"](
@@ -2563,7 +2585,25 @@ test("configured OpenCode the final reviewer resolves Jev escalations with trust
       },
       realJsonEdit,
     )
-    expect(realJsonEdit.status).toBe("ask")
+    // A quoted JSON value is a generic pattern: evidence the reviewer weighs.
+    expect(realJsonEdit.status).toBe("allow")
+    expect((finalReviewState?.context as { gate_evidence?: unknown[] })?.gate_evidence).toEqual([
+      { finding: "credential_pattern", detail: "credential-like literal in action" },
+    ])
+    expect(JSON.stringify(finalReviewState)).not.toContain("Zq8x2Lk9Wm4Pn7Rt")
+    finalReviewContent = JSON.stringify({ choice: "ask", reason: "This looks like a real access token." })
+    const realJsonEditAsked = { status: "allow", message: "" }
+    await hooks["permission.ask"](
+      {
+        ...editRequest,
+        patterns: ["config.json"],
+        metadata: { filepath: "config.json", diff: '+  "access_token": "Zq8x2Lk9Wm4Pn7Rt"' },
+      },
+      realJsonEditAsked,
+    )
+    expect(realJsonEditAsked.status).toBe("ask")
+    expect(realJsonEditAsked.message).toContain("Reviewer: This looks like a real access token.")
+    finalReviewContent = JSON.stringify({ choice: "allow", reason: "The local request is in scope." })
     expect(literalEdit.message).toContain("It reads, uses, or contains a secret")
 
     const policyEdit = { status: "allow" }

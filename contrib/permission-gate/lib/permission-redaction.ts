@@ -22,6 +22,21 @@ const pathValue = /^(?:\/|~\/|\.\.?\/)[A-Za-z0-9._/-]*$/
 // A documentation placeholder such as NOMAD_TOKEN=<token> holds no value.
 const placeholder = /^<[A-Za-z][A-Za-z0-9_.-]{0,62}>$/
 
+// Provider-issued token formats and signed JWTs: values with these shapes are
+// real credentials far more often than not, unlike the generic patterns below.
+const providerToken =
+  /\b(?:sk-(?:proj|ant|live|test)-[A-Za-z0-9_-]{20,}|sk-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{20,}|AIza[A-Za-z0-9_-]{25,}|(?:AKIA|ASIA)[A-Z0-9]{16}|ya29\.[A-Za-z0-9_-]{20,}|4\/0A[A-Za-z0-9_-]{20,}|1\/\/[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9-]{20,}|pypi-[A-Za-z0-9_-]{20,}|npm_[A-Za-z0-9_-]{20,}|sk_(?:live|test)_[A-Za-z0-9]{16,})\b/
+const jwt = /\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/
+const webhook = /https:\/\/(?:hooks\.slack\.com\/services|discord(?:app)?\.com\/api\/webhooks)\/[^\s'";|]{12,}/i
+
+// High-precision credential material: a provider-format token, signed JWT,
+// private key, or chat webhook URL. The permission gate treats these as a hard
+// human gate; the generic assignment/header/URL-password patterns are only
+// evidence for its reviewers, because they are usually names or references.
+export function containsCredentialMaterial(text: string) {
+  return providerToken.test(text) || jwt.test(text) || webhook.test(text) || /-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(text)
+}
+
 // This is deliberately a bounded, local detector rather than a claim that
 // arbitrary passwords can be recognized. Unrecognized values remain a risk.
 const residualCredential =
@@ -161,11 +176,8 @@ function sanitizeText(input: string): RedactionResult<string> {
         )
       ),
   )
-  replaceFull(
-    /\b(?:sk-(?:proj|ant|live|test)-[A-Za-z0-9_-]{20,}|sk-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{20,}|AIza[A-Za-z0-9_-]{25,}|(?:AKIA|ASIA)[A-Z0-9]{16}|ya29\.[A-Za-z0-9_-]{20,}|4\/0A[A-Za-z0-9_-]{20,}|1\/\/[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9-]{20,}|pypi-[A-Za-z0-9_-]{20,}|npm_[A-Za-z0-9_-]{20,}|sk_(?:live|test)_[A-Za-z0-9]{16,})\b/g,
-    "TOKEN",
-  )
-  replaceFull(/\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g, "JWT")
+  replaceFull(new RegExp(providerToken.source, "g"), "TOKEN")
+  replaceFull(new RegExp(jwt.source, "g"), "JWT")
   value = value.replace(/[\u200B-\u200F\uFEFF\u{E0000}-\u{E007F}]/gu, () => {
     kinds.add("INVISIBLE_CONTROL")
     return ""
