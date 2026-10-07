@@ -1,7 +1,7 @@
 import type { Config, Plugin } from "@opencode-ai/plugin"
 import { createHash } from "node:crypto"
 import { awsScopeReviewMessage } from "../lib/aws-scope"
-import { gcpScopeReviewMessage, targetsOnlyDefaultProject } from "../lib/gcp-scope"
+import { gcpScopeReviewMessage, gcpScopeReviewMessageInLoop, targetsOnlyDefaultProject } from "../lib/gcp-scope"
 import { sanitizeReviewText, sanitizeReviewValue } from "../lib/permission-redaction"
 import { appendFile, readFile, readdir } from "node:fs/promises"
 import { appendFileSync, lstatSync, mkdirSync, readFileSync, realpathSync } from "node:fs"
@@ -3831,7 +3831,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
             reasons.push(
               finalReviewMayApprovePublish(command) ? "publish: needs the final reviewer to confirm an explicit human request" : "human-only operation",
             )
-          const scopes = [gcpScopeReviewMessage(hardChecked, sessions), awsScopeReviewMessage(hardChecked, sessions)]
+          const scopes = [gcpScopeReviewMessageInLoop(hardChecked, fullCommand, sessions), awsScopeReviewMessage(hardChecked, sessions)]
           for (const script of inspection.scripts) {
             if (requiresHuman(script.content)) reasons.push("script credential or secret access")
             if (scriptRequiresHumanOperation(script.content)) reasons.push("script human-only operation")

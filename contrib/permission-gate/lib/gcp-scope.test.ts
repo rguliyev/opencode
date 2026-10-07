@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { targetsOnlyDefaultProject } from "./gcp-scope"
+import { gcpScopeReviewMessageInLoop, targetsOnlyDefaultProject } from "./gcp-scope"
 
 const dev = "e2b-dev-rauf-guliyev"
 
@@ -23,4 +23,17 @@ test("projects/ paths in non-Google URLs are not GCP projects", () => {
     targetsOnlyDefaultProject("google-api-get 'https://monitoring.googleapis.com/v3/projects/e2b-staging/timeSeries'"),
   ).toBe(false)
   expect(targetsOnlyDefaultProject("echo projects/e2b-staging")).toBe(false)
+})
+
+test("a for loop over allowed projects is resolved, not a dynamic project switch", () => {
+  const loop = (projects: string) =>
+    `for project in ${projects}; do google-api-get "https://monitoring.googleapis.com/v3/projects/$project/timeSeries"; done`
+  const segment = 'google-api-get "https://monitoring.googleapis.com/v3/projects/$project/timeSeries"'
+  expect(gcpScopeReviewMessageInLoop(segment, loop("e2b-staging e2b-foxtrot"))).toBeUndefined()
+  expect(gcpScopeReviewMessageInLoop('gcloud container clusters list --project="$p"', 'for p in e2b-staging e2b-tango; do gcloud container clusters list --project="$p"; done')).toBeUndefined()
+  // An unlisted project, a reassigned variable, or no loop still asks.
+  expect(gcpScopeReviewMessageInLoop(segment, loop("e2b-staging some-other-project"))).toContain("some-other-project")
+  expect(gcpScopeReviewMessageInLoop(segment, `${loop("e2b-staging")}; project=evil-project`)).toBeDefined()
+  expect(gcpScopeReviewMessageInLoop(segment, segment)).toBeDefined()
+  expect(gcpScopeReviewMessageInLoop(segment, 'for project in $(cat list); do x; done')).toBeDefined()
 })

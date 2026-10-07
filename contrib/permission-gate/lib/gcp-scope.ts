@@ -170,3 +170,40 @@ export function gcpScopeReviewMessage(command: string, sessions?: string[]) {
   if (denied.length === 0) return undefined
   return `GCP project${denied.length === 1 ? "" : "s"} ${denied.join(", ")} require human review. Default project: ${policy.default_project}`
 }
+
+// `for p in e2b-staging e2b-foxtrot; do ... --project="$p"; done` names its
+// projects in the loop header, which a per-segment check never sees. A loop
+// variable is resolved only when every value is a literal project ID and the
+// variable is never assigned elsewhere; each segment is then checked once per
+// value. Anything else stays dynamic and fails closed.
+function loopBindings(fullCommand: string) {
+  const bindings = new Map<string, string[]>()
+  for (const match of fullCommand.matchAll(/\bfor\s+([A-Za-z_][A-Za-z0-9_]*)\s+in\s+([^;\n]*?)\s*(?:;|\n)\s*do\b/g)) {
+    const [, name, list] = match
+    const values = list.trim().split(/\s+/).map((word) => word.replace(/^(["'])(.*)\1$/, "$2"))
+    const reassigned = new RegExp(`(?:^|[\\s;&|(])(?:${name}=|read\\s+(?:-\\w+\\s+)*[^;|&\\n]*\\b${name}\\b)`).test(
+      fullCommand.replace(match[0], ""),
+    )
+    if (values.length && values.length <= 50 && values.every((value) => projectID.test(value)) && !reassigned)
+      bindings.set(name, [...(bindings.get(name) ?? []), ...values])
+  }
+  return bindings
+}
+
+export function gcpScopeReviewMessageInLoop(segment: string, fullCommand: unknown, sessions?: string[]) {
+  const bindings = typeof fullCommand === "string" ? loopBindings(fullCommand) : new Map<string, string[]>()
+  const used = [...bindings.keys()].filter((name) => new RegExp(`\\$(?:\\{${name}\\}|${name}\\b)`).test(segment))
+  if (!used.length) return gcpScopeReviewMessage(segment, sessions)
+  let variants = [segment]
+  for (const name of used) {
+    variants = variants.flatMap((variant) =>
+      bindings.get(name)!.map((value) => variant.replace(new RegExp(`\\$(?:\\{${name}\\}|${name}\\b)`, "g"), value)),
+    )
+    if (variants.length > 200) return gcpScopeReviewMessage(segment, sessions)
+  }
+  for (const variant of variants) {
+    const message = gcpScopeReviewMessage(variant, sessions)
+    if (message) return message
+  }
+  return undefined
+}
