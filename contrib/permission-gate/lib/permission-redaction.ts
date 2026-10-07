@@ -72,6 +72,10 @@ function sanitizeText(input: string): RedactionResult<string> {
     // verb is not a password.
     (prefix, secret) =>
       !/^%[-+ #0-9.]*[a-zA-Z]$/.test(secret) &&
+      // go-getter sources (git::git@github.com:org/repo.git, as used by every
+      // Terraform/Terragrunt module source) force a getter with `name::`;
+      // the second colon is not a user:password separator.
+      !(/^(?:git|hg|s3|gcs|https?|file):$/i.test(prefix) && secret.startsWith(":")) &&
       (/^https?:\/\//i.test(prefix) ||
         !/(?:^|["'`\s=,[(])(?:serviceAccount|user|group|domain|principal|principalSet|deleted):$/i.test(prefix)),
   )

@@ -196,3 +196,11 @@ test("an expression after a token-named key is not a credential", () => {
   expect(sanitizeReviewText("nextPageToken: Zx9fA7c2Lm4Qw8Rt").value).toBe("nextPageToken: [REDACTED:CREDENTIAL]")
   expect(sanitizeReviewText("password=hunter2-real").value).toBe("password=[REDACTED:CREDENTIAL]")
 })
+
+test("a go-getter module source is not a user:password URL", () => {
+  const source = `source = "git::git@github.com:e2b-dev/terraform-modules.git//gcp/x?ref=gcp-x-v1.0.0"`
+  expect(sanitizeReviewText(source)).toMatchObject({ value: source, kinds: [] })
+  // Real URL credentials are still masked, with or without a getter prefix.
+  expect(sanitizeReviewText("git::https://deploy:Sup3rS3cret@github.com/org/repo.git").kinds).toContain("PASSWORD")
+  expect(sanitizeReviewText("https://user:hunter2pass@example.com/x").kinds).toContain("PASSWORD")
+})
