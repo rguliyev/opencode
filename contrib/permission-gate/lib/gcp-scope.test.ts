@@ -37,3 +37,13 @@ test("a for loop over allowed projects is resolved, not a dynamic project switch
   expect(gcpScopeReviewMessageInLoop(segment, segment)).toBeDefined()
   expect(gcpScopeReviewMessageInLoop(segment, 'for project in $(cat list); do x; done')).toBeDefined()
 })
+
+test("only well-formed unlisted project IDs are a hard gate; other captures are a dynamic choice", async () => {
+  const { gcpScopeFinding } = await import("./gcp-scope")
+  expect(gcpScopeFinding("gcloud compute instances list --project=some-unlisted-project")?.kind).toBe("unlisted_projects")
+  expect(gcpScopeFinding('cmd = ["gcloud", "logging", "read", "--project=" + project, "--limit=5"]')?.kind).toBe("dynamic_project")
+  expect(gcpScopeFinding('gcloud run services list --project="$proj"')?.kind).toBe("dynamic_project")
+  expect(gcpScopeFinding("gcloud compute instances list --project=Not_A_Project")?.kind).toBe("dynamic_project")
+  expect(gcpScopeFinding("gcloud compute instances list --account=x@example.test")?.kind).toBe("credential_switch")
+  expect(gcpScopeFinding("gcloud compute instances list --project=e2b-staging")).toBeUndefined()
+})

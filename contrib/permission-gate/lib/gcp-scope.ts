@@ -195,15 +195,17 @@ export function gcpScopeFinding(command: string, sessions?: string[]): GcpScopeF
       message: `GCP credential selection requires human review. Default project: ${policy.default_project}`,
     }
   const allowed = new Set(policy.allowed_projects)
-  // A captured "$proj" is a variable, not a project ID: it is judged below as
-  // a dynamic choice. Every other value outside the allowlist is unlisted.
-  const denied = [...explicitProjects(command)].filter((project) => !allowed.has(project) && !/[$`]/.test(project))
+  // Only a well-formed project ID outside the allowlist is an unlisted
+  // project. Anything else captured after a project flag ("$proj", or
+  // `" + project,` from code that builds the flag) is a dynamic choice.
+  const named = [...explicitProjects(command)].filter((project) => !allowed.has(project))
+  const denied = named.filter((project) => projectID.test(project))
   if (denied.length)
     return {
       kind: "unlisted_projects",
       message: `GCP project${denied.length === 1 ? "" : "s"} ${denied.join(", ")} require human review. Default project: ${policy.default_project}`,
     }
-  if (switchesProjectDynamically(command))
+  if (named.length || switchesProjectDynamically(command))
     return {
       kind: "dynamic_project",
       message: `GCP project chosen dynamically; the gate could not resolve it. Default project: ${policy.default_project}`,
