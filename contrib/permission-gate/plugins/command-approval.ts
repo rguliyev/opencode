@@ -589,10 +589,52 @@ function pythonTextOnly(command: string) {
 // and the OAuth token endpoint are credential access however they are read.
 // An interpreter name counts only as a command word, not as a field name
 // such as jq's `{node: ...}` or `.node`.
+// Secret Manager payloads, minting or printing tokens, and credential stores
+// are credential material: a hard human gate.
 function requiresHuman(command: string) {
   if (pythonTextOnly(command)) return false
-  return /secretmanager\.googleapis\.com|google\.cloud\.secretmanager|\bgcloud\b[^\n;|&]*\bsecrets\s+versions\s+access\b|\bgcloud\b[^\n;|&]*\bauth\s+(?:print-access-token|application-default\s+print-access-token)\b|authorization[^\n;|&]*bearer|application_default_credentials\.json|\b(?:credentials|access_tokens)\.db\b|\blegacy_credentials\b|oauth2\.googleapis\.com\/token|accounts\.google\.com\/o\/oauth2\/token|(?<![.\w\[-])(?:python|python3|node|ruby|perl|bash|sh|zsh)(?![\w-])(?![\"']?\s*:)[^\n]*(?:google\.auth|google\.cloud|googleapis\.com|CLOUDSDK_|GOOGLE_CLOUD_PROJECT|GCLOUD_PROJECT)/i.test(
+  return (
+    /secretmanager\.googleapis\.com|google\.cloud\.secretmanager|\bgcloud\b[^\n;|&]*\bsecrets\s+versions\s+access\b|\bgcloud\b[^\n;|&]*\bauth\s+(?:print-access-token|print-identity-token|application-default\s+print-access-token)\b|application_default_credentials\.json|\b(?:credentials|access_tokens)\.db\b|\blegacy_credentials\b|oauth2\.googleapis\.com\/token|accounts\.google\.com\/o\/oauth2\/token/i.test(
+      command,
+    ) || credentialStoreReference(command)
+  )
+}
+
+// Using credentials the environment already holds, without printing them:
+// Google client libraries with application-default credentials, or a bearer
+// header filled from a variable. Reviewers judge where the credential goes.
+function usesAmbientCredentials(command: string) {
+  if (pythonTextOnly(command)) return false
+  return /authorization[^\n;|&]*bearer|(?<![.\w\[-])(?:python|python3|node|ruby|perl|bash|sh|zsh)(?![\w-])(?![\"']?\s*:)[^\n]*(?:google\.auth|google\.cloud|googleapis\.com|CLOUDSDK_|GOOGLE_CLOUD_PROJECT|GCLOUD_PROJECT)/i.test(
     command,
+  )
+}
+
+// ~/.ssh, GnuPG, cloud CLI credentials, netrc and git credential files, the
+// Docker auth file, and OpenCode's auth.json, named anywhere in the text.
+function credentialStoreReference(text: string) {
+  return /(?:^|[\s"'=:(/~])\.(?:ssh|gnupg)(?:\/|$|[\s"');|&])|\.aws\/(?:credentials|config)\b|(?:^|[\s"'=:(/~])\.(?:netrc|git-credentials)\b|\.docker\/config\.json\b|\bopencode\/(?:data\/)?auth\.json\b/.test(
+    text,
+  )
+}
+
+// The same stores as resolved paths, plus .env files, for file targets. For
+// a search or directory grant, a target that contains a store counts too.
+function credentialStorePath(file: string, containing: boolean) {
+  const home = homedir()
+  const stores = [
+    ...[".ssh", ".gnupg", ".aws", ".netrc", ".git-credentials", ".docker/config.json"].map((name) => path.join(home, name)),
+    path.join(opencodeDataDir(), "auth.json"),
+    path.join(process.env.XDG_DATA_HOME || path.join(home, ".local", "share"), "opencode", "auth.json"),
+  ]
+  const target = path.normalize(file.replace(/\/\*+$/, "")) || "/"
+  const base = path.basename(target)
+  return (
+    stores.some((store) => target === store || target.startsWith(store + path.sep)) ||
+    /^(?:application_default_credentials\.json|credentials\.db|access_tokens\.db)$/.test(base) ||
+    target.split(path.sep).includes("legacy_credentials") ||
+    (/^\.env(?:\..+)?$/.test(base) && !/^\.env\.(?:example|sample|template|dist|defaults)$/.test(base)) ||
+    (containing && stores.some((store) => store.startsWith(target === "/" ? "/" : target + path.sep)))
   )
 }
 
@@ -2049,6 +2091,8 @@ function finalReviewAudit(result: FinalReviewResult) {
 // why they are being asked. Model scores stay in the audit log.
 const plainReasons: [RegExp, string][] = [
   [/^(?:credential or secret access|script credential or secret access|credential material)/, "It reads, uses, or contains a secret (token, password, or key)."],
+  [/^credential store/, "It touches a credential store (~/.ssh, cloud or OpenCode credentials, or a .env file)."],
+  [/^(?:inspected script )?uses ambient credentials/, "It uses your existing cloud login or a token variable (without printing it)."],
   [/^credential-like literal/, "It contains something that looks like a secret (token, password, or key)."],
   [/^review evidence withheld/, "The request could not be shown to the reviewer safely."],
   [/^environment policy unavailable/, "The gate's environment policy file could not be loaded."],
@@ -3300,8 +3344,25 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
     // Task prompts are prose handed to a subagent, like edit diffs; the
     // subagent's actual commands are checked when it runs them. Grep and glob
     // patterns are text to find; secret targets have their own path rules.
-    if (!["edit", "task", "grep", "glob"].includes(input.permission) && requiresHuman(policyRaw))
-      reasons.push("credential or secret access")
+    if (!["edit", "task", "grep", "glob"].includes(input.permission)) {
+      if (requiresHuman(policyRaw)) reasons.push("credential or secret access")
+      else if (usesAmbientCredentials(policyRaw))
+        evidence.push({ finding: "ambient_credentials", detail: "uses ambient credentials without printing them" })
+    }
+    const actionWorkdir = workingDirectories.get(callID ?? "") ?? directory
+    const fileTargetPaths = [
+      ...patterns.filter((pattern) => ["read", "edit", "external_directory", "glob", "grep", "list", "lsp"].includes(input.permission) && path.isAbsolute(pattern)),
+      ...[metadata.filepath, metadata.resolved_filepath, metadata.requested_path, metadata.path]
+        .filter((value): value is string => typeof value === "string" && value.length > 0)
+        .map((value) => path.resolve(actionWorkdir, value)),
+      ...(skillLocation ? [skillLocation] : []),
+    ]
+    if (
+      fileTargetPaths.some((file) =>
+        credentialStorePath(resolvedThroughAncestor(file), ["grep", "glob", "external_directory", "list"].includes(input.permission)),
+      )
+    )
+      reasons.push("credential store: ~/.ssh, cloud or OpenCode credentials, or a .env file")
     const continuation = await taskContinuation(input, call?.args)
     if (continuation === "unverified") reasons.push("task continuation lineage unverified")
     if (action.local_evidence?.credential_material)
@@ -3916,6 +3977,8 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
               detail: "token-read: the final reviewer must confirm a read-only Google API call with the existing login",
             })
           if (requiresHuman(hardChecked)) hard.push("credential or secret access")
+          else if (usesAmbientCredentials(hardChecked))
+            evidence.push({ finding: "ambient_credentials", detail: "uses ambient credentials without printing them" })
           // A local-dev terraform/terragrunt apply stays with Jev. The same verb
           // aimed at any other project, and every live kubectl mutation, stays
           // a human ask even when Jev allows. Kev still receives both.
@@ -3927,6 +3990,8 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
           const scopes = [gcpScopeReviewMessageInLoop(hardChecked, fullCommand, sessions), awsScopeReviewMessage(hardChecked, sessions)]
           for (const script of inspection.scripts) {
             if (requiresHuman(script.content)) hard.push("script credential or secret access")
+            else if (usesAmbientCredentials(script.content))
+              evidence.push({ finding: "ambient_credentials", detail: "inspected script uses ambient credentials without printing them" })
             if (scriptRequiresHumanOperation(script.content)) hard.push("script human-only operation")
             scopes.push(
               gcpScopeReviewMessage(script.content, sessions),

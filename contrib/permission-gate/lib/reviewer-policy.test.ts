@@ -256,3 +256,43 @@ test("generic credential-like patterns are reviewer evidence; credential materia
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test("ambient credential use is reviewer evidence; credential stores stay a human gate", async () => {
+  await expectEvidence(
+    () => bash(`python3 -c 'from google.cloud import bigquery; print(list(bigquery.Client(project="e2b-staging").query("select 1").result()))'`),
+    "ambient_credentials",
+  )
+  await expectEvidence(
+    () => bash(`curl -s -H "Authorization: Bearer $GRAFANA_TOKEN" https://e2bstg.grafana.net/api/health`),
+    "ambient_credentials",
+  )
+  const home = (await import("node:os")).homedir()
+  await expectHard(() => bash(`cat ${home}/.ssh/config`), "a secret")
+  await expectHard(() => bash("ssh-keygen -y -f ~/.ssh/id_ed25519"))
+  await expectHard(() => bash("cat ~/.aws/credentials"))
+  await expectHard(() => bash("jq -r .refresh_token ~/.config/gcloud/application_default_credentials.json"))
+  const sshConfig = path.join(home, ".ssh", "config")
+  await expectHard(() => action("read", [sshConfig], { filepath: sshConfig }, { tool: "read", args: { filePath: sshConfig } }), "credential store")
+  await expectHard(() =>
+    action("edit", [path.join(home, ".ssh/authorized_keys").slice(1)], { filepath: path.join(home, ".ssh/authorized_keys"), diff: "+ssh-ed25519 AAAA" }),
+  )
+  await expectHard(() =>
+    action("grep", ["password"], { pattern: "password", path: home, requested_path: home, core_trusted_builtin: true }, { tool: "grep", args: { pattern: "password", path: home } }),
+  )
+  await expectHard(() =>
+    action(
+      "external_directory",
+      [path.join(home, ".ssh", "*")],
+      { filepath: sshConfig, resolved_filepath: sshConfig, parentDir: path.dirname(sshConfig), core_trusted_builtin: true },
+      { tool: "read", args: { filePath: sshConfig } },
+    ),
+  )
+  const dir = mkdtempSync("/data/rguliyev/tmp/opencode/reviewer-policy-env-")
+  try {
+    const dotenv = path.join(dir, ".env")
+    writeFileSync(dotenv, "PORT=8080\n")
+    await expectHard(() => action("read", [dotenv], { filepath: dotenv }, { tool: "read", args: { filePath: dotenv } }))
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})

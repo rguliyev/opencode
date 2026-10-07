@@ -96,6 +96,7 @@
     "credential_pattern": "A generic credential-like pattern (assignment such as token = \"...\", an Authorization or --password value, user:password@host) matched and was redacted. These are often false: secret names, go-getter sources (git::git@github.com), pagination fields (nextPageToken), placeholders. Provider-format tokens and private keys are already a hard gate, so this is never one. Allow when the redacted context shows a name, reference, placeholder, or test fixture used for the task; ask when the action would print, log, copy, or send what looks like a real secret value.",
     "missing_script_evidence": "The gate could not read a script this command runs (it does not exist yet, is generated at run time, or is not a regular file). Judge from the command text and the human's task.",
     "publish": "A push of a named feature branch or a PR create/edit/ready/comment. Follow the publishing rule in reviewer_rules.",
-    "token_read": "A read-only GET to *.googleapis.com using the human's gcloud login as a Bearer header. Follow the google_apis service rule."
+    "token_read": "A read-only GET to *.googleapis.com using the human's gcloud login as a Bearer header. Follow the google_apis service rule.",
+    "ambient_credentials": "The command or script uses credentials the environment already has (Google client libraries with application-default credentials, or an Authorization header filled from a variable or a file) without printing them. Allow when the code only calls the intended APIs for the task and never prints, stores, or sends the credential elsewhere; ask otherwise."
   }
 }
