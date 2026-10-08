@@ -280,7 +280,7 @@ test("a script that sources a file beside it through its own directory is inspec
     const { mkdtempSync, writeFileSync, rmSync } = await import("node:fs")
     const dir = mkdtempSync(path.join((await import("node:os")).tmpdir(), "gate-srcdir-"))
     try {
-      writeFileSync(path.join(dir, "lib.sh"), 'helper() { echo "helper ran"; }\n')
+      writeFileSync(path.join(dir, "lib.sh"), 'helper() {\n  local line fs_type source dev_id\n  read -r fs_type source dev_id <<<"$1"\n  echo "helper ran"\n}\n')
       writeFileSync(
         path.join(dir, "validate.sh"),
         '#!/usr/bin/env bash\nset -euo pipefail\nDIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)\nreadonly DIR\nsource "$DIR/lib.sh"\nhelper\n',

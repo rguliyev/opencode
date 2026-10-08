@@ -663,7 +663,11 @@ function shellSources(file: string, content: string): string[] {
     }
     if (character === "'" && quote !== '"') quote = "'"
   }
-  return [...shell.matchAll(/(?:^|[\s;&|(){}])(?:source|\.)\s+(\S+)/gm)].map((match) => match[1])
+  // Only in command position: `local fs_type source dev_id` or
+  // `read -r a source b` names a variable, not the source builtin.
+  return [
+    ...shell.matchAll(/(?:^[ \t]*|[;&|(){}][ \t]*|\b(?:then|do|else|exec)[ \t]+)(?:source|\.)[ \t]+(\S+)/gm),
+  ].map((match) => match[1])
 }
 
 // `python3 -c '...'` that only formats text, such as building a
