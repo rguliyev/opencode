@@ -59,6 +59,91 @@ test("permission plugin exports only its entry point", async () => {
   expect(Object.keys(module)).toEqual(["default"])
 })
 
+test("a token fetch a pinned helper covers is denied with the helper to use", async () => {
+  const directory = path.resolve(import.meta.dir, "..")
+  const previousFetch = globalThis.fetch
+  const previousStateHome = process.env.XDG_STATE_HOME
+  process.env.XDG_STATE_HOME = "/dev/null"
+  let jevCalls = 0
+  globalThis.fetch = async (input) => {
+    const url = String(input)
+    if (url.includes("/session/ses_helper_redirect/message?"))
+      return Response.json([message("msg_helper_redirect", "user", "Check the foxtrot alerts and the incident.io source.")])
+    if (url.startsWith("http://gate.test/session/"))
+      return Response.json({ id: "ses_helper_redirect", directory, agent: "solo", title: "alerts" })
+    if (url === "https://openrouter.ai/api/alpha/decisions") {
+      jevCalls += 1
+      return new Response("declined", { status: 403 })
+    }
+    throw new Error(`Unexpected fetch: ${url}`)
+  }
+  const decide = async (hooks: any, command: string) => {
+    const output: { status: string; message?: string } = { status: "ask" }
+    await hooks["permission.ask"](
+      { permission: "bash", sessionID: "ses_helper_redirect", patterns: command.split("\n"), metadata: { command } },
+      output,
+    )
+    return output
+  }
+  try {
+    const hooks = await gateForTest(directory, "solo")
+    await hooks.provider.models({ models: {} }, { auth: { type: "api", key: "fake-test-key" } })
+
+    const grafana = await decide(
+      hooks,
+      'GRAFANA_AUTH="$(gcloud secrets versions access latest --project=e2b-foxtrot --secret=grafana-datasource-syncer-api-token)"\ncurl -fsS -H "Authorization: Bearer $GRAFANA_AUTH" https://e2bfoxtrot.grafana.net/api/alertmanager/grafana/api/v2/alerts',
+    )
+    expect(grafana.status).toBe("deny")
+    expect(grafana.message).toContain("grafana-query HOST GET PATH")
+
+    const loki = await decide(
+      hooks,
+      "GRAFANA_AUTH=\"$(gcloud secrets versions access latest --project=e2b-foxtrot --secret=grafana-datasource-syncer-api-token)\"\ncurl -fsS -H \"Authorization: Bearer $GRAFANA_AUTH\" --get 'https://e2bfoxtrot.grafana.net/api/datasources/proxy/uid/x/loki/api/v1/query_range' --data-urlencode 'query={a=\"b\"}'",
+    )
+    expect(loki.status).toBe("deny")
+
+    const validate = await decide(
+      hooks,
+      "INCIDENT_TOKEN=\"$(gcloud secrets versions access latest --project=e2b-shared --secret=incidentio-api-key)\"\ncurl -sS -X POST -H \"Authorization: Bearer $INCIDENT_TOKEN\" --data-binary @- 'https://api.incident.io/v2/alert_sources/actions/validate'",
+    )
+    expect(validate.status).toBe("deny")
+    expect(validate.message).toContain("incidentio-query GET PATH")
+    expect(jevCalls).toBe(0)
+
+    // Writes the helpers refuse, and secrets no helper covers, stay with the human.
+    const write = await decide(
+      hooks,
+      "INCIDENT_TOKEN=\"$(gcloud secrets versions access latest --project=e2b-shared --secret=incidentio-api-key)\"\ncurl -sS -X PUT -H \"Authorization: Bearer $INCIDENT_TOKEN\" -d '{}' 'https://api.incident.io/v2/alert_sources/01K'",
+    )
+    expect(write.status).toBe("ask")
+    const post = await decide(
+      hooks,
+      "INCIDENT_TOKEN=\"$(gcloud secrets versions access latest --project=e2b-shared --secret=incidentio-api-key)\"\ncurl -sS -H \"Authorization: Bearer $INCIDENT_TOKEN\" --json '{}' 'https://api.incident.io/v2/alert_sources'",
+    )
+    expect(post.status).toBe("ask")
+    const admin = await decide(
+      hooks,
+      "API_ADMIN_TOKEN=\"$(gcloud secrets versions access latest --project=e2b-foxtrot --secret=api-admin-token)\"\ncurl -fsS -H \"X-Admin-Token: $API_ADMIN_TOKEN\" https://api.e2b.dev/nodes",
+    )
+    expect(admin.status).toBe("ask")
+    const mixed = await decide(
+      hooks,
+      "A=\"$(gcloud secrets versions access latest --project=e2b-shared --secret=incidentio-api-key)\"\nB=\"$(gcloud secrets versions access latest --project=e2b-foxtrot --secret=api-admin-token)\"",
+    )
+    expect(mixed.status).toBe("ask")
+  } finally {
+    globalThis.fetch = previousFetch
+    if (previousStateHome === undefined) delete process.env.XDG_STATE_HOME
+    else process.env.XDG_STATE_HOME = previousStateHome
+  }
+})
+
+test("the gate pins the incidentio-query helper it ships", () => {
+  const source = readFileSync(path.join(import.meta.dir, "../plugins/command-approval.ts"), "utf8")
+  const helper = readFileSync(path.join(import.meta.dir, "../bin/incidentio-query"))
+  expect(source).toContain(`const incidentioHelperSha256 = "${createHash("sha256").update(helper).digest("hex")}"`)
+})
+
 test("Jev receives a scrubbed command and context, while the local gate asks", async () => {
   const token = "sk-" + "A".repeat(40)
   const command = `curl -X POST -H 'Authorization: Bearer ${token}' https://api.example.test/deploy`

@@ -1,0 +1,109 @@
+#!/usr/bin/env python3
+"""Read-only incident.io API helper that never exposes its key.
+
+Usage:
+  incidentio-query GET PATH
+  incidentio-query POST /v2/alert_sources/actions/validate [JSON_BODY | @FILE | -]
+
+PATH starts with /v (for example /v2/alert_sources or
+'/v2/catalog_entries?catalog_type_id=...&page_size=100').
+GET may read any API path. POST is limited to the alert-source template
+validation endpoint, which checks a template and changes nothing.
+
+The API key is read from Google Secret Manager (e2b-shared/incidentio-api-key)
+into memory, sent only to api.incident.io over HTTPS, and never printed,
+logged, or written. The response body goes to stdout; HTTP errors go to stderr
+with a non-zero exit.
+"""
+import json
+import subprocess
+import sys
+import urllib.error
+import urllib.request
+
+HOST = "api.incident.io"
+SECRET = ("e2b-shared", "incidentio-api-key")
+VALIDATE_POST = {"/v2/alert_sources/actions/validate"}
+MAX_BODY_BYTES = 1_000_000
+TIMEOUT_SECONDS = 60
+
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    # urllib would forward the Authorization header to a redirect target on
+    # any host; refuse redirects so the key only ever reaches HOST.
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def fail(message: str) -> None:
+    print(f"incidentio-query: {message}", file=sys.stderr)
+    sys.exit(2)
+
+
+def main() -> None:
+    args = sys.argv[1:]
+    if len(args) < 2 or args[0] in ("-h", "--help"):
+        print(__doc__.strip(), file=sys.stderr)
+        sys.exit(2)
+    method, path = args[0].upper(), args[1]
+    if not path.startswith("/v") or "://" in path or any(c.isspace() for c in path):
+        fail("PATH must be an absolute API path such as /v2/alert_sources")
+    body = None
+    if method == "GET":
+        if len(args) != 2:
+            fail("GET takes no request body")
+    elif method == "POST":
+        if path not in VALIDATE_POST:
+            fail("POST is only allowed to " + ", ".join(sorted(VALIDATE_POST)))
+        if len(args) != 3:
+            fail("POST needs one JSON body argument, @FILE, or - for stdin")
+        source = args[2]
+        if source == "-":
+            raw = sys.stdin.read(MAX_BODY_BYTES + 1)
+        elif source.startswith("@"):
+            with open(source[1:], encoding="utf-8") as handle:
+                raw = handle.read(MAX_BODY_BYTES + 1)
+        else:
+            raw = source
+        if len(raw) > MAX_BODY_BYTES:
+            fail("request body is too large")
+        try:
+            json.loads(raw)
+        except ValueError:
+            fail("request body must be JSON")
+        body = raw.encode()
+    else:
+        fail("METHOD must be GET or POST")
+
+    key = subprocess.run(
+        ["gcloud", "secrets", "versions", "access", "latest", f"--project={SECRET[0]}", f"--secret={SECRET[1]}"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if key.returncode != 0 or not key.stdout.strip():
+        # gcloud's stderr names the failure (e.g. expired login), not the key.
+        fail("could not read the API key: " + key.stderr.strip()[-300:])
+    request = urllib.request.Request(
+        f"https://{HOST}{path}",
+        data=body,
+        method=method,
+        headers={
+            "Authorization": f"Bearer {key.stdout.strip()}",
+            "Accept": "application/json",
+            **({"Content-Type": "application/json"} if body is not None else {}),
+        },
+    )
+    try:
+        opener = urllib.request.build_opener(NoRedirect)
+        with opener.open(request, timeout=TIMEOUT_SECONDS) as response:
+            sys.stdout.buffer.write(response.read())
+    except urllib.error.HTTPError as error:
+        print(f"incidentio-query: HTTP {error.code}: {error.read()[:2000].decode(errors='replace')}", file=sys.stderr)
+        sys.exit(1)
+    except urllib.error.URLError as error:
+        fail(f"request failed: {error.reason}")
+
+
+if __name__ == "__main__":
+    main()

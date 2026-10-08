@@ -1234,6 +1234,87 @@ function grafanaHelperPath() {
   return process.env.OPENCODE_GRAFANA_HELPER ?? path.join(opencodeScripts, "grafana-query")
 }
 
+// contrib/permission-gate/bin/incidentio-query, installed in /data/rguliyev/opencode/scripts:
+// GET on api.incident.io, or a POST to the alert-source template validation
+// endpoint, with the API key it reads itself and never prints. Trusted only
+// when the installed file matches this hash.
+const incidentioHelperSha256 = "19a0bfc47cc5529da8da2bb51dde8db1ee246df63cad7ac93a3da4a57fe5eeef"
+const incidentioHelperPath = () =>
+  process.env.OPENCODE_INCIDENTIO_HELPER ?? path.join(opencodeScripts, "incidentio-query")
+
+function isPinnedIncidentioHelper(file: string) {
+  try {
+    return (
+      realpathSync(file) === realpathSync(incidentioHelperPath()) &&
+      createHash("sha256").update(readFileSync(file)).digest("hex") === incidentioHelperSha256
+    )
+  } catch {
+    return false
+  }
+}
+
+function incidentioHelperEvidence(args: string[]) {
+  if (!isPinnedIncidentioHelper(incidentioHelperPath()))
+    return "incidentio-query: the installed helper does not match the gate's pinned version; treat it as unknown code"
+  const [method, apiPath] = args
+  return `incidentio-query: verified local helper; it reads the incident.io API key itself, sends it only to api.incident.io over HTTPS without following redirects, and never prints it. It allows only GET or a POST to the alert-source template validation endpoint, so this ${method ?? ""} ${apiPath ?? ""} request is a read-only incident.io query and involves no credential handling by the agent`
+}
+
+// Secrets that a pinned helper reads on the agent's behalf. A command that
+// fetches one of these itself is denied with a pointer to the helper, so the
+// agent switches route instead of queuing a human prompt for each variant.
+const helperCoveredSecrets: { secret: RegExp; helper: string; usage: string }[] = [
+  {
+    secret: /^(?:grafana-instance-token-e2b-(?:prod|stg)|grafana-datasource-syncer-api-token)$/,
+    helper: "grafana-query",
+    usage:
+      "/data/rguliyev/opencode/scripts/grafana-query HOST GET PATH (or HOST POST /api/ds/query BODY) for e2bprod.grafana.net, e2bstg.grafana.net, or e2bfoxtrot.grafana.net",
+  },
+  {
+    secret: /^incidentio-api-key$/,
+    helper: "incidentio-query",
+    usage:
+      "/data/rguliyev/opencode/scripts/incidentio-query GET PATH (or POST /v2/alert_sources/actions/validate BODY)",
+  },
+]
+
+// The secret names a command reads with `gcloud secrets versions access`.
+function accessedSecretNames(command: string) {
+  const names: string[] = []
+  for (const match of command.matchAll(/gcloud\s+secrets\s+versions\s+access\b[^\n;&|]*/g)) {
+    const flag = match[0].match(/--secret(?:=|\s+)["']?([A-Za-z0-9_-]+)/)
+    if (flag) names.push(flag[1])
+  }
+  return names
+}
+
+// Writes the helpers cannot make: any curl method or body flag that is not a
+// helper-supported read. Their presence keeps the call with the human.
+function sendsWrites(command: string) {
+  if (/\bcurl\b[^\n]*(?:\s-X\s*|--request[=\s]+)["']?(?:PUT|PATCH|DELETE)\b/i.test(command)) return true
+  for (const match of command.matchAll(/\bcurl\b[^\n|;&]*/g)) {
+    const call = match[0]
+    if (!/(?:\s-X\s*|--request[=\s]+)["']?POST\b|\s(?:-d|--data(?:-binary|-raw|-urlencode)?|-F|--form|--json)[\s=]/.test(call))
+      continue
+    if (/\s(?:-G|--get)\b/.test(call)) continue
+    if (/\/api\/ds\/query\b|\/apis\/query\.grafana\.app\/[^\s'"]*\/query\b|\/v2\/alert_sources\/actions\/validate\b/.test(call)) continue
+    return true
+  }
+  return false
+}
+
+// A helper the agent should use instead, when every secret the command reads
+// is covered by one and nothing it sends is a write the helper refuses.
+function helperRedirect(command: string) {
+  const names = accessedSecretNames(command)
+  if (names.length === 0 || sendsWrites(command)) return undefined
+  const covers = names.map((name) => helperCoveredSecrets.find((entry) => entry.secret.test(name)))
+  if (covers.some((entry) => entry === undefined)) return undefined
+  const unique = [...new Set(covers.map((entry) => entry!.helper))]
+  const usage = unique.map((helper) => helperCoveredSecrets.find((entry) => entry.helper === helper)!.usage)
+  return `Denied by the permission gate: this command fetches a token that ${unique.join(" and ")} already handles. Do not fetch the token yourself; rerun the read with ${usage.join("; or ")}. It is approved without a human prompt. If you need a write the helper refuses, stop and ask the human in chat instead of retrying variants.`
+}
+
 // contrib/permission-gate/bin/gcloud-remote-auth.sh, installed in
 // /data/rguliyev/opencode/scripts. Its status and verify subcommands only report whether the
 // shared login works (tokens go to /dev/null); start, code, and clean still
@@ -1326,6 +1407,7 @@ function grafanaHelperEvidence(args: string[]) {
 function ghApiEvidence(command: string) {
   const parts = commandParts(command)
   if (invokesHelper(parts.verb, "grafana-query", grafanaHelperPath())) return grafanaHelperEvidence(parts.args)
+  if (invokesHelper(parts.verb, "incidentio-query", incidentioHelperPath())) return incidentioHelperEvidence(parts.args)
   if (invokesHelper(parts.verb, "google-api-get", googleApiHelperPath())) {
     // Output redirects (`> file`, `2>/dev/null`) are judged by the gate's
     // redirect checks; only the helper's own arguments must be URL + pairs.
@@ -1522,6 +1604,7 @@ async function inspectScripts(command: string, cwd: string, fullCommand?: unknow
   }
   for (const item of paths) {
     if (isPinnedGrafanaHelper(item.absolute)) continue
+    if (isPinnedIncidentioHelper(item.absolute)) continue
     if (isPinnedGoogleApiHelper(item.absolute)) continue
     if (isPinnedGcloudAuthHelper(item.absolute) && gcloudAuthStatusCheck(command)) continue
     let file
@@ -3941,6 +4024,25 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
         output.message = undefined
         output.reviewItems = undefined
         await settle("allow", "killswitch", { per_command, reasons: [] })
+        return
+      }
+
+      // A token fetch that a pinned helper already covers would only queue a
+      // human prompt per variant; deny it and name the helper the agent gets
+      // approved without one.
+      const redirect = helperRedirect(typeof fullCommand === "string" ? fullCommand : commands.join("\n"))
+      if (redirect) {
+        output.status = "deny"
+        output.message = redirect
+        output.reviewItems = undefined
+        logDecision({
+          ...base,
+          ...(batch ? { batch } : {}),
+          decision: "deny",
+          engine: "helper_redirect",
+          reasons: ["token fetch covered by a pinned helper"],
+          review_ms: Date.now() - started,
+        })
         return
       }
 
