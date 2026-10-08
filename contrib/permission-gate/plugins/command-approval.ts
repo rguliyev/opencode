@@ -1554,7 +1554,42 @@ function ghApiEvidence(command: string) {
   return `gh api: ${explicit ?? "POST"} request with ${body ? "a request body" : "no body"}; it may modify remote state`
 }
 
-function scriptPaths(command: string, cwd: string, depth = 0) {
+// Literal absolute paths a call assigns to shell variables (`D=/abs/dir`,
+// `export D=...`), in order, so a segment can resolve `$D/x.sh`.
+// A variable assigned more than once could name a different file where the
+// script runs, so it stays unresolved and the script is reported missing.
+function pathAssignments(fullCommand: unknown) {
+  const vars = new Map<string, string>()
+  if (typeof fullCommand !== "string") return vars
+  const seen = new Set<string>()
+  for (const segment of splitSegments(fullCommand)) {
+    const assignment = segment.match(/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=(["']?)([^\s"'`;|&]*)\2\s*$/)
+    if (!assignment) {
+      for (const match of segment.matchAll(/(?:^|[\s;&|(])(?:export\s+|local\s+|readonly\s+|declare\s+)?([A-Za-z_][A-Za-z0-9_]*)=/g)) {
+        vars.delete(match[1])
+        seen.add(match[1])
+      }
+      continue
+    }
+    if (seen.has(assignment[1])) {
+      vars.delete(assignment[1])
+      continue
+    }
+    seen.add(assignment[1])
+    const value = assignment[3].replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)/g, (whole, braced, bare) =>
+      vars.get(braced ?? bare) ?? process.env[braced ?? bare] ?? whole,
+    )
+    if (path.isAbsolute(value) && !value.includes("$")) vars.set(assignment[1], value)
+    else vars.delete(assignment[1])
+  }
+  // Loop variables, `read` targets, and `getopts` names change at run time.
+  for (const match of fullCommand.matchAll(/\b(?:for|select)\s+([A-Za-z_][A-Za-z0-9_]*)\s+in\b|\bread\b[^\n;|&]*|\bgetopts\s+\S+\s+([A-Za-z_][A-Za-z0-9_]*)/g)) {
+    for (const name of match[1] ? [match[1]] : match[2] ? [match[2]] : match[0].split(/\s+/).slice(1)) vars.delete(name)
+  }
+  return vars
+}
+
+function scriptPaths(command: string, cwd: string, depth = 0, assigned = new Map<string, string>()) {
   const scripts: { shown: string; absolute: string }[] = []
   if (depth > 2)
     return {
@@ -1562,20 +1597,36 @@ function scriptPaths(command: string, cwd: string, depth = 0) {
       error: "nested script invocation is too deep to inspect",
     }
   let base = cwd
+  // `$TMPDIR/x.sh` or `D=/abs; bash "$D/x.sh"` names a real file once the
+  // variable is known: OpenCode's own HOME/TMPDIR (inherited by the agent's
+  // shell) or a literal absolute path assigned earlier in this call.
+  const vars = new Map<string, string>([
+    ...(["HOME", "TMPDIR"] as const).flatMap((name) => (process.env[name] ? [[name, process.env[name]!] as [string, string]] : [])),
+    ...assigned,
+  ])
+  const expand = (text: string) =>
+    text.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)/g, (whole, braced, bare) => vars.get(braced ?? bare) ?? whole)
   for (const segment of splitSegments(command)) {
+    const assignment = segment.match(/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=(["']?)([^\s"'`;|&]*)\2\s*$/)
+    if (assignment) {
+      const value = expand(assignment[3])
+      if (path.isAbsolute(value) && !value.includes("$")) vars.set(assignment[1], value)
+      else vars.delete(assignment[1])
+      continue
+    }
     const { verb, args, directory, error } = commandParts(segment)
     if (error) return { scripts: [], error }
-    const segmentBase = directory ? path.resolve(base, directory) : base
+    const segmentBase = directory ? path.resolve(base, expand(directory)) : base
     const name = executableName(verb)
     if (name === "cd" && args.length === 1) {
-      base = path.resolve(base, args[0].replace(/^~(?=\/)/, process.env.HOME ?? "~"))
+      base = path.resolve(base, expand(args[0]).replace(/^~(?=\/)/, process.env.HOME ?? "~"))
       continue
     }
     let script: string | undefined
     const inlineIndex = args.findIndex((argument) => isInlineCode(name, argument.toLowerCase()))
     if (interpreters.has(name) && inlineIndex >= 0) {
       if (["bash", "dash", "fish", "ksh", "sh", "zsh"].includes(name) && args[inlineIndex].toLowerCase() === "-c") {
-        const nested = scriptPaths(args[inlineIndex + 1] ?? "", segmentBase, depth + 1)
+        const nested = scriptPaths(args[inlineIndex + 1] ?? "", segmentBase, depth + 1, vars)
         if (nested.error) return nested
         scripts.push(...nested.scripts)
       }
@@ -1625,7 +1676,7 @@ function scriptPaths(command: string, cwd: string, depth = 0) {
       script = verb
     }
     if (!script) continue
-    const expanded = script.replace(/^~(?=\/)/, process.env.HOME ?? "~")
+    const expanded = expand(script).replace(/^~(?=\/)/, process.env.HOME ?? "~")
     scripts.push({
       shown: script,
       absolute: path.resolve(segmentBase, expanded),
@@ -1661,7 +1712,7 @@ function heredocScripts(fullCommand: unknown, cwd: string) {
 
 async function inspectScripts(command: string, cwd: string, fullCommand?: unknown) {
   const heredocs = heredocScripts(fullCommand, cwd)
-  const found = scriptPaths(command, cwd)
+  const found = scriptPaths(command, cwd, 0, pathAssignments(fullCommand))
   if (found.error) return { error: found.error, scripts: [] as ScriptEvidence[] }
   const paths = found.scripts
   if (paths.length > maxScripts)

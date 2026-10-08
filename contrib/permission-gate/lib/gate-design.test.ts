@@ -147,3 +147,49 @@ test("a YAML read target's manifest kinds reach the reviewers", () =>
     )
     expect(JSON.stringify(state)).toContain('"manifest_kinds":["ExternalSecret"]')
   }))
+
+test("scripts named through $TMPDIR or a literal path variable reach the reviewers", () =>
+  withEnv(async () => {
+    const directory = path.resolve(import.meta.dir, "..")
+    const fixtures = path.join(import.meta.dir, "fixtures/vars")
+    const previousTmp = process.env.TMPDIR
+    let state: Record<string, unknown> | undefined
+    globalThis.fetch = (async (input: unknown, init?: RequestInit) => {
+      const url = String(input)
+      if (url.includes("/session/ses_gate_design/message?"))
+        return Response.json([message("msg_gate_design", "user", "Run the extracted chart tests.")])
+      if (url.startsWith("http://gate.test/session/"))
+        return Response.json({ id: "ses_gate_design", directory, agent: "solo", title: "gate design" })
+      if (url === "https://openrouter.ai/api/alpha/decisions") {
+        state = JSON.parse(String(init?.body)).state
+        return new Response("declined", { status: 403 })
+      }
+      throw new Error(`Unexpected fetch: ${url}`)
+    }) as typeof fetch
+    const hooks = await (CommandApproval as any)({ directory, serverUrl: new URL("http://gate.test") })
+    await hooks.provider.models({ models: {} }, { auth: { type: "api", key: "fake-test-key" } })
+    const run = async (patterns: string[]) => {
+      state = undefined
+      await hooks["permission.ask"](
+        {
+          permission: "bash",
+          sessionID: "ses_gate_design",
+          patterns,
+          metadata: { command: patterns.join("\n"), core_execution_agent: "solo" },
+        },
+        { status: "ask" },
+      )
+      return JSON.stringify(state)
+    }
+    try {
+      process.env.TMPDIR = path.dirname(fixtures)
+      expect(await run(['bash "$TMPDIR/vars/check.sh"'])).toContain("fixture check ran")
+      expect(await run([`D=${fixtures}`, 'bash "$D/check.sh"'])).toContain("fixture check ran")
+      // Reassigned or loop-bound variables stay unresolved.
+      expect(await run([`D=${fixtures}`, "D=/nonexistent", 'bash "$D/check.sh"'])).not.toContain("fixture check ran")
+      expect(await run([`D=${fixtures}`, "for D in /a /b; do :; done", 'bash "$D/check.sh"'])).not.toContain("fixture check ran")
+    } finally {
+      if (previousTmp === undefined) delete process.env.TMPDIR
+      else process.env.TMPDIR = previousTmp
+    }
+  }))
