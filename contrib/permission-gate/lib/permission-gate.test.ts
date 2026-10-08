@@ -131,6 +131,19 @@ test("a token fetch a pinned helper covers is denied with the helper to use", as
       "A=\"$(gcloud secrets versions access latest --project=e2b-shared --secret=incidentio-api-key)\"\nB=\"$(gcloud secrets versions access latest --project=e2b-foxtrot --secret=api-admin-token)\"",
     )
     expect(mixed.status).toBe("ask")
+
+    // The same token fetch built as an argv list in inline Python is caught.
+    const listed = await decide(
+      hooks,
+      "python3 -c \"\nimport subprocess\np = subprocess.run(['gcloud', 'secrets', 'versions', 'access', 'latest', '--project=e2b-foxtrot', '--secret=grafana-datasource-syncer-api-token'], capture_output=True, text=True)\n\"",
+    )
+    expect(listed.status).toBe("deny")
+    expect(listed.message).toContain("grafana-query")
+    const listedAdmin = await decide(
+      hooks,
+      "python3 -c \"\nimport subprocess\np = subprocess.run(['gcloud', 'secrets', 'versions', 'access', 'latest', '--project=e2b-foxtrot', '--secret=api-admin-token'], capture_output=True, text=True)\n\"",
+    )
+    expect(listedAdmin.status).toBe("ask")
   } finally {
     globalThis.fetch = previousFetch
     if (previousStateHome === undefined) delete process.env.XDG_STATE_HOME

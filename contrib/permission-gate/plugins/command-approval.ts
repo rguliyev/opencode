@@ -654,8 +654,15 @@ function pythonTextOnly(command: string) {
 // such as jq's `{node: ...}` or `.node`.
 // Secret Manager payloads, minting or printing tokens, and credential stores
 // are credential material: a hard human gate.
+// An argv list in inline code (['gcloud', 'secrets', 'versions', 'access'])
+// reads as the same command once the quotes and commas between items go.
+function flattenArgvLists(command: string) {
+  return command.replace(/["']\s*,\s*["']/g, " ")
+}
+
 function requiresHuman(command: string) {
   if (pythonTextOnly(command)) return false
+  command = flattenArgvLists(command)
   return (
     /secretmanager\.googleapis\.com|google\.cloud\.secretmanager|\bgcloud\b[^\n;|&]*\bsecrets\s+versions\s+access\b|\bgcloud\b[^\n;|&]*\bauth\s+(?:print-access-token|print-identity-token|application-default\s+print-access-token)\b|application_default_credentials\.json|\b(?:credentials|access_tokens)\.db\b|\blegacy_credentials\b|oauth2\.googleapis\.com\/token|accounts\.google\.com\/o\/oauth2\/token/i.test(
       command,
@@ -1323,7 +1330,7 @@ const helperCoveredSecrets: { secret: RegExp; helper: string; usage: string }[] 
 // The secret names a command reads with `gcloud secrets versions access`.
 function accessedSecretNames(command: string) {
   const names: string[] = []
-  for (const match of command.matchAll(/gcloud\s+secrets\s+versions\s+access\b[^\n;&|]*/g)) {
+  for (const match of flattenArgvLists(command).matchAll(/gcloud\s+secrets\s+versions\s+access\b[^\n;&|]*/g)) {
     const flag = match[0].match(/--secret(?:=|\s+)["']?([A-Za-z0-9_-]+)/)
     if (flag) names.push(flag[1])
   }
