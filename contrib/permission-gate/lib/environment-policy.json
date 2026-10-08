@@ -54,6 +54,18 @@
         "policy": "The gate's own runtime directory (scripts the human runs with sudo). Any write or delete asks."
       },
       {
+        "class": "opencode_skills",
+        "prefix": "/data/rguliyev/opencode/skills",
+        "writable": true,
+        "policy": "Skills shared by all OpenCode agents. Creating or editing a skill here is fine when the human asked to create or update a skill or agent instructions; it changes instructions only, and every command a skill describes is still gated when an agent runs it. Deleting a skill needs the human's request."
+      },
+      {
+        "class": "opencode_scripts",
+        "prefix": "/data/rguliyev/opencode/scripts",
+        "writable": true,
+        "policy": "Operational scripts shared by all OpenCode agents. Adding a new script here is fine when the human asked for scripts or tooling. Changing or deleting an existing script, including the pinned helpers (grafana-query, incidentio-query, google-api-get, gcloud-remote-auth.sh), needs the human's request."
+      },
+      {
         "class": "worktree",
         "prefix": "/data/rguliyev/tmp/opencode/worktrees",
         "writable": true,
