@@ -14,7 +14,7 @@ import { ArgsProvider } from "../../src/context/args"
 import { KVProvider } from "../../src/context/kv"
 import { LocalProvider, useLocal } from "../../src/context/local"
 import { PermissionProvider } from "../../src/context/permission"
-import { RouteProvider } from "../../src/context/route"
+import { RouteProvider, useRoute } from "../../src/context/route"
 import { SDKProvider } from "../../src/context/sdk"
 import { SyncContext, useSync } from "../../src/context/sync"
 import { ThemeProvider, useTheme } from "../../src/context/theme"
@@ -22,11 +22,13 @@ import { OpencodeKeymapProvider, registerOpencodeKeymap } from "../../src/keymap
 import { DialogProvider, useDialog } from "../../src/ui/dialog"
 import { ToastProvider } from "../../src/ui/toast"
 
-async function mount() {
+async function mount(options?: { directory?: string; sessionID?: string; model?: string }) {
   const tmp = await tmpdir()
+  const directory = options?.directory ?? tmp.path
   const config = createTuiResolvedConfig()
-  await Bun.write(path.join(tmp.path, "kv.json"), "{}")
+  await Bun.write(path.join(directory, "kv.json"), "{}")
   let local!: ReturnType<typeof useLocal>
+  let route!: ReturnType<typeof useRoute>
   let dialog!: ReturnType<typeof useDialog>
   const calls = createFetch()
   // This fixture supplies only the synchronized data consumed by LocalProvider.
@@ -53,6 +55,7 @@ async function mount() {
 
   function Control() {
     local = useLocal()
+    route = useRoute()
     dialog = useDialog()
     const { theme } = useTheme()
     return (
@@ -68,13 +71,15 @@ async function mount() {
     const off = registerOpencodeKeymap(keymap, renderer, config)
     onCleanup(off)
     return (
-      <TestTuiContexts directory={tmp.path} paths={{ home: tmp.path, state: tmp.path, worktree: tmp.path }}>
+      <TestTuiContexts directory={directory} paths={{ home: directory, state: directory, worktree: directory }}>
         <OpencodeKeymapProvider keymap={keymap}>
           <TuiConfigProvider config={config}>
-            <ArgsProvider>
+            <ArgsProvider model={options?.model}>
               <KVProvider>
                 <ToastProvider>
-                  <RouteProvider>
+                  <RouteProvider
+                    initialRoute={options?.sessionID ? { type: "session", sessionID: options.sessionID } : undefined}
+                  >
                     <SDKProvider url="http://test" events={eventSource()} fetch={calls.fetch}>
                       <PermissionProvider>
                         <SyncContext.Provider value={sync}>
@@ -107,12 +112,19 @@ async function mount() {
     }
     throw new Error(`did not render ${text}: ${app.captureCharFrame()}`)
   }
-  await frame("Reasoning: default")
-  for (let attempt = 0; attempt < 50 && !local.model.ready; attempt++) await Bun.sleep(10)
+  for (let attempt = 0; attempt < 50; attempt++) {
+    if (local) break
+    await app.renderOnce()
+    await Bun.sleep(10)
+  }
+  for (let attempt = 0; attempt < 50 && (!local.model.ready || !local.model.selectionReady); attempt++)
+    await Bun.sleep(10)
   expect(local.model.ready).toBe(true)
   return {
     app,
     local,
+    route,
+    directory,
     dialog,
     frame,
     async saved(value: string) {
@@ -181,5 +193,150 @@ test("picker cancel keeps the level, selections stay per model, and models witho
     await setup.saved("high")
   } finally {
     await setup.cleanup()
+  }
+})
+
+async function waitForSelection(setup: Awaited<ReturnType<typeof mount>>) {
+  for (let attempt = 0; attempt < 50 && !setup.local.model.selectionReady; attempt++) await Bun.sleep(10)
+  expect(setup.local.model.selectionReady).toBe(true)
+}
+
+async function savedSession(directory: string, sessionID: string, modelID: string, variant: string) {
+  const filename = path.join(directory, "session-model", `session-${sessionID}.json`)
+  for (let attempt = 0; attempt < 50; attempt++) {
+    const file = Bun.file(filename)
+    if (await file.exists()) {
+      const saved = await file.json()
+      if (saved.model.modelID === modelID && saved.variants[`test/${modelID}`] === variant) return
+    }
+    await Bun.sleep(10)
+  }
+  throw new Error(
+    `session selection was not saved: ${sessionID} expected ${modelID}/${variant}; disk ${await Bun.file(filename)
+      .text()
+      .catch(() => "missing")}`,
+  )
+}
+
+test("unsent model and reasoning choices survive client restart separately for each session", async () => {
+  await using tmp = await tmpdir()
+  const first = await mount({ directory: tmp.path, sessionID: "ses_first" })
+  try {
+    first.local.model.set({ providerID: "test", modelID: "plain" }, { recent: true })
+    first.local.model.variant.set("fast")
+    await savedSession(tmp.path, "ses_first", "plain", "fast")
+    first.route.navigate({ type: "session", sessionID: "ses_second" })
+    await waitForSelection(first)
+    expect(first.local.model.current()?.modelID).toBe("reasoner")
+    first.local.model.variant.set("high")
+    await savedSession(tmp.path, "ses_second", "reasoner", "high")
+    first.route.navigate({ type: "session", sessionID: "ses_first" })
+    await waitForSelection(first)
+    first.local.model.restore({ providerID: "test", modelID: "reasoner" }, "low")
+    expect(first.local.model.current()?.modelID).toBe("plain")
+    expect(first.local.model.variant.current()).toBe("fast")
+  } finally {
+    await first.cleanup()
+  }
+  const reopened = await mount({ directory: tmp.path, sessionID: "ses_first" })
+  try {
+    expect(reopened.local.model.current()?.modelID).toBe("plain")
+    expect(reopened.local.model.variant.current()).toBe("fast")
+    reopened.route.navigate({ type: "session", sessionID: "ses_second" })
+    await waitForSelection(reopened)
+    expect(reopened.local.model.variant.current()).toBe("high")
+    reopened.local.model.variant.set(undefined)
+    await savedSession(tmp.path, "ses_second", "reasoner", "default")
+  } finally {
+    await reopened.cleanup()
+  }
+  const defaulted = await mount({ directory: tmp.path, sessionID: "ses_second" })
+  try {
+    defaulted.local.model.restore({ providerID: "test", modelID: "reasoner" }, "high")
+    expect(defaulted.local.model.variant.current()).toBeUndefined()
+  } finally {
+    await defaulted.cleanup()
+  }
+})
+
+test("history initializes missing preferences but never overwrites explicit choices; shortcuts and CLI persist", async () => {
+  await using tmp = await tmpdir()
+  const setup = await mount({ directory: tmp.path, sessionID: "ses_history" })
+  try {
+    setup.local.model.restore({ providerID: "test", modelID: "plain" }, "fast")
+    expect(setup.local.model.current()?.modelID).toBe("plain")
+    setup.local.model.set({ providerID: "test", modelID: "reasoner" }, { recent: true })
+    setup.local.model.set({ providerID: "test", modelID: "plain" }, { recent: true })
+    setup.local.model.cycle(1)
+    expect(setup.local.model.current()?.modelID).toBe("reasoner")
+    setup.local.model.variant.cycle()
+    await savedSession(tmp.path, "ses_history", "reasoner", "low")
+    setup.local.model.toggleFavorite({ providerID: "test", modelID: "plain" })
+    setup.local.model.cycleFavorite(1)
+    await savedSession(tmp.path, "ses_history", "plain", "fast")
+  } finally {
+    await setup.cleanup()
+  }
+  const override = await mount({ directory: tmp.path, sessionID: "ses_history", model: "test/fixed" })
+  try {
+    expect(override.local.model.current()?.modelID).toBe("fixed")
+    override.local.model.set({ providerID: "test", modelID: "plain" })
+    expect(override.local.model.variant.current()).toBe("fast")
+    await savedSession(tmp.path, "ses_history", "plain", "fast")
+  } finally {
+    await override.cleanup()
+  }
+})
+
+test("new-session adoption keeps the submitted choice, per-model levels remain scoped, and unavailable models fall back", async () => {
+  const setup = await mount()
+  try {
+    setup.local.model.set({ providerID: "test", modelID: "reasoner" })
+    setup.local.model.variant.set("high")
+    setup.local.model.remember("ses_new", setup.local.model.current()!, setup.local.model.variant.current())
+    setup.route.navigate({ type: "session", sessionID: "ses_new" })
+    await waitForSelection(setup)
+    expect(setup.local.model.variant.current()).toBe("high")
+    setup.local.model.set({ providerID: "test", modelID: "plain" })
+    setup.local.model.variant.set("fast")
+    setup.local.model.set({ providerID: "test", modelID: "reasoner" })
+    expect(setup.local.model.variant.current()).toBe("high")
+    await savedSession(setup.directory, "ses_new", "reasoner", "high")
+    setup.local.model.remember("ses_missing", { providerID: "test", modelID: "removed" }, "gone")
+    setup.route.navigate({ type: "session", sessionID: "ses_missing" })
+    await waitForSelection(setup)
+    expect(setup.local.model.current()?.modelID).toBe("reasoner")
+    expect(setup.local.model.variant.current()).toBeUndefined()
+  } finally {
+    await setup.cleanup()
+  }
+})
+
+test("CLI preserves saved reasoning and does not replace a new session's submitted model", async () => {
+  await using tmp = await tmpdir()
+  const first = await mount({ directory: tmp.path, sessionID: "ses_cli" })
+  try {
+    first.local.model.variant.set("high")
+    await savedSession(tmp.path, "ses_cli", "reasoner", "high")
+  } finally {
+    await first.cleanup()
+  }
+  const reopened = await mount({ directory: tmp.path, sessionID: "ses_cli", model: "test/reasoner" })
+  try {
+    expect(reopened.local.model.variant.current()).toBe("high")
+  } finally {
+    await reopened.cleanup()
+  }
+  const home = await mount({ model: "test/reasoner" })
+  try {
+    home.local.model.set({ providerID: "test", modelID: "plain" })
+    home.local.model.variant.set("fast")
+    home.local.model.remember("ses_new_cli", home.local.model.current()!, home.local.model.variant.current())
+    home.route.navigate({ type: "session", sessionID: "ses_new_cli" })
+    await waitForSelection(home)
+    expect(home.local.model.current()?.modelID).toBe("plain")
+    expect(home.local.model.variant.current()).toBe("fast")
+  } finally {
+    await home.cleanup()
   }
 })

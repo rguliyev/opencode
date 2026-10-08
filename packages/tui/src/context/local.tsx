@@ -13,6 +13,7 @@ import { useTheme } from "./theme"
 import { useToast } from "../ui/toast"
 import { useRoute } from "./route"
 import { usePermission } from "./permission"
+import { createSessionModels } from "./session-model"
 
 export type LocalTheme = {
   secondary: RGBA
@@ -135,6 +136,37 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
     const agent = createAgent()
 
     function createModel() {
+      const sessionID = () => (route.data.type === "session" ? route.data.sessionID : undefined)
+      const scope = () => (sessionID() ? `session:${sessionID()}` : `agent:${agent.current()?.name}`)
+      const sessions = createSessionModels(paths.state, () =>
+        toast.show({
+          variant: "warning",
+          message: "Could not save this session's model selection",
+          duration: 3000,
+        }),
+      )
+      let cliModelApplied = false
+      createEffect(() => {
+        const id = sessionID()
+        if (!id) return
+        if (!cliModelApplied && args.model) {
+          cliModelApplied = true
+          const chosen = parseModel(args.model)
+          if (isModelValid(chosen)) {
+            void sessions.load(id, chosen)
+            return
+          }
+        }
+        void sessions.load(id)
+      })
+
+      function remember(id: string, model: { providerID: string; modelID: string }, variant?: string) {
+        const variants = { ...sessions.get(id)?.variants }
+        const key = `${model.providerID}/${model.modelID}`
+        variants[key] = variant ?? variants[key] ?? "default"
+        void sessions.set(id, { model, variants })
+      }
+
       const [modelStore, setModelStore] = createStore<{
         ready: boolean
         model: Record<
@@ -233,11 +265,23 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
         }
       })
 
+      createEffect(() => {
+        const id = sessionID()
+        const selected = id ? sessions.get(id)?.model : undefined
+        if (!selected || isModelValid(selected)) return
+        toast.show({
+          variant: "warning",
+          message: `Saved model ${selected.providerID}/${selected.modelID} is unavailable; using a fallback`,
+          duration: 3000,
+        })
+      })
+
       const currentModel = createMemo(() => {
         const a = agent.current()
         return (
           getFirstValidModel(
-            () => a && modelStore.model[a.name],
+            () => (sessionID() ? sessions.get(sessionID()!)?.model : undefined),
+            () => modelStore.model[scope()],
             () => a && a.model,
             fallbackModel,
           ) ?? undefined
@@ -246,6 +290,21 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
 
       return {
         current: currentModel,
+        get selectionReady() {
+          const id = sessionID()
+          return !id || sessions.ready(id)
+        },
+        remember,
+        restore(model: { providerID: string; modelID: string }, variant?: string) {
+          const id = sessionID()
+          if (id && sessions.get(id)) return
+          if (!isModelValid(model)) return
+          if (id) remember(id, model, variant)
+          else {
+            setModelStore("model", scope(), model)
+            setModelStore("variant", `${model.providerID}/${model.modelID}`, variant ?? "default")
+          }
+        },
         get ready() {
           return modelStore.ready
         },
@@ -285,7 +344,10 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
           if (!val) return
           const a = agent.current()
           if (!a) return
-          setModelStore("model", a.name, { ...val })
+          setModelStore("model", scope(), { ...val })
+          const id = sessionID()
+          if (id) remember(id, val)
+          save()
         },
         cycleFavorite(direction: 1 | -1) {
           const favorites = modelStore.favorite.filter((item) => isModelValid(item))
@@ -313,7 +375,9 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
           if (!next) return
           const a = agent.current()
           if (!a) return
-          setModelStore("model", a.name, { ...next })
+          setModelStore("model", scope(), { ...next })
+          const id = sessionID()
+          if (id) remember(id, next)
           setModelStore("recent", recentModels(next, modelStore.recent))
           save()
         },
@@ -329,7 +393,9 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
             }
             const a = agent.current()
             if (!a) return
-            setModelStore("model", a.name, model)
+            setModelStore("model", scope(), { providerID: model.providerID, modelID: model.modelID })
+            const id = sessionID()
+            if (id) remember(id, model)
             if (options?.recent) {
               setModelStore("recent", recentModels(model, modelStore.recent))
               save()
@@ -364,6 +430,8 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
             const m = currentModel()
             if (!m) return undefined
             const key = `${m.providerID}/${m.modelID}`
+            const id = sessionID()
+            if (id) return sessions.get(id)?.variants[key] ?? "default"
             return modelStore.variant[key]
           },
           current() {
@@ -384,6 +452,11 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
             const m = currentModel()
             if (!m) return
             const key = `${m.providerID}/${m.modelID}`
+            const id = sessionID()
+            if (id) {
+              remember(id, m, value ?? "default")
+              return
+            }
             setModelStore("variant", key, value ?? "default")
             save()
           },

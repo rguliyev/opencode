@@ -317,6 +317,7 @@ export function Prompt(props: PromptProps) {
   createEffect(() => {
     const sessionID = props.sessionID
     const msg = lastUserMessage()
+    if (!local.model.selectionReady) return
 
     if (sessionID !== syncedSessionID) {
       if (!sessionID || !msg) return
@@ -329,8 +330,7 @@ export function Prompt(props: PromptProps) {
         // Keep command line --agent if specified.
         if (!args.agent) local.agent.set(msg.agent)
         if (msg.model) {
-          local.model.set(msg.model)
-          local.model.variant.set(msg.model.variant)
+          local.model.restore(msg.model, msg.model.variant)
         }
       }
     }
@@ -1010,7 +1010,7 @@ export function Prompt(props: PromptProps) {
       setStore("prompt", "input", input.plainText)
       syncExtmarksWithPromptParts()
     }
-    if (props.disabled) return false
+    if (props.disabled || !local.model.selectionReady) return false
     if (workspace.creating() || move.creating()) return false
     if (auto()?.visible) return false
     if (!store.prompt.input) return false
@@ -1077,6 +1077,7 @@ export function Prompt(props: PromptProps) {
       }
 
       sessionID = res.data.id
+      local.model.remember(sessionID, selectedModel, variant ?? "default")
     }
 
     const inputText = expandTrackedPastedText(
