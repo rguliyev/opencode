@@ -198,6 +198,9 @@ type LocalReadEvidence = {
   // A provider-format token, private key, JWT, or webhook URL, as opposed to
   // a generic credential-like pattern.
   credential_material?: boolean
+  // Top-level Kubernetes `kind:` values, so a secrets/ path holding only
+  // ExternalSecret references can be told from one holding Secret data.
+  manifest_kinds?: string[]
   target_facts: string[]
 }
 
@@ -1997,9 +2000,11 @@ async function localReadEvidence(target: unknown, workdir: string): Promise<Loca
     !redaction.complete ||
     containsCredentialLiteral(text) ||
     redaction.kinds.some((kind) => ["TOKEN", "PRIVATE_KEY", "JWT", "PASSWORD"].includes(kind))
+  const kinds = [...new Set([...text.matchAll(/^kind:\s*([A-Za-z]{1,40})\s*$/gm)].map((match) => match[1]))].slice(0, 10)
   return {
     literal_scan: literal ? "found" : "none_found",
     ...(literal ? { credential_material: !redaction.complete || containsCredentialMaterial(text) } : {}),
+    ...(kinds.length ? { manifest_kinds: kinds } : {}),
     scanned_bytes: content.length,
     assignment_like_keys: redaction.kinds.includes("CREDENTIAL"),
     target_facts: facts,

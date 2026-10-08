@@ -116,3 +116,34 @@ test("host-key lookups and gcloud compute ssh with the GCE key reach the reviewe
     expect(await g.bash(`cat ${home}/.ssh/id_ed25519`)).toBe("ask")
     expect(await g.bash(`cat ${home}/.ssh/config`)).toBe("ask")
   }))
+
+test("a YAML read target's manifest kinds reach the reviewers", () =>
+  withEnv(async () => {
+    const directory = path.resolve(import.meta.dir, "..")
+    const file = path.join(import.meta.dir, "fixtures/secrets/orchestrator.yaml")
+    let state: Record<string, unknown> | undefined
+    globalThis.fetch = (async (input: unknown, init?: RequestInit) => {
+      const url = String(input)
+      if (url.includes("/session/ses_gate_design/message?"))
+        return Response.json([message("msg_gate_design", "user", "Map the staging secrets wiring.")])
+      if (url.startsWith("http://gate.test/session/"))
+        return Response.json({ id: "ses_gate_design", directory, agent: "solo", title: "gate design" })
+      if (url === "https://openrouter.ai/api/alpha/decisions") {
+        state = JSON.parse(String(init?.body)).state
+        return new Response("declined", { status: 403 })
+      }
+      throw new Error(`Unexpected fetch: ${url}`)
+    }) as typeof fetch
+    const hooks = await (CommandApproval as any)({ directory, serverUrl: new URL("http://gate.test") })
+    await hooks.provider.models({ models: {} }, { auth: { type: "api", key: "fake-test-key" } })
+    await hooks["permission.ask"](
+      {
+        permission: "read",
+        sessionID: "ses_gate_design",
+        patterns: [file],
+        metadata: { filepath: file, core_trusted_builtin: true, core_execution_agent: "solo" },
+      },
+      { status: "ask" },
+    )
+    expect(JSON.stringify(state)).toContain('"manifest_kinds":["ExternalSecret"]')
+  }))
