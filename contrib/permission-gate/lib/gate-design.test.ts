@@ -295,3 +295,19 @@ test("a script that sources a file beside it through its own directory is inspec
       rmSync(dir, { recursive: true, force: true })
     }
   }))
+
+test("secret metadata, label updates, and empty secret creation reach the reviewers; values and versions stay hard", () =>
+  withEnv(async () => {
+    const g = await gate("solo", "Set up the tango VPN PSK secret to match staging.", () => 0.01)
+    expect(await g.bash("gcloud secrets describe tango-filestore-vpn-psk --project=e2b-tango")).toBe("allow")
+    expect(await g.bash("gcloud secrets update tango-filestore-vpn-psk --project=e2b-tango --update-labels=managed_by=terragrunt,tier=tango")).toBe("allow")
+    expect(await g.bash("gcloud secrets create tango-filestore-vpn-psk --project=e2b-tango --replication-policy=automatic")).toBe("allow")
+    expect(await g.bash("curl -fsS https://secretmanager.googleapis.com/v1/projects/e2b-tango/secrets/tango-filestore-vpn-psk/versions/1")).toBe("allow")
+    // Values, new versions, deletes, and other updates stay with the human.
+    expect(await g.bash("gcloud secrets create tango-filestore-vpn-psk --project=e2b-tango --data-file=-")).toBe("ask")
+    expect(await g.bash("gcloud secrets versions add tango-filestore-vpn-psk --project=e2b-tango --data-file=psk.txt")).toBe("ask")
+    expect(await g.bash("gcloud secrets versions access latest --project=e2b-tango --secret=tango-filestore-vpn-psk")).toBe("ask")
+    expect(await g.bash("curl -fsS https://secretmanager.googleapis.com/v1/projects/e2b-tango/secrets/tango-filestore-vpn-psk/versions/1:access")).toBe("ask")
+    expect(await g.bash("gcloud secrets update tango-filestore-vpn-psk --project=e2b-tango --ttl=1h")).toBe("ask")
+    expect(await g.bash("gcloud secrets delete tango-filestore-vpn-psk --project=e2b-tango --quiet")).toBe("ask")
+  }))

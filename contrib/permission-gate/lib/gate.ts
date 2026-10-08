@@ -706,7 +706,7 @@ function requiresHuman(command: string) {
   if (pythonTextOnly(command)) return false
   command = flattenArgvLists(command)
   return (
-    /secretmanager\.googleapis\.com|google\.cloud\.secretmanager|\bgcloud\b[^\n;|&]*\bsecrets\s+versions\s+access\b|\bgcloud\b[^\n;|&]*\bauth\s+(?:print-access-token|print-identity-token|application-default\s+print-access-token)\b|application_default_credentials\.json|\b(?:credentials|access_tokens)\.db\b|\blegacy_credentials\b|oauth2\.googleapis\.com\/token|accounts\.google\.com\/o\/oauth2\/token/i.test(
+    /secretmanager\.googleapis\.com\/[^\s'"]*:access\b|google\.cloud\.secretmanager|\bgcloud\b[^\n;|&]*\bsecrets\s+versions\s+access\b|\bgcloud\b[^\n;|&]*\bauth\s+(?:print-access-token|print-identity-token|application-default\s+print-access-token)\b|application_default_credentials\.json|\b(?:credentials|access_tokens)\.db\b|\blegacy_credentials\b|oauth2\.googleapis\.com\/token|accounts\.google\.com\/o\/oauth2\/token/i.test(
       command,
     ) || credentialStoreReference(command)
   )
@@ -998,8 +998,23 @@ function inlinePythonCannotSpawn(command: string) {
   )
 }
 
+// `gcloud secrets create` with no --data-file makes an empty secret, and
+// `gcloud secrets update` touching only labels or annotations changes metadata;
+// neither handles a secret value, so the reviewers judge them under policy.
+function secretMetadataOnly(command: string) {
+  const match = command.match(/\bgcloud\s+secrets\s+(create|update)\s+([^\n;|&]*)/)
+  if (!match) return false
+  const flags = match[2].match(/--[A-Za-z-]+/g) ?? []
+  if (match[1] === "create") return !flags.some((flag) => flag === "--data-file")
+  return flags.every((flag) =>
+    /^--(?:update-labels|remove-labels|clear-labels|update-annotations|remove-annotations|clear-annotations|project|format|quiet)$/.test(flag),
+  )
+}
+
 function requiresHumanOperation(command: string) {
   if (inlinePythonCannotSpawn(command)) return false
+  if (secretMetadataOnly(command) && !/\bgcloud\s+secrets\s+(?:delete|versions\s+(?:add|destroy|disable))/.test(command))
+    command = command.replace(/\bgcloud\s+secrets\s+(?:create|update)\b/g, "gcloud secrets-metadata")
   return /(?:^|[\n;|&(){}])\s*(?:(?:sudo|env)\s+)?(?:git\s+push|gh\s+pr\s+(?:create|edit|merge|close)|terraform\s+(?:apply|destroy)|terragrunt\s+(?:apply|destroy)|kubectl\s+(?:apply|delete|patch|replace|scale|rollout|set)|gcloud\s+(?:projects\s+add-iam-policy-binding|iam\s+(?!(?:(?:service-accounts|roles|workload-identity-pools|policies)(?:\s+keys)?\s+(?:list|describe|get-iam-policy)|list-grantable-roles|list-testable-permissions)(?:\s|$))|secrets\s+(?:create|delete|update|versions\s+(?:add|destroy|disable)))|aws\s+(?:iam\s+|secretsmanager\s+(?:create|delete|update|put|rotate))|tailscale\s+(?:set|up)\b[^\n;|&]*--exit-node|(?:rm\s+-rf|mkfs|wipefs)\b)/i.test(
     command,
   )

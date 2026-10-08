@@ -366,7 +366,7 @@ test("recursive deletes inside worktrees and scratch are reviewer evidence; othe
       "kubectl scale deploy web --replicas=0",
       "gcloud projects add-iam-policy-binding e2b-staging --member=user:x@example.test --role=roles/owner",
       "gcloud iam service-accounts keys create /tmp/k.json --iam-account=sa@e2b-staging.iam.gserviceaccount.com",
-      "gcloud secrets create new-secret --project=e2b-staging",
+      "gcloud secrets create new-secret --project=e2b-staging --data-file=-",
       "mkfs.ext4 /dev/sdb",
       "tailscale set --exit-node=100.64.0.1",
     ])
