@@ -182,6 +182,7 @@ export const TaskTool = Tool.define(
       )
       if (msg.info.role !== "assistant") return yield* Effect.fail(new Error("Not an assistant message"))
       const variant = msg.info.variant
+      const launchModel = { providerID: msg.info.providerID, modelID: msg.info.modelID }
 
       const model = next.model ?? {
         modelID: msg.info.modelID,
@@ -234,11 +235,23 @@ export const TaskTool = Tool.define(
         text: string,
       ) {
         const currentParent = yield* sessions.get(ctx.sessionID)
+        // The completion continues the human's conversation, so it runs on the
+        // model they last picked in this session, not the agent's configured
+        // default; without a human pick, on the model that launched the task.
+        const lastHuman = yield* sessions
+          .findMessage(
+            ctx.sessionID,
+            (item) => item.info.role === "user" && item.parts.some((part) => part.type === "text" && !part.synthetic),
+          )
+          .pipe(Effect.orDie)
+        const picked =
+          lastHuman._tag === "Some" && lastHuman.value.info.role === "user" ? lastHuman.value.info.model : undefined
         yield* ops
           .prompt({
             sessionID: ctx.sessionID,
             agent: currentParent.agent ?? ctx.agent,
-            variant,
+            model: picked ? { providerID: picked.providerID, modelID: picked.modelID } : launchModel,
+            variant: picked ? picked.variant : variant,
             parts: [
               {
                 type: "text",
