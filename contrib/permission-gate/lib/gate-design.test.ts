@@ -202,7 +202,7 @@ test("a version manager's dispatcher is judged as the tool it runs, not as an un
     try {
       for (const [dir, body] of [
         [".tfenv/bin", '#!/usr/bin/env bash\nsource "$(dirname "$0")/../lib/helpers.sh"\nexec terraform-real "$@"\n'],
-        ["elsewhere", '#!/usr/bin/env bash\nsource "$(dirname "$0")/lib.sh"\n'],
+        ["elsewhere", '#!/usr/bin/env bash\nsource "$LIB_FROM_ENV"\n'],
       ] as const) {
         mkdirSync(path.join(home, dir), { recursive: true })
         writeFileSync(path.join(home, dir, "terraform"), body)
@@ -272,5 +272,26 @@ test("an installed gate change takes effect on the next request without a restar
       expect(readdirSync(root)).toContain("lib")
     } finally {
       rmSync(root, { recursive: true, force: true })
+    }
+  }))
+
+test("a script that sources a file beside it through its own directory is inspected, not refused", () =>
+  withEnv(async () => {
+    const { mkdtempSync, writeFileSync, rmSync } = await import("node:fs")
+    const dir = mkdtempSync(path.join((await import("node:os")).tmpdir(), "gate-srcdir-"))
+    try {
+      writeFileSync(path.join(dir, "lib.sh"), 'helper() { echo "helper ran"; }\n')
+      writeFileSync(
+        path.join(dir, "validate.sh"),
+        '#!/usr/bin/env bash\nset -euo pipefail\nDIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)\nreadonly DIR\nsource "$DIR/lib.sh"\nhelper\n',
+      )
+      writeFileSync(path.join(dir, "inline.sh"), '#!/usr/bin/env bash\nsource "$(dirname "$0")/lib.sh"\nhelper\n')
+      writeFileSync(path.join(dir, "reassigned.sh"), '#!/usr/bin/env bash\nDIR=$(dirname "$0")\nDIR=/elsewhere\nsource "$DIR/lib.sh"\n')
+      const g = await gate("solo", "Run the validation script.", () => 0.01)
+      expect(await g.bash(`bash ${dir}/validate.sh`)).toBe("allow")
+      expect(await g.bash(`bash ${dir}/inline.sh`)).toBe("allow")
+      expect(await g.bash(`bash ${dir}/reassigned.sh`)).toBe("ask")
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
     }
   }))

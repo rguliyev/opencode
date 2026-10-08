@@ -594,6 +594,33 @@ function containsCredentialLiteralBase(command: string) {
 
 // Returns the targets of `source`/`.` commands in a shell script (empty when
 // it loads nothing, or when the file is not a shell script).
+// `source "$DIR/lib.sh"` with DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd),
+// or `source "$(dirname "$0")/lib.sh"`, names a file beside the script. The
+// returned function rewrites those references to the script's directory; a
+// variable assigned more than once stays dynamic.
+const scriptDirIdiom =
+  String.raw`\$\(\s*cd\s+(?:--\s+)?"?\$\(\s*dirname\s+(?:--\s+)?"?\$\{?(?:BASH_SOURCE(?:\[0\])?|0)\}?"?\s*\)"?\s*(?:>\s*/dev/null\s*)?&&\s*pwd(?:\s+-P)?\s*\)` +
+  String.raw`|\$\(\s*dirname\s+(?:--\s+)?"?\$\{?(?:BASH_SOURCE(?:\[0\])?|0)\}?"?\s*\)` +
+  String.raw`|\$\{BASH_SOURCE(?:\[0\])?%/\*\}`
+function scriptDirReferences(content: string, dir: string) {
+  const counts = new Map<string, number>()
+  for (const match of content.matchAll(/^\s*(?:readonly\s+|local\s+|declare\s+(?:-r\s+)?|export\s+)?([A-Za-z_][A-Za-z0-9_]*)=/gm))
+    counts.set(match[1], (counts.get(match[1]) ?? 0) + 1)
+  const names = [
+    ...content.matchAll(
+      new RegExp(String.raw`^\s*(?:readonly\s+|local\s+|declare\s+(?:-r\s+)?|export\s+)?([A-Za-z_][A-Za-z0-9_]*)="?(?:${scriptDirIdiom})"?\s*$`, "gm"),
+    ),
+  ]
+    .map((match) => match[1])
+    .filter((name) => counts.get(name) === 1)
+  return (target: string) => {
+    let rewritten = target.replace(new RegExp(String.raw`"?(?:${scriptDirIdiom})"?`, "g"), dir)
+    for (const name of names) rewritten = rewritten.replace(new RegExp(String.raw`"?\$(?:\{${name}\}|${name}(?![A-Za-z0-9_]))"?`, "g"), dir)
+    if (rewritten === target || /[$`*?[\]{}~"']/.test(rewritten)) return target
+    return path.normalize(rewritten)
+  }
+}
+
 function shellSources(file: string, content: string): string[] {
   if (!/\.(?:ba|da|k|z)?sh$/i.test(file) && !/^#![^\n]*\b(?:ba|da|k|z)?sh\b/m.test(content)) return []
   // Single-quoted shell strings are literal. A jq/yq program containing
@@ -1832,8 +1859,12 @@ async function inspectScripts(command: string, cwd: string, fullCommand?: unknow
       // except in a dedicated worktree: a test there that sources a file it
       // renders from the worktree's own chart is repo code, so the final
       // reviewer may judge it with the script it can see.
-      for (const sourced of shellSources(item.shown, content)) {
-        const target = sourced.replace(/^(["'])(.*)\1$/, "$2")
+      const ownDir = scriptDirReferences(content, path.dirname(scriptReal))
+      // Inline $(dirname "$0") contains spaces, so it is resolved before the
+      // source targets are split out.
+      const sourcing = content.replace(new RegExp(scriptDirIdiom, "g"), path.dirname(scriptReal))
+      for (const sourced of shellSources(item.shown, sourcing)) {
+        const target = ownDir(sourced.replace(/^(["'])(.*)\1$/, "$2"))
         const dynamic =
           !path.isAbsolute(target) || /[$`*?[\]{}~"']/.test(target) || path.normalize(target) !== target
         if (dynamic && scriptReal.startsWith(worktreeRoot())) {
