@@ -338,7 +338,9 @@ const maxContextCommandBytes = 8 * 1024
 
 const endpoint = "https://openrouter.ai/api/alpha/decisions"
 const finalReviewerModel = "google/gemini-3.8-flash"
-const finalReviewTimeoutMs = 8_000
+// The final reviewer answers in ~4.3s at the median and ~7.8s at p99 (2026-10-08);
+// an 8s deadline turned ~6% of reviews into human prompts after the retry.
+const finalReviewTimeoutMs = 15_000
 const requestedModel = "typesafe/jev-1.13"
 const acceptedModels = new Set([requestedModel, "typesafe/jev-1.13-20260917"])
 const minConfidence = 0.6
