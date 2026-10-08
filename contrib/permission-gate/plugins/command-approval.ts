@@ -1554,6 +1554,28 @@ function ghApiEvidence(command: string) {
   return `gh api: ${explicit ?? "POST"} request with ${body ? "a request body" : "no body"}; it may modify remote state`
 }
 
+// Install roots of version managers whose bin/ or shims/ entries dispatch to
+// an installed tool version.
+function versionManagerDispatcher(file: string) {
+  const home = process.env.HOME || homedir()
+  const roots = [
+    ...[".tfenv", ".tgenv", ".asdf", ".pyenv", ".rbenv", ".nodenv"].map((name) => path.join(home, name)),
+    path.join(home, "mise"),
+    path.join(process.env.XDG_DATA_HOME || path.join(home, ".local", "share"), "mise"),
+  ]
+  // `file` is already resolved; resolve the roots the same way.
+  const resolved = roots.flatMap((root) => {
+    try {
+      return [root, realpathSync(root)]
+    } catch {
+      return [root]
+    }
+  })
+  return resolved.some((root) =>
+    ["bin", "shims", "libexec"].some((dir) => path.dirname(file) === path.join(root, dir)),
+  )
+}
+
 // Literal absolute paths a call assigns to shell variables (`D=/abs/dir`,
 // `export D=...`), in order, so a segment can resolve `$D/x.sh`.
 // A variable assigned more than once could name a different file where the
@@ -1742,6 +1764,11 @@ async function inspectScripts(command: string, cwd: string, fullCommand?: unknow
       // matters is where it lands (checked below), not that a link exists.
       await lstat(item.absolute)
       const target = await realpath(item.absolute)
+      // A version manager's dispatcher (tfenv's terraform, a mise or asdf shim)
+      // only selects and execs an installed version of the same tool; its own
+      // library sourcing is not task code. It is judged as that tool, like a
+      // binary on PATH. Changing files there is a separately gated edit.
+      if (versionManagerDispatcher(target)) continue
       const relative = path.relative(root, target)
       // Outside the workdir is not itself a reason to stay blind: a readable text
       // file is inspected wherever it lives (~/.local/bin/foo.sh is exactly the kind

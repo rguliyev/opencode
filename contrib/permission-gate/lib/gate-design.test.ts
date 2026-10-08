@@ -193,3 +193,28 @@ test("scripts named through $TMPDIR or a literal path variable reach the reviewe
       else process.env.TMPDIR = previousTmp
     }
   }))
+
+test("a version manager's dispatcher is judged as the tool it runs, not as an uninspectable script", () =>
+  withEnv(async () => {
+    const { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync } = await import("node:fs")
+    const home = mkdtempSync(path.join((await import("node:os")).tmpdir(), "gate-home-"))
+    const previousHome = process.env.HOME
+    try {
+      for (const [dir, body] of [
+        [".tfenv/bin", '#!/usr/bin/env bash\nsource "$(dirname "$0")/../lib/helpers.sh"\nexec terraform-real "$@"\n'],
+        ["elsewhere", '#!/usr/bin/env bash\nsource "$(dirname "$0")/lib.sh"\n'],
+      ] as const) {
+        mkdirSync(path.join(home, dir), { recursive: true })
+        writeFileSync(path.join(home, dir, "terraform"), body)
+        chmodSync(path.join(home, dir, "terraform"), 0o755)
+      }
+      process.env.HOME = home
+      const g = await gate("solo", "Check the terraform version.", () => 0.01)
+      expect(await g.bash(`${home}/.tfenv/bin/terraform version`)).toBe("allow")
+      expect(await g.bash(`${home}/elsewhere/terraform version`)).toBe("ask")
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME
+      else process.env.HOME = previousHome
+      rmSync(home, { recursive: true, force: true })
+    }
+  }))
