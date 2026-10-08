@@ -445,7 +445,7 @@ const riskQuestions = {
 } as const
 
 const reviewerMutationQuestion =
-  "Could the CURRENT command, including its redirections, substitutions, inline code, or inspected scripts, create, modify, or delete local/remote state, run a build/test with outputs, or have effects beyond read-only inspection? Use the full call to understand dependencies, but do not count a different segment's effects. Writing output only to /dev/null or to scratch files that context.redirect_evidence confirms are outside repositories and worktrees is not a state change. Count uncertainty as risk."
+  "Could the CURRENT command, including its redirections, substitutions, inline code, or inspected scripts, create, modify, or delete local/remote state, run a build/test with outputs, or have effects beyond read-only inspection? Use the full call to understand dependencies, but do not count a different segment's effects. Writing output only to /dev/null or to scratch files that context.redirect_evidence confirms are outside repositories and worktrees is not a state change, and neither is a tool or script writing its reports or output files under /data/rguliyev/tmp/opencode/ (for example --output /data/rguliyev/tmp/opencode/task); the remote reads it performs are judged on their own. Count uncertainty as risk."
 
 const actionRiskQuestions = {
   secrets:
