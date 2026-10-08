@@ -468,14 +468,20 @@ const reviewerActionMutationQuestion =
 
 const gcpRiskThreshold = 0.7
 const reviewerMutationThreshold = 0.25
+// Jev counts uncertainty as risk, so harmless reads it cannot fully parse
+// (wrapped commands, variables, web searches) score in the 0.25-0.7 band; the
+// final reviewer sees that score in jev_signal and decides. Only a
+// near-certain mutation overrides its read-only allow.
+const reviewerMutationVeto = 0.8
 
 // A read-only role is enforced by judging the effect of each request, not by
 // the agent's name: tools such as git, find, or sed are read-only in some
-// forms and mutating in others. Jev's independent mutation score must agree
-// with the final reviewer's read-only allow before a read-only agent proceeds unattended.
+// forms and mutating in others. Jev's independent mutation score must exist
+// and fall short of a confident mutation before the final reviewer's
+// read-only allow lets a read-only agent proceed unattended.
 function jevJudgedReadOnly(answers: JevReview["raw"]) {
   const answer = answers?.reviewer_mutation
-  return answer?.type === "noul" && finiteProbability(answer.noul) && answer.noul < reviewerMutationThreshold
+  return answer?.type === "noul" && finiteProbability(answer.noul) && answer.noul < reviewerMutationVeto
 }
 
 function finiteProbability(value: unknown): value is number {
@@ -683,6 +689,13 @@ function usesAmbientCredentials(command: string) {
 // ~/.ssh, GnuPG, cloud CLI credentials, netrc and git credential files, the
 // Docker auth file, and OpenCode's auth.json, named anywhere in the text.
 function credentialStoreReference(text: string) {
+  // Host-key lists and public keys hold no secret. A key file handed to
+  // `gcloud compute ssh/scp --ssh-key-file` is used to authenticate, not read
+  // out; the reviewers judge that connection. Private keys, ssh config, and
+  // authorized_keys still match.
+  text = text
+    .replace(/\.ssh\/(?:known_hosts2?(?:\.old)?|google_compute_known_hosts|[\w.-]+\.pub)(?![\w.-])/g, "")
+    .replace(/(\bgcloud\b[^\n;|&]*\bcompute\s+(?:ssh|scp)\b[^\n;|&]*?)--ssh-key-file[= ]\S*\.ssh\/google_compute_engine(?![\w.-])/g, "$1")
   return /(?:^|[\s"'=:(/~])\.(?:ssh|gnupg)(?:\/|$|[\s"');|&])|\.aws\/(?:credentials|config)\b|(?:^|[\s"'=:(/~])\.(?:netrc|git-credentials)\b|\.docker\/config\.json\b|\bopencode\/(?:data\/)?auth\.json\b/.test(
     text,
   )
@@ -699,6 +712,13 @@ function credentialStorePath(file: string, containing: boolean) {
     path.join(process.env.XDG_DATA_HOME || path.join(home, ".local", "share"), "opencode", "auth.json"),
   ].flatMap((store) => [store, resolvedThroughAncestor(store)])
   const lexical = path.normalize(file.replace(/\/\*+$/, "")) || "/"
+  // A single host-key list or public key in ~/.ssh holds no secret.
+  if (
+    !containing &&
+    path.dirname(lexical) === path.join(home, ".ssh") &&
+    /^(?:known_hosts2?(?:\.old)?|google_compute_known_hosts|[\w.-]+\.pub)$/.test(path.basename(lexical))
+  )
+    return false
   return [lexical, resolvedThroughAncestor(lexical)].some((target) => credentialStoreTarget(target, stores, containing))
 }
 
@@ -725,9 +745,14 @@ function finalReviewMayApprovePublish(command: string) {
     return parts.args[0] === "pr" && ["create", "edit", "ready", "comment"].includes(parts.args[1] ?? "")
   if (name !== "git" || parts.args[0] !== "push") return false
   const args = parts.args.slice(1)
+  // A lease pinned to an exact commit of the destination branch can only
+  // replace what the agent last saw there; a bare or unpinned lease can not.
+  const leases = args.filter((argument) => argument.startsWith("--force-with-lease"))
+  const lease = leases.length === 1 ? /^--force-with-lease=(?:refs\/heads\/)?([^:\s]+):([0-9a-f]{40})$/.exec(leases[0]) : null
+  if (leases.length > 1 || (leases.length === 1 && !lease)) return false
   if (
     args.some((argument) =>
-      /^(?:-f|--force|--force-with-lease.*|--force-if-includes|-d|--delete|--mirror|--all|--tags|--prune)$/.test(argument),
+      /^(?:-f|--force|--force-if-includes|-d|--delete|--mirror|--all|--tags|--prune)$/.test(argument),
     )
   )
     return false
@@ -737,6 +762,7 @@ function finalReviewMayApprovePublish(command: string) {
   const refspec = positional[1]
   if (refspec.startsWith("+") || refspec.startsWith(":") || /[$`*]/.test(refspec)) return false
   const destination = refspec.includes(":") ? refspec.split(":").at(-1)! : refspec
+  if (lease && lease[1] !== destination.replace(/^refs\/heads\//, "")) return false
   return (
     !!destination &&
     destination !== "HEAD" &&
@@ -3713,7 +3739,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
     // go either way.
     const inherentlyReadOnly =
       action.metadata?.core_trusted_builtin === true &&
-      ["read", "glob", "grep", "list", "lsp", "skill"].includes(input.permission)
+      ["read", "glob", "grep", "list", "lsp", "skill", "webfetch", "websearch"].includes(input.permission)
     const finalReviewAllow =
       finalReviewNeeded &&
       reasons.length === 0 &&
