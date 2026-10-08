@@ -152,7 +152,7 @@ test("a token fetch a pinned helper covers is denied with the helper to use", as
 })
 
 test("the gate pins the incidentio-query helper it ships", () => {
-  const source = readFileSync(path.join(import.meta.dir, "../plugins/command-approval.ts"), "utf8")
+  const source = readFileSync(path.join(import.meta.dir, "../lib/gate.ts"), "utf8")
   const helper = readFileSync(path.join(import.meta.dir, "../bin/incidentio-query"))
   expect(source).toContain(`const incidentioHelperSha256 = "${createHash("sha256").update(helper).digest("hex")}"`)
 })
@@ -3633,7 +3633,7 @@ test("source files named for tokens are readable once the scan finds no literal"
 })
 
 test("the gate pins the grafana-query helper it ships", () => {
-  const source = readFileSync(path.join(import.meta.dir, "../plugins/command-approval.ts"), "utf8")
+  const source = readFileSync(path.join(import.meta.dir, "../lib/gate.ts"), "utf8")
   const helper = readFileSync(path.join(import.meta.dir, "../bin/grafana-query"))
   expect(source).toContain(`const grafanaHelperSha256 = "${createHash("sha256").update(helper).digest("hex")}"`)
 })
@@ -3697,13 +3697,13 @@ test("a message cut mid-emoji does not break the reviewers' requests", async () 
 })
 
 test("the gate pins the gcloud login helper it ships", () => {
-  const source = readFileSync(path.join(import.meta.dir, "../plugins/command-approval.ts"), "utf8")
+  const source = readFileSync(path.join(import.meta.dir, "../lib/gate.ts"), "utf8")
   const helper = readFileSync(path.join(import.meta.dir, "../bin/gcloud-remote-auth.sh"))
   expect(source).toContain(`const gcloudAuthHelperSha256 = "${createHash("sha256").update(helper).digest("hex")}"`)
 })
 
 test("the gate pins the Google API helper it ships", () => {
-  const source = readFileSync(path.join(import.meta.dir, "../plugins/command-approval.ts"), "utf8")
+  const source = readFileSync(path.join(import.meta.dir, "../lib/gate.ts"), "utf8")
   const helper = readFileSync(path.join(import.meta.dir, "../bin/google-api-get"))
   expect(source).toContain(`const googleApiHelperSha256 = "${createHash("sha256").update(helper).digest("hex")}"`)
 })

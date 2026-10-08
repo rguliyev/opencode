@@ -227,3 +227,50 @@ test("operation words inside inline Python that cannot start a process are text,
     const spawns = `python3 -c "\nimport subprocess\nsubprocess.run(['sh', '-c', 'x=\\$(wipefs -a /dev/sdb)'])\n"`
     expect(await g.bash(spawns)).toBe("ask")
   }))
+
+test("an installed gate change takes effect on the next request without a restart", () =>
+  withEnv(async () => {
+    const { cpSync, mkdtempSync, readFileSync, writeFileSync, rmSync, readdirSync } = await import("node:fs")
+    const root = mkdtempSync(path.join((await import("node:os")).tmpdir(), "gate-reload-"))
+    try {
+      cpSync(path.join(import.meta.dir, "../plugins"), path.join(root, "plugins"), { recursive: true })
+      cpSync(path.join(import.meta.dir), path.join(root, "lib"), {
+        recursive: true,
+        filter: (source) => !source.endsWith(".test.ts") && !source.includes(`${path.sep}fixtures`),
+      })
+      const directory = path.resolve(import.meta.dir, "..")
+      globalThis.fetch = (async (input: unknown) => {
+        const url = String(input)
+        if (url.includes("/session/ses_gate_design/message?"))
+          return Response.json([message("msg_gate_design", "user", "Show the git status.")])
+        if (url.startsWith("http://gate.test/session/"))
+          return Response.json({ id: "ses_gate_design", directory, agent: "solo", title: "gate design" })
+        if (url === "https://openrouter.ai/api/alpha/decisions") return new Response("declined", { status: 403 })
+        throw new Error(`Unexpected fetch: ${url}`)
+      }) as typeof fetch
+      const plugin = (await import(path.join(root, "plugins/command-approval.ts"))).default
+      const hooks = await plugin({ directory, serverUrl: new URL("http://gate.test") })
+      await hooks.provider.models({ models: {} }, { auth: { type: "api", key: "fake-test-key" } })
+      const ask = async () => {
+        const output: { status: string; message?: string } = { status: "ask" }
+        await hooks["permission.ask"](
+          { permission: "bash", sessionID: "ses_gate_design", patterns: ["git status --short"], metadata: { command: "git status --short", core_execution_agent: "solo" } },
+          output,
+        )
+        return output
+      }
+      expect((await ask()).message).not.toBe("reloaded gate")
+      const gateFile = path.join(root, "lib/gate.ts")
+      const marker = '"permission.ask": async (input: PermissionInput, output: PermissionOutput) => {'
+      const source = readFileSync(gateFile, "utf8")
+      expect(source).toContain(marker)
+      await Bun.sleep(10)
+      writeFileSync(gateFile, source.replace(marker, `${marker}\n      output.status = "deny"\n      output.message = "reloaded gate"\n      return`))
+      const after = await ask()
+      expect(after.status).toBe("deny")
+      expect(after.message).toBe("reloaded gate")
+      expect(readdirSync(root)).toContain("lib")
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  }))
