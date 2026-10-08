@@ -1893,6 +1893,37 @@ test("shell segments get module evidence and self-contained segments are judged 
     expect(await shellStatus('echo "$(mkfs.ext4 /dev/sdb)"')).toBe("ask")
     expect(await shellStatus('bash -c "grep x f | mkfs.ext4 /dev/sdb"')).toBe("ask")
 
+    // A command withheld from the reviewers is shown to the human with its
+    // secret values masked instead of "[command withheld]".
+    const shown = async (command: string) => {
+      const output: { status: string; reviewItems?: { command: string | null }[] } = { status: "ask" }
+      await hooks["permission.ask"](
+        { permission: "bash", sessionID: "ses_go_module", patterns: [command], metadata: { command } },
+        output,
+      )
+      return output.reviewItems?.[0]?.command ?? null
+    }
+    const bearer = await shown('curl -fsS -H "Authorization: Bearer abcDEF1234567890xyzQRS" https://example.test/api')
+    expect(bearer).toContain("curl -fsS")
+    expect(bearer).toContain("https://example.test/api")
+    expect(bearer).toContain("secret values masked")
+    expect(bearer).not.toContain("abcDEF1234567890xyzQRS")
+    const flag = await shown("psql --password=Sup3rS3cretValue99 -h db.example.test -c 'select 1'")
+    expect(flag).toMatch(/^psql --password=\[(?:MASKED|REDACTED:[A-Z_]+)\] -h db\.example\.test/)
+    expect(flag).not.toContain("Sup3rS3cretValue99")
+    // The secret's name and where its value goes stay readable.
+    const script = await shown(
+      "python3 -c \"\nimport subprocess, urllib.request\np = subprocess.run(['gcloud', 'secrets', 'versions', 'access', 'latest', '--project=e2b-foxtrot', '--secret=api-admin-token'], capture_output=True, text=True)\ntok = p.stdout.strip()\nreq = urllib.request.Request('https://api.e2b.dev/nodes', headers={'X-Admin-Token': tok})\nprint(urllib.request.urlopen(req).status)\n\"",
+    )
+    expect(script).toContain("--secret=api-admin-token")
+    expect(script).toContain("https://api.e2b.dev/nodes")
+    // Real values next to the same keys are still masked.
+    const literal = await shown(
+      "curl -H 'X-Admin-Token: e2b_9f8e7d6c5b4a39281706f5e4d3c2b1a0' -H 'token: deadbeef0123456789abcdef' https://api.e2b.dev/nodes",
+    )
+    expect(literal ?? "").not.toContain("e2b_9f8e7d6c5b4a39281706f5e4d3c2b1a0")
+    expect(literal ?? "").not.toContain("deadbeef0123456789abcdef")
+
     // The pinned Grafana helper is reported as a token-safe read-only query;
     // a modified copy is unknown code.
     const helper = path.join(import.meta.dir, "../bin/grafana-query")

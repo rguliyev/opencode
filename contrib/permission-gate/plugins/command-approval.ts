@@ -486,6 +486,48 @@ function redact(command: string) {
   return sanitizeReviewText(command).value
 }
 
+// The human's prompt shows a command that is withheld from the reviewers
+// with its secret values masked, so they can see what it does without
+// opening the raw tool call. Secret names (--secret=NAME) stay visible.
+// Null when the masked text is not provably clean.
+function maskedCommandForHuman(command: string) {
+  // Secret names, project IDs, and variable references hold no secret value;
+  // keep them readable through the redaction below and restore them after.
+  const kept: string[] = []
+  const keep = (value: string) => `KEEPSAFE${kept.push(value) - 1}X`
+  const protectedText = command
+    // A Secret Manager name or project ID: lowercase words joined by hyphens.
+    .replace(/--(?:secret|project)[= ][a-z][a-z0-9]*(?:[-_][a-z0-9]+)*(?=[\s'",)\]]|$)/g, (span) =>
+      /[-_]/.test(span.slice(span.search(/[= ]/) + 1)) || span.length <= 26 ? keep(span) : span,
+    )
+    // A header or key set from a shell variable or a short program variable.
+    .replace(
+      /[\w-]*(?:token|secret|key|authorization)['"]?\s*[:=]\s*(?:\$\{?[A-Za-z_][A-Za-z0-9_]*\}?|(?![0-9a-f]+\b)[a-z_][a-z0-9_]{0,19})(?=[\s,})\]'";]|$)/gi,
+      keep,
+    )
+  const masked = redact(protectedText)
+    .replace(
+      /(--?(?:api[-_]?key|access[-_]?token|auth[-_]?token|oauth2[-_]?bearer|token|password|passwd|client[-_]?secret|private[-_]?key|userpwd)(?:=|\s+))(["']?)(?![{$(])[^\s'";|]+/gi,
+      "$1$2[MASKED]",
+    )
+    .replace(/\b([A-Za-z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY|PRIVATE_?KEY)[A-Za-z0-9_]*=)(?![$("'])[^\s;|&]+/gi, "$1[MASKED]")
+    .replace(
+      /((?:authorization|proxy-authorization|x-api-key|api-key|x-auth-token|cookie)\s*:\s*(?:bearer\s+|basic\s+)?)(?![$"'])[^\s'";|]+/gi,
+      "$1[MASKED]",
+    )
+    .replace(/[A-Za-z0-9_\-.+=\/]{16,}/g, (token) =>
+      /\d/.test(token) && /[A-Za-z]/.test(token) && !token.includes("/") && !/^[a-z0-9]+(?:[-_.][a-z0-9]+)+$/.test(token)
+        ? "[MASKED]"
+        : token,
+    )
+  const safe = sanitizeReviewText(masked.length > 2_000 ? `${masked.slice(0, 2_000)}…` : masked)
+  if (!safe.complete) return null
+  // The kept spans are names and references by construction; the rest of the
+  // text must hold no credential literal.
+  if (containsCredentialLiteralUnmasked(safe.value.replace(/KEEPSAFE\d+X/g, "x"))) return null
+  return `${safe.value.replace(/KEEPSAFE(\d+)X/g, (_, index) => kept[Number(index)] ?? "[MASKED]")}  (secret values masked)`
+}
+
 // Google OAuth material: authorization codes (4/0A...), refresh tokens (1//...)
 // and access tokens (ya29....). None matched the previous patterns, so a live
 // authorization code was both sent to OpenRouter and written to the decision log.
@@ -4382,7 +4424,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
                   {
                     index,
                     digest: item.cmd_sha256 as string,
-                    command: typeof item.cmd === "string" ? item.cmd : null,
+                    command: typeof item.cmd === "string" ? item.cmd : maskedCommandForHuman(commands[index] ?? ""),
                     reason: (() => {
                       const text =
                         humanPrompt(
