@@ -952,7 +952,21 @@ function infraTargetClass(command: string, workdir: string): "local-dev" | "prod
   }
 }
 
+// `python3 -c '...'` with no way to start a process cannot run git push,
+// kubectl, or wipefs; those words in its strings (a regex over a script, say)
+// are text. The reviewers still judge the code itself.
+function inlinePythonCannotSpawn(command: string) {
+  const match = command.match(/^\s*python3?\s+-c\s+(["'])([\s\S]*)\1\s*$/)
+  return (
+    !!match &&
+    !/\b(?:subprocess|os\s*\.\s*(?:system|popen|exec\w*|spawn\w*|posix_spawn\w*|fork\w*)|pty|pexpect|plumbum|sh\s*\.|multiprocessing|ctypes|importlib|__import__|exec|eval|compile|getattr)\b/.test(
+      match[2],
+    )
+  )
+}
+
 function requiresHumanOperation(command: string) {
+  if (inlinePythonCannotSpawn(command)) return false
   return /(?:^|[\n;|&(){}])\s*(?:(?:sudo|env)\s+)?(?:git\s+push|gh\s+pr\s+(?:create|edit|merge|close)|terraform\s+(?:apply|destroy)|terragrunt\s+(?:apply|destroy)|kubectl\s+(?:apply|delete|patch|replace|scale|rollout|set)|gcloud\s+(?:projects\s+add-iam-policy-binding|iam\s+(?!(?:(?:service-accounts|roles|workload-identity-pools|policies)(?:\s+keys)?\s+(?:list|describe|get-iam-policy)|list-grantable-roles|list-testable-permissions)(?:\s|$))|secrets\s+(?:create|delete|update|versions\s+(?:add|destroy|disable)))|aws\s+(?:iam\s+|secretsmanager\s+(?:create|delete|update|put|rotate))|tailscale\s+(?:set|up)\b[^\n;|&]*--exit-node|(?:rm\s+-rf|mkfs|wipefs)\b)/i.test(
     command,
   )

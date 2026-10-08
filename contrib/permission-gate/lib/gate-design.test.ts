@@ -218,3 +218,12 @@ test("a version manager's dispatcher is judged as the tool it runs, not as an un
       rmSync(home, { recursive: true, force: true })
     }
   }))
+
+test("operation words inside inline Python that cannot start a process are text, not operations", () =>
+  withEnv(async () => {
+    const g = await gate("solo", "Check whether the startup script still has the wipefs guard.", () => 0.01)
+    const reads = `python3 -c "\nimport re\ntext = open('charts/node-init/files/local-ssd-startup.sh').read()\nprint(bool(re.search(r'signatures=\\$\\(wipefs --no-act', text)))\n"`
+    expect(await g.bash(reads)).toBe("allow")
+    const spawns = `python3 -c "\nimport subprocess\nsubprocess.run(['sh', '-c', 'x=\\$(wipefs -a /dev/sdb)'])\n"`
+    expect(await g.bash(spawns)).toBe("ask")
+  }))
