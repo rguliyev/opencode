@@ -3251,7 +3251,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
         metadata.name !== args.name ||
         metadata.core_trusted_builtin !== true ||
         typeof metadata.location !== "string" ||
-        !path.isAbsolute(metadata.location) ||
+        !(path.isAbsolute(metadata.location) || (metadata.location === "<built-in>" && args.name === "customize-opencode")) ||
         typeof content !== "string" ||
         Buffer.byteLength(content) > maxActionBytes
       ) {
@@ -3259,7 +3259,9 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
         await settle("ask", "guard", ["unverified skill load context"])
         return
       }
-      skillLocation = metadata.location
+      // Core's virtual skill has no filesystem target. Keep the sentinel in
+      // review metadata, but never pass it to path/credential-store checks.
+      skillLocation = metadata.location === "<built-in>" ? undefined : metadata.location
       // Unlike a command reference, a literal credential in the returned
       // content would be disclosed to the agent after this permission.
       skillContainsCredentialLiteral = hasSkillCredentialLiteral(content)
@@ -3501,7 +3503,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
       evidence.push({ finding: "credential_pattern", detail: "credential-like literal in read target" })
     const fileTargets =
       input.permission === "skill"
-        ? [skillLocation!]
+        ? (skillLocation ? [skillLocation] : [])
         : input.permission === "grep"
           ? [metadata.requested_path, metadata.path, metadata.include].filter(
               (value): value is string => typeof value === "string",

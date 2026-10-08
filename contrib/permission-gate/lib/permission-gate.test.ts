@@ -602,6 +602,137 @@ test("Jev classifies non-Bash actions with redacted context", async () => {
   }
 })
 
+test("core-attested virtual skills are reviewed as instruction loads without weakening guards", async () => {
+  const directory = path.resolve(import.meta.dir, "..")
+  const previousFetch = globalThis.fetch
+  const previousSocket = process.env.OPENCODE_KEV_SOCKET
+  const seen: Record<string, unknown>[] = []
+  process.env.OPENCODE_KEV_SOCKET = path.join(directory, "missing-test.sock")
+  globalThis.fetch = async (input, init) => {
+    const url = String(input)
+    if (url.includes("/session/ses_builtin_skill/message?"))
+      return Response.json([message("msg_builtin_user", "user", "Create a detection skill for future investigations.")])
+    if (url.startsWith("http://gate.test/session/"))
+      return Response.json({ id: "ses_builtin_skill", directory, agent: "orchestrator", title: "Detection skill" })
+    if (url === "https://openrouter.ai/api/alpha/decisions") {
+      const payload = JSON.parse(String(init?.body))
+      seen.push(payload)
+      return Response.json({
+        model: "typesafe/jev-1.13",
+        answers: Object.fromEntries(
+          Object.keys(payload.questions).map((key) => [
+            key,
+            key === "verdict"
+              ? { type: "choice", choice: "allow", confidence: 0.99, probabilities: { allow: 0.99, deny: 0.01 } }
+              : { type: "noul", noul: 0.01 },
+          ]),
+        ),
+      })
+    }
+    throw new Error(`Unexpected fetch: ${url}`)
+  }
+  try {
+    const hooks = await gateForTest(directory, "orchestrator", async () => ({
+      model: "google/gemini-3.8-flash",
+      choice: "allow",
+      reason: "Instruction loading was reviewed.",
+    }))
+    await hooks.provider.models({ models: {} }, { auth: { type: "api", key: "fake-test-key" } })
+    const content = readFileSync(
+      path.resolve(import.meta.dir, "../../../packages/core/src/plugin/skill/customize-opencode.md"),
+      "utf8",
+    )
+    await hooks["tool.execute.before"](
+      { tool: "skill", sessionID: "ses_builtin_skill", callID: "call_builtin_skill" },
+      { args: { name: "customize-opencode" } },
+    )
+    const request = {
+      permission: "skill",
+      sessionID: "ses_builtin_skill",
+      patterns: ["customize-opencode"],
+      metadata: { name: "customize-opencode", location: "<built-in>", content, core_trusted_builtin: true },
+      tool: { callID: "call_builtin_skill" },
+    }
+    const output = { status: "ask", message: "" }
+    await hooks["permission.ask"](request, output)
+    expect(output.status).toBe("allow")
+    expect(seen).toHaveLength(1)
+    const metadata = reviewActionMetadata(seen[0])
+    expect(metadata?.location).toBe("<built-in>")
+    expect(metadata?.content).toBeUndefined()
+    expect(metadata?.content_sha256).toBe(createHash("sha256").update(content).digest("hex"))
+    expect(JSON.stringify(seen)).not.toContain(content)
+
+    // A virtual location does not replace dispatcher attestation, identity,
+    // bounded content, credential scans, or later edit authorization.
+    for (const changes of [
+      { core_trusted_builtin: false },
+      { location: "relative/SKILL.md" },
+      { location: "<another-built-in>" },
+      { name: "mismatched-name" },
+      { content: "x".repeat(64 * 1024 + 1) },
+    ]) {
+      const invalid = { status: "allow" }
+      await hooks["permission.ask"]({ ...request, metadata: { ...request.metadata, ...changes } }, invalid)
+      expect(invalid.status).toBe("ask")
+    }
+    expect(seen).toHaveLength(1)
+    const secret = { status: "allow" }
+    await hooks["permission.ask"](
+      { ...request, metadata: { ...request.metadata, content: `Use ${"glpat-" + "T".repeat(24)}.` } },
+      secret,
+    )
+    expect(secret.status).toBe("ask")
+    expect(JSON.stringify(seen)).not.toContain("glpat-" + "T".repeat(24))
+
+    await hooks["tool.execute.before"](
+      { tool: "skill", sessionID: "ses_builtin_skill", callID: "call_unknown_builtin" },
+      { args: { name: "unknown-built-in" } },
+    )
+    const unknown = { status: "allow" }
+    await hooks["permission.ask"](
+      {
+        ...request,
+        patterns: ["unknown-built-in"],
+        metadata: { ...request.metadata, name: "unknown-built-in" },
+        tool: { callID: "call_unknown_builtin" },
+      },
+      unknown,
+    )
+    expect(unknown.status).toBe("ask")
+
+    await hooks["tool.execute.before"](
+      { tool: "skill", sessionID: "ses_builtin_skill", callID: "call_extra_builtin_args" },
+      { args: { name: "customize-opencode", execute: "ignored" } },
+    )
+    const extra = { status: "allow" }
+    await hooks["permission.ask"]({ ...request, tool: { callID: "call_extra_builtin_args" } }, extra)
+    expect(extra.status).toBe("ask")
+
+    const configPath = path.join(homedir(), ".opencode/AGENTS.md")
+    await hooks["tool.execute.before"](
+      { tool: "edit", sessionID: "ses_builtin_skill", callID: "call_after_skill_edit" },
+      { args: { filePath: configPath, oldString: "old policy", newString: "new policy" } },
+    )
+    const edit = { status: "allow" }
+    await hooks["permission.ask"](
+      {
+        permission: "edit",
+        sessionID: "ses_builtin_skill",
+        patterns: [configPath],
+        metadata: { filepath: configPath, diff: "-old policy\n+new policy", core_trusted_builtin: true },
+        tool: { callID: "call_after_skill_edit" },
+      },
+      edit,
+    )
+    expect(edit.status).toBe("ask")
+  } finally {
+    globalThis.fetch = previousFetch
+    if (previousSocket === undefined) delete process.env.OPENCODE_KEV_SOCKET
+    else process.env.OPENCODE_KEV_SOCKET = previousSocket
+  }
+})
+
 test("Jev receives paginated root human context and a distinct subagent task", async () => {
   const directory = path.resolve(import.meta.dir, "..")
   const previousFetch = globalThis.fetch
