@@ -264,6 +264,32 @@ test("Jev receives a scrubbed command and context, while the local gate asks", a
     expect(skillMetadata?.content_sha256).toBe(
       createHash("sha256").update(`Use api_key=${token} to authenticate.`).digest("hex"),
     )
+
+    // A skill compiled into OpenCode reports "<built-in>" as its location; it
+    // still reaches review instead of stopping at the local guard.
+    sent = undefined
+    await hooks["tool.execute.before"](
+      { tool: "skill", sessionID: "ses_redaction_test", callID: "call_skill_builtin" },
+      { args: { name: "customize-opencode" } },
+    )
+    const builtinOutput: { status: string; message?: string } = { status: "allow" }
+    await hooks["permission.ask"](
+      {
+        permission: "skill",
+        sessionID: "ses_redaction_test",
+        patterns: ["customize-opencode"],
+        metadata: {
+          name: "customize-opencode",
+          location: "<built-in>",
+          content: "How to write opencode.json, agents, and skills.",
+          core_trusted_builtin: true,
+        },
+        tool: { callID: "call_skill_builtin" },
+      },
+      builtinOutput,
+    )
+    expect(sent).toBeDefined()
+    expect(builtinOutput.message).not.toBe("The gate could not verify which skill is being loaded.")
   } finally {
     globalThis.fetch = previousFetch
     if (previousStateHome === undefined) delete process.env.XDG_STATE_HOME
