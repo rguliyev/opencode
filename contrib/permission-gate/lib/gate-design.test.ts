@@ -465,3 +465,52 @@ test("a grep for path-like text is judged by the file it searches, not by the te
     )
     expect(output.status).toBe("allow")
   }))
+
+test("a large edit confined to worktree or scratch paths is reviewed from a summary; elsewhere it still stops", () =>
+  withEnv(async () => {
+    const directory = path.resolve(import.meta.dir, "..")
+    let reviewed = 0
+    globalThis.fetch = (async (input: unknown) => {
+      const url = String(input)
+      if (url.includes("/session/ses_gate_design/message?"))
+        return Response.json([message("msg_gate_design", "user", "Make the triage script portable for the PR.")])
+      if (url.startsWith("http://gate.test/session/"))
+        return Response.json({ id: "ses_gate_design", directory, agent: "solo", title: "gate design" })
+      if (url === "https://openrouter.ai/api/alpha/decisions") {
+        reviewed += 1
+        return Response.json({ model: "typesafe/jev-1.13", answers: { verdict: { type: "choice", choice: "allow", confidence: 0.99, probabilities: { allow: 0.99, deny: 0.01 } } } })
+      }
+      throw new Error(`Unexpected fetch: ${url}`)
+    }) as typeof fetch
+    const hooks = await (CommandApproval as any)({
+      directory,
+      serverUrl: new URL("http://gate.test"),
+      reviewPermission: async () => ({ model: "google/gemini-3.8-flash", choice: "allow", reason: "scratch edit" }),
+    })
+    await hooks.provider.models({ models: {} }, { auth: { type: "api", key: "fake-test-key" } })
+    const big = "+" + "x = 1  # line\n+".repeat(6000)
+    const edit = async (file: string) => {
+      const output: { status: string; message?: string } = { status: "ask" }
+      await hooks["permission.ask"](
+        {
+          permission: "edit",
+          sessionID: "ses_gate_design",
+          patterns: [file],
+          metadata: {
+            filepath: file,
+            diff: big,
+            files: [{ filePath: file, relativePath: path.basename(file), type: "update", patch: big, additions: 6000, deletions: 0 }],
+            core_execution_agent: "solo",
+          },
+        },
+        output,
+      )
+      return output
+    }
+    const scratch = await edit("/data/rguliyev/tmp/opencode/gate-test-big/worktree/scripts/triage.py")
+    expect(scratch.message ?? "").not.toBe("Action context is missing or too large for automatic review")
+    expect(reviewed).toBeGreaterThan(0)
+    const elsewhere = await edit("/data/rguliyev/src/infra/big.py")
+    expect(elsewhere.status).toBe("ask")
+    expect(elsewhere.message).toContain("Action context is missing or too large for automatic review")
+  }))

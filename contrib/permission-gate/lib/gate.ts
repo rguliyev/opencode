@@ -3372,7 +3372,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
       "context.session_decisions lists recent gate outcomes in the same task; human_approved marks requests the human approved. Treat them as evidence of what the human accepts for this task, not as authorization for a materially different action. context.local_rules lists local rules that already require human review for this request.",
       "context.environment_policy is the human's standing policy, supplied by the gate and trusted like role_policy: apply its GCP project classes, local path classes, services, and reviewer_rules. context.environment classifies this request's GCP projects and local paths under it. context.gate_evidence lists local findings the gate could not settle itself; environment_policy.finding_guidance says how to judge each. Weigh them against the human's task: they are evidence, neither approvals nor automatic reasons to ask; a finding's human_history counts how the human answered similar prompts this week, never authorization. context.jev_signal is an independent classifier's advisory answer; it does not bind you.",
       "When a shell segment's context has no full_command, the gate judged it self-contained (it only prints or filters stdin): judge it alone. context.module_evidence says whether a go run module is go.sum-pinned (a verified dependency). context.command_evidence is the gate's local reading of the command's flags, e.g. a read-only gh api GET or a validator that writes nothing. A read-only remote query (a GET, gh pr view/diff/list, gh run view) is read-only inspection. For review or research, read-only inspection of history, changelogs, adjacent versions, sibling repositories, and related files is within the task; ask only when the target is clearly unrelated.",
-      "Pushes to shared branches, force pushes, and PR or remote merges are never yours to allow.",
+      "Pushes to shared branches, bare or unpinned force pushes, and PR or remote merges are never yours to allow; a --force-with-lease pinned to an exact commit of the same feature branch follows the publish reviewer rule.",
       "Return allow ONLY when this exact action is clearly within the applicable direct human task, role policy, and environment policy, with no credential disclosure, regulated-data exposure, destructive effect, security-control change, production or unrelated shared-state mutation, opaque side effect, or human-only gate. Otherwise ask.",
     ].join(" ")
     // A transient timeout or malformed reply is retried once with a fresh
@@ -3584,6 +3584,42 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
         deletions: (file as Record<string, unknown>).deletions,
       }))
       metadata.diff = `deletes ${metadata.files.length} file(s); deleted content omitted`
+    }
+    // A large edit confined to writable local classes (worktrees, scratch) is
+    // reviewed from a summary: the paths, their class, line counts, and the head
+    // of the diff. Writes there change nothing live; the full text would only
+    // push the request past the review size limit. Edits anywhere else keep
+    // their full diff and still stop at the limit.
+    if (input.permission === "edit" && Buffer.byteLength(JSON.stringify(metadata) ?? "") > maxActionBytes / 2) {
+      const policy = loadEnvironmentPolicy()
+      const files = Array.isArray(metadata.files) ? metadata.files.filter(isRecord) : []
+      const targets = [
+        ...files.flatMap((file) => [file.filePath, file.movePath]),
+        ...(files.length ? [] : [metadata.filepath]),
+      ].filter((value): value is string => typeof value === "string" && path.isAbsolute(value))
+      const writable = (file: string) => {
+        if (!policy) return false
+        const cls = classifyPath(policy, path.normalize(file))
+        return policy.local_paths.classes.some((item) => item.class === cls && item.writable)
+      }
+      if (targets.length > 0 && targets.every(writable)) {
+        const fullDiff = typeof metadata.diff === "string" ? metadata.diff : ""
+        const head = fullDiff.slice(0, maxActionBytes / 4)
+        metadata.files = files.map((file) => ({
+          filePath: file.filePath,
+          relativePath: file.relativePath,
+          type: file.type,
+          additions: file.additions,
+          deletions: file.deletions,
+          ...(file.movePath ? { movePath: file.movePath } : {}),
+        }))
+        metadata.diff =
+          head +
+          (head.length < fullDiff.length
+            ? `\n… diff truncated by the gate (${Buffer.byteLength(fullDiff)} bytes); every target is in a writable worktree or scratch path`
+            : "")
+        metadata.target_classes = [...new Set(targets.map((file) => (policy ? classifyPath(policy, path.normalize(file)) : "unknown")))]
+      }
     }
     // Origin is attested by the core dispatcher, but its local path is not
     // useful to a remote reviewer. Send only a verified effect classification.
