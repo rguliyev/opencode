@@ -532,3 +532,46 @@ test("--help of a script that can read secrets is the reviewers' call; a real ru
       rmSync(dir, { recursive: true, force: true })
     }
   }))
+
+test("a glob naming one ordinary file across the home directory is not a credential-store read", () =>
+  withEnv(async () => {
+    const directory = path.resolve(import.meta.dir, "..")
+    const home = (await import("node:os")).homedir()
+    globalThis.fetch = (async (input: unknown) => {
+      const url = String(input)
+      if (url.includes("/session/ses_gate_design/message?"))
+        return Response.json([message("msg_gate_design", "user", "Find the alert generator and make alerts per environment.")])
+      if (url.startsWith("http://gate.test/session/"))
+        return Response.json({ id: "ses_gate_design", directory, agent: "solo", title: "gate design" })
+      if (url === "https://openrouter.ai/api/alpha/decisions")
+        return Response.json({ model: "typesafe/jev-1.13", answers: { verdict: { type: "choice", choice: "allow", confidence: 0.99, probabilities: { allow: 0.99, deny: 0.01 } } } })
+      throw new Error(`Unexpected fetch: ${url}`)
+    }) as typeof fetch
+    const hooks = await (CommandApproval as any)({
+      directory,
+      serverUrl: new URL("http://gate.test"),
+      reviewPermission: async () => ({ model: "google/gemini-3.8-flash", choice: "allow", reason: "filename search" }),
+    })
+    await hooks.provider.models({ models: {} }, { auth: { type: "api", key: "fake-test-key" } })
+    let n = 0
+    const glob = async (pattern: string) => {
+      const callID = `call_glob_${n++}`
+      await hooks["tool.execute.before"]({ tool: "glob", sessionID: "ses_gate_design", callID }, { args: { pattern, path: home } })
+      const output: { status: string } = { status: "ask" }
+      await hooks["permission.ask"](
+        {
+          permission: "glob",
+          sessionID: "ses_gate_design",
+          patterns: [pattern],
+          metadata: { pattern, path: home, matched_paths: [], match_count: 0, truncated: false, core_trusted_builtin: true, core_execution_agent: "solo" },
+          tool: { callID },
+        },
+        output,
+      )
+      return output.status
+    }
+    expect(await glob("**/belt/infra/main.go")).toBe("allow")
+    expect(await glob("**/*")).toBe("ask")
+    expect(await glob("**/id_ed25519")).toBe("ask")
+    expect(await glob("**/environments/*.env")).toBe("ask")
+  }))

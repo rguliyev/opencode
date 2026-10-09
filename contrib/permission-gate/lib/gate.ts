@@ -3907,11 +3907,31 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
       input.permission === "external_directory" && call?.tool === "bash" && isRecord(call.args) && typeof call.args.command === "string"
         ? call.args.command
         : undefined
+    // A glob lists matching paths, never contents. When its last segment names
+    // one ordinary file (**/belt/infra/main.go), it cannot list a credential
+    // store's files, so a store inside the searched tree is not touched.
+    // Wildcard-only, key, and secret-like name patterns still count.
+    const globPattern =
+      input.permission === "glob"
+        ? patterns[0]
+        : input.permission === "external_directory" && call?.tool === "glob" && isRecord(call.args) && typeof call.args.pattern === "string"
+          ? call.args.pattern
+          : undefined
+    const globNamesOneFile = (() => {
+      const last = globPattern?.split("/").filter(Boolean).at(-1)
+      return (
+        !!last &&
+        /^[A-Za-z0-9][A-Za-z0-9._-]*\.[A-Za-z0-9]{1,8}$/.test(last) &&
+        !sensitiveFilename(last) &&
+        !/(?:^id_|\.pem$|\.key$|\.p12$|\.pfx$|_rsa|_ed25519|known_hosts|authorized_keys|\.netrc|config\.json$|auth\.json$)/i.test(last)
+      )
+    })()
     if (
       fileTargetPaths.some((file) =>
         credentialStorePath(
           file,
-          ["grep", "glob", "list"].includes(input.permission) || (input.permission === "external_directory" && shellCommand === undefined),
+          !globNamesOneFile &&
+            (["grep", "glob", "list"].includes(input.permission) || (input.permission === "external_directory" && shellCommand === undefined)),
         ),
       ) ||
       (shellCommand !== undefined && credentialStoreReference(shellCommand))
