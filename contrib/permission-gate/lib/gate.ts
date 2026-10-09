@@ -3629,6 +3629,18 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
           : metadata.requested_path,
         workdir,
       )
+      // Re-reading this OpenCode's own truncated tool output (already
+      // permission-checked when produced) needs no review, as core allows it.
+      if (
+        metadata.core_trusted_builtin === true &&
+        patterns.length === 1 &&
+        action.local_evidence.target_facts.includes("opencode_tool_output") &&
+        action.local_evidence.literal_scan !== "found"
+      ) {
+        output.message = undefined
+        await settle("allow", "tool_output", ["re-reads this OpenCode's own tool output"])
+        return
+      }
     }
     // The gate resolved the requested path itself; replace core's "not yet
     // verified" note, which reviewers read as an unexplained risk.

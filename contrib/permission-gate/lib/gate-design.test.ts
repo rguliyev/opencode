@@ -311,3 +311,39 @@ test("secret metadata, label updates, and empty secret creation reach the review
     expect(await g.bash("gcloud secrets update tango-filestore-vpn-psk --project=e2b-tango --ttl=1h")).toBe("ask")
     expect(await g.bash("gcloud secrets delete tango-filestore-vpn-psk --project=e2b-tango --quiet")).toBe("ask")
   }))
+
+test("re-reading this OpenCode's own tool output is allowed without review", () =>
+  withEnv(async () => {
+    const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import("node:fs")
+    const home = mkdtempSync(path.join((await import("node:os")).tmpdir(), "gate-ochome-"))
+    const previous = process.env.OPENCODE_HOME
+    let reviewed = 0
+    try {
+      process.env.OPENCODE_HOME = home
+      mkdirSync(path.join(home, "data/tool-output"), { recursive: true })
+      const file = path.join(home, "data/tool-output/tool_abc")
+      writeFileSync(file, "FAIL node-init swap test\nExpected to equal: 1\n")
+      const directory = path.resolve(import.meta.dir, "..")
+      globalThis.fetch = (async (input: unknown) => {
+        const url = String(input)
+        if (url.includes("/session/ses_gate_design/message?"))
+          return Response.json([message("msg_gate_design", "user", "Fix the failing chart test.")])
+        if (url.startsWith("http://gate.test/session/"))
+          return Response.json({ id: "ses_gate_design", directory, agent: "solo", title: "gate design" })
+        reviewed += 1
+        return new Response("declined", { status: 403 })
+      }) as typeof fetch
+      const hooks = await (CommandApproval as any)({ directory, serverUrl: new URL("http://gate.test") })
+      const output: { status: string } = { status: "ask" }
+      await hooks["permission.ask"](
+        { permission: "read", sessionID: "ses_gate_design", patterns: [file], metadata: { filepath: file, core_trusted_builtin: true, core_execution_agent: "solo" } },
+        output,
+      )
+      expect(output.status).toBe("allow")
+      expect(reviewed).toBe(0)
+    } finally {
+      if (previous === undefined) delete process.env.OPENCODE_HOME
+      else process.env.OPENCODE_HOME = previous
+      rmSync(home, { recursive: true, force: true })
+    }
+  }))
