@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "about": "Standing human policy that the permission gate sends to both reviewers (Jev and the final reviewer) as context.environment_policy. Edit this file, not the plugin code, to change what the reviewers may approve. The hard human gates (force push and history rewrites, merges, PR close, terraform/terragrunt apply and destroy outside local dev, kubectl apply/delete/patch/replace/scale/rollout/set written as the first word after kubectl,IAM and policy changes, secret values and credential material, protected OpenCode configuration, ~/.ssh, and evidence withheld because redaction failed) are enforced in code and cannot be relaxed here; anything the code sends to the reviewers (for example kubectl exec, cordon, or delete with --context before the verb, or secret metadata and label changes) is the reviewers' call under the services and classes below. Classes match in order; the first match wins; a trailing * matches any suffix. A local path class marked writable lets the gate send deletes inside it to the reviewers; deletes anywhere else stay a human gate.",
+  "about": "Standing human policy that the permission gate sends to both reviewers (Jev and the final reviewer) as context.environment_policy. Edit this file, not the plugin code, to change what the reviewers may approve. The hard human gates (force push and history rewrites, merges, PR close, terraform/terragrunt apply and destroy outside local dev, IAM and policy changes, secret values and credential material, protected OpenCode configuration, ~/.ssh, and evidence withheld because redaction failed) are enforced in code and cannot be relaxed here. Anything the code sends to the reviewers is not a hard gate: judge it by the class of the project or path it touches and the human's task, as described below. Classes match in order; the first match wins; a trailing * matches any suffix. A local path class marked writable lets the gate send deletes inside it to the reviewers; deletes anywhere else stay a human gate.",
   "gcp_projects": {
     "classes": [
       {
@@ -105,7 +105,7 @@
     },
     {
       "service": "kubernetes",
-      "policy": "The human's personal dev cluster is dev-1-us-west1 (context gke_e2b-dev-rauf-guliyev_us-west1_dev-1-us-west1, nodes gke-dev-1-*; dev class, not Terraform-managed). There, when the human's current task calls for it, allow kubectl exec (including nsenter into the node for swap, disk, or kernel work the task describes), cordon, uncordon, drain, label, annotate, deleting or restarting pods, and patching, syncing, or refreshing Argo CD Applications in that cluster (for example targetRevision or Helm values to deploy a chart the human asked to test there). For any other cluster (staging, production), kubectl exec and every change need the human's request for that cluster and change. Reads (get, describe, logs, top, events) are allowed for the task everywhere."
+      "policy": "A cluster belongs to the GCP project named in its kubectl context (gke_<project>_<location>_<cluster> or connectgateway_<project>_<location>_<cluster>); judge every kubectl action, including exec into pods or nodes, by that project's class above, exactly as for gcloud. Reads are allowed for the task everywhere."
     },
     {
       "service": "secret_manager",
