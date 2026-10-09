@@ -3855,7 +3855,9 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
     }
     const actionWorkdir = workingDirectories.get(callID ?? "") ?? directory
     const fileTargetPaths = [
-      ...patterns.filter((pattern) => ["read", "edit", "external_directory", "glob", "grep", "list", "lsp"].includes(input.permission) && path.isAbsolute(pattern)),
+      // A grep pattern is the text to search for, not where; its target comes
+      // from requested_path/path below. (A glob pattern can be a path, so it stays.)
+      ...patterns.filter((pattern) => ["read", "edit", "external_directory", "glob", "list", "lsp"].includes(input.permission) && path.isAbsolute(pattern)),
       ...[metadata.filepath, metadata.resolved_filepath, metadata.requested_path, metadata.path]
         .filter((value): value is string => typeof value === "string" && value.length > 0)
         .map((value) => path.resolve(actionWorkdir, value)),

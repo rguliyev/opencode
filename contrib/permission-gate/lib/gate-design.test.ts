@@ -432,3 +432,36 @@ test("a folder grant for a shell command is judged by what the command touches",
     expect(await grant(`git -C ${home}/.local/share/helm status --short`, "call_grant_git")).toBe("allow")
     expect(await grant(`cat ${home}/.ssh/id_ed25519`, "call_grant_key")).toBe("ask")
   }))
+
+test("a grep for path-like text is judged by the file it searches, not by the text", () =>
+  withEnv(async () => {
+    const directory = path.resolve(import.meta.dir, "..")
+    const file = path.join(import.meta.dir, "fixtures/vars/check.sh")
+    globalThis.fetch = (async (input: unknown) => {
+      const url = String(input)
+      if (url.includes("/session/ses_gate_design/message?"))
+        return Response.json([message("msg_gate_design", "user", "Make the triage script portable for the PR.")])
+      if (url.startsWith("http://gate.test/session/"))
+        return Response.json({ id: "ses_gate_design", directory, agent: "solo", title: "gate design" })
+      if (url === "https://openrouter.ai/api/alpha/decisions")
+        return Response.json({ model: "typesafe/jev-1.13", answers: { verdict: { type: "choice", choice: "allow", confidence: 0.99, probabilities: { allow: 0.99, deny: 0.01 } } } })
+      throw new Error(`Unexpected fetch: ${url}`)
+    }) as typeof fetch
+    const hooks = await (CommandApproval as any)({
+      directory,
+      serverUrl: new URL("http://gate.test"),
+      reviewPermission: async () => ({ model: "google/gemini-3.8-flash", choice: "allow", reason: "read-only search" }),
+    })
+    await hooks.provider.models({ models: {} }, { auth: { type: "api", key: "fake-test-key" } })
+    const output: { status: string } = { status: "ask" }
+    await hooks["permission.ask"](
+      {
+        permission: "grep",
+        sessionID: "ses_gate_design",
+        patterns: [(await import("node:os")).homedir()],
+        metadata: { pattern: (await import("node:os")).homedir(), path: file, requested_path: file, core_trusted_builtin: true, core_execution_agent: "solo" },
+      },
+      output,
+    )
+    expect(output.status).toBe("allow")
+  }))
