@@ -1544,7 +1544,32 @@ function grafanaHelperEvidence(args: string[]) {
   return `grafana-query: verified local helper; it reads the Grafana instance token itself, sends it only to ${host ?? "the named host"} over HTTPS without following redirects, and never prints it. It allows only GET or a datasource-query POST, so this ${method ?? ""} ${apiPath ?? ""} request is a read-only Grafana query and involves no credential handling by the agent`
 }
 
+// /data/rguliyev/opencode/scripts/nomad-tailscale-addr.sh lists the
+// environment's orch-server VM and prints only `export NOMAD_ADDR="http://[addr]:port"`
+// (or the bare address with --addr-only); eval of that output sets one
+// variable. Trusted only while the installed file matches this hash.
+const nomadAddrHelperSha256 = "735e3607bf3ba7ce6567447157d0462345b7d4e36ce440a99caad45f84a8d3fa"
+const nomadAddrHelperPath = path.join(opencodeScripts, "nomad-tailscale-addr.sh")
+
+function nomadAddrEvidence(command: string) {
+  const match = command.match(
+    /^\s*(?:eval\s+)?"?\$\(\s*(\S*nomad-tailscale-addr\.sh)\s+(staging|foxtrot|juliett|tango)(?:\s+--(?:port|name-filter)[= ]\S+)*\s*\)"?\s*$|^\s*(\S*nomad-tailscale-addr\.sh)\s+(staging|foxtrot|juliett|tango)(?:\s+--(?:addr-only|port[= ]\S+|name-filter[= ]\S+))*\s*$/,
+  )
+  if (!match) return undefined
+  const helper = match[1] ?? match[3]
+  try {
+    if (!invokesHelper(helper, "nomad-tailscale-addr.sh", nomadAddrHelperPath)) return undefined
+    if (createHash("sha256").update(readFileSync(nomadAddrHelperPath)).digest("hex") !== nomadAddrHelperSha256)
+      return "nomad-tailscale-addr.sh: the installed helper does not match the gate's pinned version; treat it as unknown code"
+  } catch {
+    return undefined
+  }
+  return `nomad-tailscale-addr.sh: verified local helper; it runs a read-only gcloud compute instances list in ${match[2] ?? match[4]}'s project and prints only export NOMAD_ADDR="http://[addr]:port" (or the bare address); eval of its output only sets NOMAD_ADDR`
+}
+
 function ghApiEvidence(command: string) {
+  const nomad = nomadAddrEvidence(command)
+  if (nomad) return nomad
   const parts = commandParts(command)
   if (invokesHelper(parts.verb, "grafana-query", grafanaHelperPath())) return grafanaHelperEvidence(parts.args)
   if (invokesHelper(parts.verb, "incidentio-query", incidentioHelperPath())) return incidentioHelperEvidence(parts.args)
@@ -3515,6 +3540,20 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
     ) {
       output.message = undefined
       await settle("allow", "builtin_question", ["question tool only asks the human"])
+      return
+    }
+    // Core's invalid tool stands in for a call to a tool that does not exist;
+    // it runs nothing and only returns that error to the model.
+    if (
+      input.permission === "tool_call" &&
+      Array.isArray(input.patterns) &&
+      input.patterns.length === 1 &&
+      input.patterns[0] === "invalid" &&
+      (input.metadata?.tool === "invalid" || call?.tool === "invalid") &&
+      (input.metadata?.trusted_builtin === true || input.metadata?.core_trusted_builtin === true)
+    ) {
+      output.message = undefined
+      await settle("allow", "builtin_invalid", ["invalid tool only returns an unknown-tool error to the model"])
       return
     }
     const reviewer = readOnlyAgents.has(agent)

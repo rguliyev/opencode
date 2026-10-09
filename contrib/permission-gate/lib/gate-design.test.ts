@@ -362,3 +362,35 @@ test("a script run after a separate cd is inspected in that directory", () =>
       rmSync(dir, { recursive: true, force: true })
     }
   }))
+
+test("core's invalid tool is allowed without review; nomad-tailscale-addr eval carries helper evidence", () =>
+  withEnv(async () => {
+    const directory = path.resolve(import.meta.dir, "..")
+    let state: Record<string, unknown> | undefined
+    let reviewed = 0
+    globalThis.fetch = (async (input: unknown, init?: RequestInit) => {
+      const url = String(input)
+      if (url.includes("/session/ses_gate_design/message?"))
+        return Response.json([message("msg_gate_design", "user", "List the tango Nomad jobs.")])
+      if (url.startsWith("http://gate.test/session/"))
+        return Response.json({ id: "ses_gate_design", directory, agent: "solo", title: "gate design" })
+      reviewed += 1
+      if (url === "https://openrouter.ai/api/alpha/decisions") state = JSON.parse(String(init?.body)).state
+      return new Response("declined", { status: 403 })
+    }) as typeof fetch
+    const hooks = await (CommandApproval as any)({ directory, serverUrl: new URL("http://gate.test") })
+    await hooks.provider.models({ models: {} }, { auth: { type: "api", key: "fake-test-key" } })
+    const invalid: { status: string } = { status: "ask" }
+    await hooks["permission.ask"](
+      { permission: "tool_call", sessionID: "ses_gate_design", patterns: ["invalid"], metadata: { tool: "invalid", trusted_builtin: true, core_execution_agent: "solo" } },
+      invalid,
+    )
+    expect(invalid.status).toBe("allow")
+    expect(reviewed).toBe(0)
+    const command = 'eval "$(/data/rguliyev/opencode/scripts/nomad-tailscale-addr.sh tango)"'
+    await hooks["permission.ask"](
+      { permission: "bash", sessionID: "ses_gate_design", patterns: [command], metadata: { command, core_execution_agent: "solo" } },
+      { status: "ask" },
+    )
+    expect(JSON.stringify(state)).toContain("nomad-tailscale-addr.sh: verified local helper")
+  }))
