@@ -150,6 +150,11 @@ function attemptsScopeSwitch(command: string) {
 // Changing which identity or gcloud configuration acts: credential material.
 function switchesCredentials(command: string) {
   command = command.replace(sharedGcloudConfig, "")
+  // `echo "CLOUDSDK_CONFIG=$CLOUDSDK_CONFIG"` prints the setting; it selects
+  // nothing. Only echo/printf text without command substitution is dropped.
+  command = command.replace(/(?:^|(?<=[;&|(]))\s*(?:echo|printf)\b[^\n;&|]*/g, (segment) =>
+    /\$\(|`/.test(segment) ? segment : "",
+  )
   return (
     /\bCLOUDSDK_(?:ACTIVE_CONFIG_NAME|CONFIG|AUTH_CREDENTIAL_FILE_OVERRIDE)\s*=/.test(command) ||
     (/\bgcloud\b/.test(command) && /--(?:configuration|account|impersonate-service-account)(?:=|\s+)/.test(command)) ||

@@ -47,3 +47,12 @@ test("only well-formed unlisted project IDs are a hard gate; other captures are 
   expect(gcpScopeFinding("gcloud compute instances list --account=x@example.test")?.kind).toBe("credential_switch")
   expect(gcpScopeFinding("gcloud compute instances list --project=e2b-staging")).toBeUndefined()
 })
+
+test("printing the gcloud config variable selects no credentials; setting it or printing a substitution does", async () => {
+  const { gcpScopeFinding } = await import("./gcp-scope")
+  expect(gcpScopeFinding('echo "CLOUDSDK_CONFIG=$CLOUDSDK_CONFIG"')).toBeUndefined()
+  expect(gcpScopeFinding('mkdir -p /data/rguliyev/tmp/opencode/x && echo "CLOUDSDK_CONFIG=$CLOUDSDK_CONFIG"')).toBeUndefined()
+  expect(gcpScopeFinding("printf 'CLOUDSDK_CONFIG=%s\\n' \"$CLOUDSDK_CONFIG\"")).toBeUndefined()
+  expect(gcpScopeFinding("echo ok; CLOUDSDK_CONFIG=/tmp/other gcloud projects list")?.kind).toBe("credential_switch")
+  expect(gcpScopeFinding('echo "$(CLOUDSDK_CONFIG=/tmp/other gcloud auth print-access-token)"')?.kind).toBe("credential_switch")
+})
