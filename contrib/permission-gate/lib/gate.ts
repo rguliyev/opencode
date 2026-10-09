@@ -4580,8 +4580,14 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
           }
           const scopes = [awsScopeReviewMessage(hardChecked, sessions)]
           const gcpScopes = [gcpScopeFindingInLoop(hardChecked, fullCommand, sessions)]
+          // `script --help` (or -h) only asks for usage; whether the script reaches
+          // its secret reads before printing it is the reviewers' call with the
+          // script in front of them, not a hard gate.
+          const helpOnly = /^\s*(?:\S+=\S*\s+)*(?:env\s+(?:\S+=\S*\s+)*)?(?:\S*python3?\s+(?:-B\s+)?|bash\s+|sh\s+)?\S+\s+(?:--help|-h)\s*$/.test(command)
           for (const script of inspection.scripts) {
-            if (requiresHuman(script.content)) hard.push("script credential or secret access")
+            if (requiresHuman(script.content) && helpOnly)
+              evidence.push({ finding: "script_secret_access_help", detail: "the script can read secrets, but this run only passes --help/-h; judge whether it prints usage before any secret read" })
+            else if (requiresHuman(script.content)) hard.push("script credential or secret access")
             else if (usesAmbientCredentials(script.content))
               evidence.push({ finding: "ambient_credentials", detail: "inspected script uses ambient credentials without printing them" })
             const operations = scriptHumanOperations(script.content)

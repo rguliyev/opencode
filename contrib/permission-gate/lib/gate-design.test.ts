@@ -514,3 +514,21 @@ test("a large edit confined to worktree or scratch paths is reviewed from a summ
     expect(elsewhere.status).toBe("ask")
     expect(elsewhere.message).toContain("Action context is missing or too large for automatic review")
   }))
+
+test("--help of a script that can read secrets is the reviewers' call; a real run stays hard", () =>
+  withEnv(async () => {
+    const { mkdtempSync, writeFileSync, rmSync } = await import("node:fs")
+    const dir = mkdtempSync(path.join((await import("node:os")).tmpdir(), "gate-help-"))
+    try {
+      const script = path.join(dir, "triage.py")
+      writeFileSync(
+        script,
+        'import argparse, subprocess\ndef token():\n    return subprocess.run(["gcloud", "secrets", "versions", "access", "latest", "--project=e2b-foxtrot", "--secret=api-admin-token"]).stdout\ndef main():\n    p = argparse.ArgumentParser()\n    p.parse_args()\n    token()\nif __name__ == "__main__":\n    main()\n',
+      )
+      const g = await gate("solo", "Validate the triage script for the PR.", () => 0.01)
+      expect(await g.bash(`python3 -B ${script} --help`)).toBe("allow")
+      expect(await g.bash(`python3 -B ${script} --hosts a b`)).toBe("ask")
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }))
