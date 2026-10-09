@@ -1670,8 +1670,9 @@ function versionManagerDispatcher(file: string) {
 function precedingDirectory(fullCommand: unknown, command: string, cwd: string) {
   if (typeof fullCommand !== "string") return cwd
   let base = cwd
-  for (const segment of splitSegments(fullCommand)) {
-    if (segment.trim() === command.trim()) return base
+  // `cd /x && \<newline>bash s.sh`: line continuations are not part of a segment.
+  for (const segment of splitSegments(fullCommand.replace(/\\\r?\n/g, " "))) {
+    if (segment.trim() === command.replace(/\\\r?\n/g, " ").trim()) return base
     const target = segment.match(/^\s*cd\s+(["']?)([^\s"'$`;&|]+)\1\s*$/)?.[2]
     if (target) base = path.resolve(base, target.replace(/^~(?=\/)/, process.env.HOME ?? "~"))
   }

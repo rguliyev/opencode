@@ -358,6 +358,8 @@ test("a script run after a separate cd is inspected in that directory", () =>
       const g = await gate("solo", "Validate the stage 3 worktree.", () => 0.01)
       const output = await g.bash(`cd ${dir} && bash scripts/verify.sh`, [`cd ${dir}`, "bash scripts/verify.sh"])
       expect(output).toBe("allow")
+      // The same call written with line continuations.
+      expect(await g.bash(`cd ${dir} && \\\nbash scripts/verify.sh`, [`cd ${dir}`, "bash scripts/verify.sh"])).toBe("allow")
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
