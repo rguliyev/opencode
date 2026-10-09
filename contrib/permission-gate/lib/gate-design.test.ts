@@ -41,13 +41,13 @@ async function gate(agent: string, human: string, jevMutation: (command: string 
   })
   const ask = hooks["permission.ask"]
   await hooks.provider.models({ models: {} }, { auth: { type: "api", key: "fake-test-key" } })
-  const bash = async (command: string) => {
+  const bash = async (command: string, patterns = [command]) => {
     const output: { status: string; message?: string } = { status: "ask" }
     await ask(
       {
         permission: "bash",
         sessionID: "ses_gate_design",
-        patterns: [command],
+        patterns,
         metadata: { command, purpose: "Carry out the human's request", core_execution_agent: agent },
       },
       output,
@@ -345,5 +345,20 @@ test("re-reading this OpenCode's own tool output is allowed without review", () 
       if (previous === undefined) delete process.env.OPENCODE_HOME
       else process.env.OPENCODE_HOME = previous
       rmSync(home, { recursive: true, force: true })
+    }
+  }))
+
+test("a script run after a separate cd is inspected in that directory", () =>
+  withEnv(async () => {
+    const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import("node:fs")
+    const dir = mkdtempSync(path.join((await import("node:os")).tmpdir(), "gate-cd-"))
+    try {
+      mkdirSync(path.join(dir, "scripts"))
+      writeFileSync(path.join(dir, "scripts/verify.sh"), '#!/usr/bin/env bash\necho "verified"\n')
+      const g = await gate("solo", "Validate the stage 3 worktree.", () => 0.01)
+      const output = await g.bash(`cd ${dir} && bash scripts/verify.sh`, [`cd ${dir}`, "bash scripts/verify.sh"])
+      expect(output).toBe("allow")
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
     }
   }))
