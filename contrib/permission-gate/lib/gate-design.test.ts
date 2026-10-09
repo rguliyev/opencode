@@ -396,3 +396,39 @@ test("core's invalid tool is allowed without review; nomad-tailscale-addr eval c
     )
     expect(JSON.stringify(state)).toContain("nomad-tailscale-addr.sh: verified local helper")
   }))
+
+test("a folder grant for a shell command is judged by what the command touches", () =>
+  withEnv(async () => {
+    const directory = path.resolve(import.meta.dir, "..")
+    const home = (await import("node:os")).homedir()
+    globalThis.fetch = (async (input: unknown) => {
+      const url = String(input)
+      if (url.includes("/session/ses_gate_design/message?"))
+        return Response.json([message("msg_gate_design", "user", "Check the opencode scripts repo status.")])
+      if (url.startsWith("http://gate.test/session/"))
+        return Response.json({ id: "ses_gate_design", directory, agent: "solo", title: "gate design" })
+      if (url === "https://openrouter.ai/api/alpha/decisions") {
+        const answers: Record<string, unknown> = { verdict: { type: "choice", choice: "allow", confidence: 0.99, probabilities: { allow: 0.99, deny: 0.01 } } }
+        return Response.json({ model: "typesafe/jev-1.13", answers })
+      }
+      throw new Error(`Unexpected fetch: ${url}`)
+    }) as typeof fetch
+    const hooks = await (CommandApproval as any)({
+      directory,
+      serverUrl: new URL("http://gate.test"),
+      reviewPermission: async () => ({ model: "google/gemini-3.8-flash", choice: "allow", reason: "read-only" }),
+    })
+    await hooks.provider.models({ models: {} }, { auth: { type: "api", key: "fake-test-key" } })
+    const grant = async (command: string, callID: string) => {
+      await hooks["tool.execute.before"]({ tool: "bash", sessionID: "ses_gate_design", callID }, { args: { command } })
+      const output: { status: string; message?: string } = { status: "ask" }
+      await hooks["permission.ask"](
+        { permission: "external_directory", sessionID: "ses_gate_design", patterns: [`${home}/.local/share/*`], metadata: { core_trusted_builtin: true, core_execution_agent: "solo" }, tool: { callID } },
+        output,
+      )
+      if (process.env.GATE_DESIGN_DEBUG) console.log(command, output.status, output.message)
+      return output.status
+    }
+    expect(await grant(`git -C ${home}/.local/share/helm status --short`, "call_grant_git")).toBe("allow")
+    expect(await grant(`cat ${home}/.ssh/id_ed25519`, "call_grant_key")).toBe("ask")
+  }))

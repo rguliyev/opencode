@@ -3861,10 +3861,22 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
         .map((value) => path.resolve(actionWorkdir, value)),
       ...(skillLocation ? [skillLocation] : []),
     ]
+    // A directory grant requested for a shell command is judged by what that
+    // command names: `git status` in a folder that also holds auth.json does
+    // not touch auth.json. A grant for a search tool still covers everything
+    // the search could read, so containing a store counts there.
+    const shellCommand =
+      input.permission === "external_directory" && call?.tool === "bash" && isRecord(call.args) && typeof call.args.command === "string"
+        ? call.args.command
+        : undefined
     if (
       fileTargetPaths.some((file) =>
-        credentialStorePath(file, ["grep", "glob", "external_directory", "list"].includes(input.permission)),
-      )
+        credentialStorePath(
+          file,
+          ["grep", "glob", "list"].includes(input.permission) || (input.permission === "external_directory" && shellCommand === undefined),
+        ),
+      ) ||
+      (shellCommand !== undefined && credentialStoreReference(shellCommand))
     )
       reasons.push("credential store: ~/.ssh, cloud or OpenCode credentials, or a .env file")
     const continuation = await taskContinuation(input, call?.args)
