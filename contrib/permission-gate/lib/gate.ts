@@ -944,7 +944,48 @@ function deleteBase(raw: string, fullCommand: unknown, workdir: string | undefin
 // of a relative path or a variable that is never set to an absolute or home
 // path removes the script's own generated output there; it becomes reviewer
 // evidence instead of a hard gate.
+// A comment is prose: an apostrophe in "prune's desired set" is not an open
+// quote that joins the rest of the script into one segment.
+function withoutShellComments(content: string) {
+  let out = ""
+  let quote = ""
+  let escaped = false
+  let comment = false
+  for (const character of content) {
+    if (comment) {
+      if (character === "\n") {
+        comment = false
+        out += character
+      }
+      continue
+    }
+    if (escaped) {
+      escaped = false
+      out += character
+      continue
+    }
+    if (character === "\\" && quote !== "'") {
+      escaped = true
+      out += character
+      continue
+    }
+    if (quote) {
+      if (character === quote) quote = ""
+      out += character
+      continue
+    }
+    if (character === "#" && (!out || /\s/.test(out.at(-1)!))) {
+      comment = true
+      continue
+    }
+    if (character === "'" || character === '"') quote = character
+    out += character
+  }
+  return out
+}
+
 function scriptHumanOperations(content: string, inWorktree = false, assignments = content) {
+  content = withoutShellComments(content)
   const ownTemp = new Set(
     [...content.matchAll(/(?:^|[\s;&(])([A-Za-z_][A-Za-z0-9_]*)=["']?\$\(mktemp\s+-d\b[^)\n]*\)["']?/g)]
       .map((match) => match[1])

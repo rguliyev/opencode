@@ -614,6 +614,9 @@ test("a worktree script deleting its own relative output dir is reviewer evidenc
       }
       writeFileSync(path.join(root, "scripts/env.sh"), 'MANIFEST_DIR="generated/${ENV}/manifests"\n')
       expect((await run()).status).toBe("allow")
+      // An apostrophe in a comment is not an open quote.
+      writeFileSync(path.join(root, "scripts/generate.sh"), '#!/usr/bin/env bash\nsource scripts/env.sh\n# a stale file stays in prune\'s desired set\n# and gets pushed again on every deploy.\nrm -rf "$MANIFEST_DIR"\ngo run . \\\n  -out "$MANIFEST_DIR"\n')
+      expect((await run()).status).toBe("allow")
       writeFileSync(path.join(root, "scripts/env.sh"), 'MANIFEST_DIR="/"\n')
       expect((await run()).status).toBe("ask")
     } finally {
