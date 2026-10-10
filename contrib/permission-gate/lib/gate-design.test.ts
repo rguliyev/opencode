@@ -575,3 +575,48 @@ test("a glob naming one ordinary file across the home directory is not a credent
     expect(await glob("**/id_ed25519")).toBe("ask")
     expect(await glob("**/environments/*.env")).toBe("ask")
   }))
+
+test("a worktree script deleting its own relative output dir is reviewer evidence; an absolute one stays hard", () =>
+  withEnv(async () => {
+    const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import("node:fs")
+    const root = mkdtempSync("/data/rguliyev/tmp/opencode/worktrees/gate-test-")
+    try {
+      mkdirSync(path.join(root, "scripts"))
+      writeFileSync(path.join(root, "scripts/generate.sh"), '#!/usr/bin/env bash\nset -euo pipefail\nsource scripts/env.sh\nrm -rf "$MANIFEST_DIR"\nmkdir -p "$MANIFEST_DIR"\n')
+      const directory = path.resolve(import.meta.dir, "..")
+      globalThis.fetch = (async (input: unknown) => {
+        const url = String(input)
+        if (url.includes("/session/ses_gate_design/message?"))
+          return Response.json([message("msg_gate_design", "user", "Regenerate the foxtrot dashboards.")])
+        if (url.startsWith("http://gate.test/session/"))
+          return Response.json({ id: "ses_gate_design", directory, agent: "solo", title: "gate design" })
+        if (url === "https://openrouter.ai/api/alpha/decisions")
+          return Response.json({ model: "typesafe/jev-1.13", answers: { verdict: { type: "choice", choice: "allow", confidence: 0.99, probabilities: { allow: 0.99, deny: 0.01 } } } })
+        throw new Error(`Unexpected fetch: ${url}`)
+      }) as typeof fetch
+      const hooks = await (CommandApproval as any)({
+        directory,
+        serverUrl: new URL("http://gate.test"),
+        reviewPermission: async () => ({ model: "google/gemini-3.8-flash", choice: "allow", reason: "local generator" }),
+      })
+      await hooks.provider.models({ models: {} }, { auth: { type: "api", key: "fake-test-key" } })
+      let n = 0
+      const run = async () => {
+        const callID = `call_gen_${n++}`
+        const command = "ENV=foxtrot ./scripts/generate.sh"
+        await hooks["tool.execute.before"]({ tool: "bash", sessionID: "ses_gate_design", callID }, { args: { command, workdir: root } })
+        const output: { status: string; message?: string } = { status: "ask" }
+        await hooks["permission.ask"](
+          { permission: "bash", sessionID: "ses_gate_design", patterns: [command], metadata: { command, purpose: "regenerate", core_execution_agent: "solo" }, tool: { callID } },
+          output,
+        )
+        return output
+      }
+      writeFileSync(path.join(root, "scripts/env.sh"), 'MANIFEST_DIR="generated/${ENV}/manifests"\n')
+      expect((await run()).status).toBe("allow")
+      writeFileSync(path.join(root, "scripts/env.sh"), 'MANIFEST_DIR="/"\n')
+      expect((await run()).status).toBe("ask")
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  }))

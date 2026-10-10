@@ -940,7 +940,11 @@ function deleteBase(raw: string, fullCommand: unknown, workdir: string | undefin
 // any other human-only line keeps the script hard. `tmp=$(mktemp -d ...)`
 // ... `trap 'rm -rf "$tmp"' EXIT` removes only the directory this script just
 // created, when that variable is assigned once, by mktemp.
-function scriptHumanOperations(content: string) {
+// inWorktree: the script lives in a dedicated worktree, so a recursive delete
+// of a relative path or a variable that is never set to an absolute or home
+// path removes the script's own generated output there; it becomes reviewer
+// evidence instead of a hard gate.
+function scriptHumanOperations(content: string, inWorktree = false, assignments = content) {
   const ownTemp = new Set(
     [...content.matchAll(/(?:^|[\s;&(])([A-Za-z_][A-Za-z0-9_]*)=["']?\$\(mktemp\s+-d\b[^)\n]*\)["']?/g)]
       .map((match) => match[1])
@@ -953,10 +957,32 @@ function scriptHumanOperations(content: string) {
     : content
   const deletes: { path: string; class: string }[] = []
   let hard = false
+  // The variable must be assigned somewhere the gate read, and every
+  // assignment must be a relative path.
+  const relativeVariable = (name: string) => {
+    const values = [
+      ...assignments.matchAll(new RegExp(`(?:^|[\\s;&(])(?:export\\s+|local\\s+|readonly\\s+)?${name}=(["']?)([^\\s;&|]*)\\1`, "g")),
+    ].map((match) => match[2])
+    return values.length > 0 && values.every((value) => !/^(?:\/|~|\$HOME|\$\{HOME)/.test(value) && !value.split("/").includes(".."))
+  }
   for (const segment of splitSegments(checked)) {
     if (!segmentRequiresHumanOperation(segment)) continue
     const local = localDeleteTargets(segment, undefined, undefined)
-    if (local) deletes.push(...local)
+    if (local) {
+      deletes.push(...local)
+      continue
+    }
+    const rm = segment.match(/^\s*rm\s+-(?:rf|fr|r)\s+(.+?)\s*$/)
+    const targets = rm ? rm[1].split(/\s+/).map((target) => target.replace(/^(["'])(.*)\1$/, "$2")) : []
+    const scriptOwned =
+      inWorktree &&
+      targets.length > 0 &&
+      targets.every((target) => {
+        const variable = target.match(/^\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?(?:\/[A-Za-z0-9._/-]*)?$/)
+        if (variable) return variable[1] !== "HOME" && relativeVariable(variable[1])
+        return /^[A-Za-z0-9._][A-Za-z0-9._/-]*$/.test(target) && !target.split("/").includes("..")
+      })
+    if (scriptOwned) deletes.push(...targets.map((target) => ({ path: target, class: "worktree script output" })))
     else hard = true
   }
   return { hard, deletes }
@@ -1924,7 +1950,16 @@ async function inspectScripts(command: string, cwd: string, fullCommand?: unknow
       // source targets are split out.
       const sourcing = content.replace(new RegExp(scriptDirIdiom, "g"), path.dirname(scriptReal))
       for (const sourced of shellSources(item.shown, sourcing)) {
-        const target = ownDir(sourced.replace(/^(["'])(.*)\1$/, "$2"))
+        const literal = ownDir(sourced.replace(/^(["'])(.*)\1$/, "$2"))
+        // A worktree script's `source scripts/env.sh` is relative to the
+        // command's working directory; resolve a plain relative path there.
+        const target =
+          !path.isAbsolute(literal) &&
+          scriptReal.startsWith(worktreeRoot()) &&
+          /^[A-Za-z0-9._][A-Za-z0-9._/-]*$/.test(literal) &&
+          !literal.split("/").includes("..")
+            ? path.resolve(root, literal)
+            : literal
         const dynamic =
           !path.isAbsolute(target) || /[$`*?[\]{}~"']/.test(target) || path.normalize(target) !== target
         if (dynamic && scriptReal.startsWith(worktreeRoot())) {
@@ -4610,7 +4645,11 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
             else if (requiresHuman(script.content)) hard.push("script credential or secret access")
             else if (usesAmbientCredentials(script.content))
               evidence.push({ finding: "ambient_credentials", detail: "inspected script uses ambient credentials without printing them" })
-            const operations = scriptHumanOperations(script.content)
+            const operations = scriptHumanOperations(
+              script.content,
+              path.resolve(workdir, script.path).startsWith(worktreesRoot + path.sep),
+              inspection.scripts.map((item) => item.content).join("\n"),
+            )
             if (operations.hard) hard.push("script human-only operation")
             deletes.push(...operations.deletes)
             scopes.push(awsScopeReviewMessage(script.content, sessions))
