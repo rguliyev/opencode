@@ -655,3 +655,45 @@ test("a read-only agent may save its report to scratch but not edit a worktree",
     expect(await edit("/data/rguliyev/tmp/opencode/secret-audit-test/gaps.md")).toBe("allow")
     expect(await edit("/data/rguliyev/tmp/opencode/worktrees/argocd/x/README.md")).toBe("ask")
   }))
+
+test("a grep is judged by the lines it returns: a token elsewhere in the file does not stop it", () =>
+  withEnv(async () => {
+    const directory = path.resolve(import.meta.dir, "..")
+    const { mkdtempSync, writeFileSync } = await import("node:fs")
+    const dir = mkdtempSync(path.join((await import("node:os")).tmpdir(), "gate-grep-"))
+    const file = path.join(dir, "test_prepare_evidence.py")
+    writeFileSync(file, `FIXTURE_TOKEN = "${"ghp_" + "Q".repeat(36)}"\n\ndef parse_row_timestamp(row):\n    return row\n`)
+    globalThis.fetch = (async (input: unknown) => {
+      const url = String(input)
+      if (url.includes("/session/ses_gate_design/message?"))
+        return Response.json([message("msg_gate_design", "user", "Fix the review findings in the triage tests.")])
+      if (url.startsWith("http://gate.test/session/"))
+        return Response.json({ id: "ses_gate_design", directory, agent: "solo", title: "gate design" })
+      if (url === "https://openrouter.ai/api/alpha/decisions")
+        return Response.json({ model: "typesafe/jev-1.13", answers: { verdict: { type: "choice", choice: "allow", confidence: 0.99, probabilities: { allow: 0.99, deny: 0.01 } } } })
+      throw new Error(`Unexpected fetch: ${url}`)
+    }) as typeof fetch
+    const hooks = await (CommandApproval as any)({
+      directory,
+      serverUrl: new URL("http://gate.test"),
+      reviewPermission: async () => ({ model: "google/gemini-3.8-flash", choice: "allow", reason: "read-only search" }),
+    })
+    await hooks.provider.models({ models: {} }, { auth: { type: "api", key: "fake-test-key" } })
+    const grep = async (pattern: string) => {
+      const output: { status: string } = { status: "ask" }
+      await hooks["permission.ask"](
+        {
+          permission: "grep",
+          sessionID: "ses_gate_design",
+          patterns: [pattern],
+          metadata: { pattern, path: file, requested_path: file, core_trusted_builtin: true, core_execution_agent: "solo" },
+        },
+        output,
+      )
+      return output.status
+    }
+    expect(await grep("parse_row_timestamp")).toBe("allow")
+    expect(await grep("fixture_token")).toBe("ask")
+    expect(await grep(".")).toBe("ask")
+    expect(await grep("(?i)parse")).toBe("ask")
+  }))

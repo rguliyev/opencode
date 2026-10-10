@@ -2196,7 +2196,27 @@ const maxHumanHistoryBytes = 96_000
 // that a file holds a secret. Only high-precision literal detectors decide
 // "found"; the broad assignment pattern also matches references such as
 // `token = var.grafana_token`, so it is reported separately and not ruled on.
-async function localReadEvidence(target: unknown, workdir: string): Promise<LocalReadEvidence> {
+// A grep returns only the lines its expression matches, so a credential on
+// another line of the file is never shown. The expression is compiled
+// case-insensitively (a superset of ripgrep's default); one JavaScript
+// cannot compile falls back to scanning the whole file.
+function grepVisibleText(text: string, expression: unknown) {
+  if (typeof expression !== "string" || expression.length === 0) return text
+  const matcher = (() => {
+    try {
+      return new RegExp(expression, "i")
+    } catch {
+      return undefined
+    }
+  })()
+  if (!matcher) return text
+  return text
+    .split("\n")
+    .filter((line) => matcher.test(line))
+    .join("\n")
+}
+
+async function localReadEvidence(target: unknown, workdir: string, grepExpression?: unknown): Promise<LocalReadEvidence> {
   if (typeof target !== "string" || !path.isAbsolute(target))
     return { literal_scan: "not_scanned", not_scanned_reason: "no_local_target", target_facts: [] }
   const real = await realpath(target).catch(() => undefined)
@@ -2212,7 +2232,7 @@ async function localReadEvidence(target: unknown, workdir: string): Promise<Loca
   const content = await readFile(real).catch(() => undefined)
   if (!content) return { literal_scan: "not_scanned", not_scanned_reason: "unreadable", target_facts: facts }
   if (content.includes(0)) return { literal_scan: "not_scanned", not_scanned_reason: "binary", target_facts: facts }
-  const text = withoutSecretResourceNames(content.toString("utf8"))
+  const text = withoutSecretResourceNames(grepVisibleText(content.toString("utf8"), grepExpression))
   const redaction = sanitizeReviewText(text)
   const literal =
     !redaction.complete ||
@@ -3752,6 +3772,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
             : await existingTarget(patterns[0], workdir)
           : metadata.requested_path,
         workdir,
+        input.permission === "grep" ? metadata.pattern : undefined,
       )
       // Re-reading this OpenCode's own truncated tool output (already
       // permission-checked when produced) needs no review, as core allows it.
