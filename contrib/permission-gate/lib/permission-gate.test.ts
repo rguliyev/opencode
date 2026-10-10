@@ -647,7 +647,11 @@ test("Jev classifies non-Bash actions with redacted context", async () => {
       skillOutput,
     )
     expect(skillOutput).toEqual({ status: "allow", message: undefined })
-    expect(order).toEqual(["kev", "jev", "final_review"])
+    // Kev is a fire-and-forget advisory call; it may land before or after the
+    // reviewers, so only the reviewer order is fixed.
+    expect(order.filter((step) => step !== "kev")).toEqual(["jev", "final_review"])
+    for (let i = 0; i < 50 && !order.includes("kev"); i++) await Bun.sleep(10)
+    expect(order).toContain("kev")
     const skillMetadata = reviewActionMetadata(seen.at(-1))
     expect(skillMetadata?.content).toBeUndefined()
     expect(skillMetadata?.content_sha256).toBe(createHash("sha256").update(skillContent).digest("hex"))
