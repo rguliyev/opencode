@@ -620,3 +620,38 @@ test("a worktree script deleting its own relative output dir is reviewer evidenc
       rmSync(root, { recursive: true, force: true })
     }
   }))
+
+test("a read-only agent may save its report to scratch but not edit a worktree", () =>
+  withEnv(async () => {
+    const directory = path.resolve(import.meta.dir, "..")
+    globalThis.fetch = (async (input: unknown, init?: RequestInit) => {
+      const url = String(input)
+      if (url.includes("/session/ses_gate_design/message?"))
+        return Response.json([message("msg_gate_design", "user", "Audit staging vs tango secrets and write up the gaps.")])
+      if (url.startsWith("http://gate.test/session/"))
+        return Response.json({ id: "ses_gate_design", directory, agent: "observer", title: "gate design" })
+      if (url === "https://openrouter.ai/api/alpha/decisions") {
+        const payload = JSON.parse(String(init?.body))
+        const answers: Record<string, unknown> = { verdict: { type: "choice", choice: "allow", confidence: 0.99, probabilities: { allow: 0.99, deny: 0.01 } } }
+        for (const id of Object.keys(payload.questions)) if (id !== "verdict") answers[id] = { type: "noul", noul: id === "reviewer_mutation" ? 0.95 : 0.01 }
+        return Response.json({ model: "typesafe/jev-1.13", answers })
+      }
+      throw new Error(`Unexpected fetch: ${url}`)
+    }) as typeof fetch
+    const hooks = await (CommandApproval as any)({
+      directory,
+      serverUrl: new URL("http://gate.test"),
+      reviewPermission: async () => ({ model: "google/gemini-3.8-flash", choice: "allow", reason: "report output" }),
+    })
+    await hooks.provider.models({ models: {} }, { auth: { type: "api", key: "fake-test-key" } })
+    const edit = async (file: string) => {
+      const output: { status: string } = { status: "ask" }
+      await hooks["permission.ask"](
+        { permission: "edit", sessionID: "ses_gate_design", patterns: [file], metadata: { filepath: file, diff: "+# Gaps\n+- none\n", core_execution_agent: "observer" } },
+        output,
+      )
+      return output.status
+    }
+    expect(await edit("/data/rguliyev/tmp/opencode/secret-audit-test/gaps.md")).toBe("allow")
+    expect(await edit("/data/rguliyev/tmp/opencode/worktrees/argocd/x/README.md")).toBe("ask")
+  }))

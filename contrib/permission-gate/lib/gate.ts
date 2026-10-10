@@ -3875,7 +3875,20 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
     // A role-policy violation needs a human decision, not a silent denial.
     // Keep the reason through final review so neither Jev nor Gemini can
     // auto-approve a read-only agent's mutation.
-    if (roleRestricted) reasons.push("read-only agent requested a non-read-only action")
+    // Saving an inspection report or notes to scratch is how a read-only agent
+    // hands back its findings; it changes no repository, config, or remote.
+    const scratchOnlyEdit = (() => {
+      if (input.permission !== "edit") return false
+      const policy = loadEnvironmentPolicy()
+      if (!policy) return false
+      const files = Array.isArray(metadata.files) ? metadata.files.filter(isRecord) : []
+      const targets = [
+        ...files.flatMap((file) => [file.filePath, file.movePath]),
+        ...(files.length ? [] : [metadata.filepath]),
+      ].filter((value): value is string => typeof value === "string" && path.isAbsolute(value))
+      return targets.length > 0 && targets.every((file) => classifyPath(policy, path.normalize(file)) === "scratch")
+    })()
+    if (roleRestricted && !scratchOnlyEdit) reasons.push("read-only agent requested a non-read-only action")
     if (
       (input.permission === "edit" &&
         [...patterns, metadata.filepath].some((value) => typeof value === "string" && protectedConfigReference(value))) ||
@@ -4062,7 +4075,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
     const finalReviewAllow =
       finalReviewNeeded &&
       reasons.length === 0 &&
-      (!reviewer || inherentlyReadOnly || jevJudgedReadOnly(rawAnswers)) &&
+      (!reviewer || inherentlyReadOnly || scratchOnlyEdit || jevJudgedReadOnly(rawAnswers)) &&
       eligibility.eligible &&
       finalReview.status === "score" &&
       finalReview.choice === "allow"
