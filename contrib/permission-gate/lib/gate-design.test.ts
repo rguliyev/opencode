@@ -700,3 +700,15 @@ test("a grep is judged by the lines it returns: a token elsewhere in the file do
     expect(await grep(".")).toBe("ask")
     expect(await grep("(?i)parse")).toBe("ask")
   }))
+
+test("pointing gcloud at a credential file uses it; reading the file or expanding the variable still stops", () =>
+  withEnv(async () => {
+    const g = await gate("solo", "Check which instance group created the dev node.", () => 0.01)
+    const adc = "/data/rguliyev/tmp/opencode/gcloud-remote-auth/config/application_default_credentials.json"
+    expect(
+      await g.bash(`GOOGLE_APPLICATION_CREDENTIALS=${adc} gcloud compute instances describe node-1 --zone=us-west1-b --project=e2b-dev-rauf-guliyev --format="value(name)"`),
+    ).toBe("allow")
+    expect(await g.bash(`ls -la ${homedir()}/.config/gcloud/application_default_credentials.json`)).toBe("allow")
+    expect(await g.bash(`cat ${adc}`)).toBe("ask")
+    expect(await g.bash(`GOOGLE_APPLICATION_CREDENTIALS=${adc} sh -c 'cat "$GOOGLE_APPLICATION_CREDENTIALS"'`)).toBe("ask")
+  }))

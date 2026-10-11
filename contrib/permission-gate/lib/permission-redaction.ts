@@ -19,6 +19,11 @@ const reference =
 // from; the path is not the credential.
 const pathSetting = /(?:file|path|dir)["']?\s*(?:=|:)\s*["']?$/i
 const pathValue = /^(?:\/|~\/|\.\.?\/)[A-Za-z0-9._/-]*$/
+// A credential-named setting whose value is a file path
+// (GOOGLE_APPLICATION_CREDENTIALS=/x/adc.json) names where a credential is,
+// not the credential. The directory and file-extension shape keeps a base64
+// value that happens to start with "/" from passing.
+const credentialFilePath = /^(?:\/|~\/|\.\.?\/)(?:[A-Za-z0-9._-]+\/)+[A-Za-z0-9_-][A-Za-z0-9._-]*\.(?:json|pem|key|p12|crt|yaml|yml|toml|ini|cfg|conf|txt)$/
 // A documentation placeholder such as NOMAD_TOKEN=<token> holds no value.
 const placeholder = /^<[A-Za-z][A-Za-z0-9_.-]{0,62}>$/
 
@@ -62,6 +67,7 @@ function sanitizeText(input: string): RedactionResult<string> {
         reference.test(secret) ||
         placeholder.test(secret.trim()) ||
         (pathSetting.test(prefix) && pathValue.test(secret.trim())) ||
+        credentialFilePath.test(secret.trim()) ||
         !shouldRedact(prefix, secret)
       )
         return found

@@ -204,3 +204,9 @@ test("a go-getter module source is not a user:password URL", () => {
   expect(sanitizeReviewText("git::https://deploy:Sup3rS3cret@github.com/org/repo.git").kinds).toContain("PASSWORD")
   expect(sanitizeReviewText("https://user:hunter2pass@example.com/x").kinds).toContain("PASSWORD")
 })
+
+test("a credential-named setting holding a file path is not masked; a slash-led secret still is", () => {
+  const path = "GOOGLE_APPLICATION_CREDENTIALS=/home/u/.config/gcloud/application_default_credentials.json gcloud info"
+  expect(sanitizeReviewText(path).value).toBe(path)
+  expect(sanitizeReviewText("API_TOKEN=/Xq9aB3kLmN0pQ7rS2tUv").value).toContain("[REDACTED:CREDENTIAL]")
+})

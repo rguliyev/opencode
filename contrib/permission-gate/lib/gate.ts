@@ -702,9 +702,25 @@ function flattenArgvLists(command: string) {
   return command.replace(/["']\s*,\s*["']/g, " ")
 }
 
+// Pointing a client at a credential file (GOOGLE_APPLICATION_CREDENTIALS=path
+// gcloud ...) uses it to authenticate without reading it out, like
+// --ssh-key-file. The setting is dropped before the check unless the command
+// also expands the variable, which could hand the file to a reader.
+function withoutCredentialFileSetting(command: string) {
+  if (/\$\{?GOOGLE_APPLICATION_CREDENTIALS\b/.test(command)) return command
+  return command.replace(/(^|[\s;&(])(?:export\s+)?GOOGLE_APPLICATION_CREDENTIALS=(["']?)[^\s"'`$;|&]+\2(?=\s|$)/g, "$1")
+}
+
+// ls and stat print a file's name, size, and mode, never its contents.
+function metadataOnly(command: string) {
+  if (/[|<>`]|\$\(/.test(command)) return false
+  return ["ls", "stat"].includes(executableName(commandParts(command).verb))
+}
+
 function requiresHuman(command: string) {
   if (pythonTextOnly(command)) return false
-  command = flattenArgvLists(command)
+  if (metadataOnly(command)) return false
+  command = withoutCredentialFileSetting(flattenArgvLists(command))
   return (
     /secretmanager\.googleapis\.com\/[^\s'"]*:access\b|google\.cloud\.secretmanager|\bgcloud\b[^\n;|&]*\bsecrets\s+versions\s+access\b|\bgcloud\b[^\n;|&]*\bauth\s+(?:print-access-token|print-identity-token|application-default\s+print-access-token)\b|application_default_credentials\.json|\b(?:credentials|access_tokens)\.db\b|\blegacy_credentials\b|oauth2\.googleapis\.com\/token|accounts\.google\.com\/o\/oauth2\/token/i.test(
       command,
@@ -717,7 +733,7 @@ function requiresHuman(command: string) {
 // header filled from a variable. Reviewers judge where the credential goes.
 function usesAmbientCredentials(command: string) {
   if (pythonTextOnly(command)) return false
-  return /authorization[^\n;|&]*bearer|(?<![.\w\[-])(?:python|python3|node|ruby|perl|bash|sh|zsh)(?![\w-])(?![\"']?\s*:)[^\n]*(?:google\.auth|google\.cloud|googleapis\.com|CLOUDSDK_|GOOGLE_CLOUD_PROJECT|GCLOUD_PROJECT)/i.test(
+  return /\bGOOGLE_APPLICATION_CREDENTIALS=|authorization[^\n;|&]*bearer|(?<![.\w\[-])(?:python|python3|node|ruby|perl|bash|sh|zsh)(?![\w-])(?![\"']?\s*:)[^\n]*(?:google\.auth|google\.cloud|googleapis\.com|CLOUDSDK_|GOOGLE_CLOUD_PROJECT|GCLOUD_PROJECT)/i.test(
     command,
   )
 }
