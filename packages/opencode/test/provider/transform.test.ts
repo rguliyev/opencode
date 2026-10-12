@@ -6,6 +6,7 @@ import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { ModelsDev } from "@opencode-ai/core/models-dev"
 import { generateText, jsonSchema, type ModelMessage } from "ai"
+import type { JSONSchema7 } from "@ai-sdk/provider"
 import { createAmazonBedrock, type AmazonBedrockLanguageModelOptions } from "@ai-sdk/amazon-bedrock"
 import { createAnthropic } from "@ai-sdk/anthropic"
 import { createVertexAnthropic } from "@ai-sdk/google-vertex/anthropic"
@@ -1587,6 +1588,134 @@ describe("ProviderTransform.schema - gemini type arrays", () => {
       id: "gemini-3-pro",
     },
   } as any
+
+  test("normalizes the exact operations value union array branch at index five", () => {
+    const schema: JSONSchema7 = {
+      type: "object",
+      properties: {
+        operations: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              value: { type: ["string", "number", "integer", "boolean", "object", "array", "null"] },
+            },
+          },
+        },
+      },
+    }
+
+    const result = ProviderTransform.schema(geminiModel, schema)
+
+    expect(result).toMatchObject({
+      properties: {
+        operations: {
+          items: {
+            properties: {
+              value: {
+                nullable: true,
+                anyOf: [
+                  { type: "string" },
+                  { type: "number" },
+                  { type: "integer" },
+                  { type: "boolean" },
+                  { type: "object" },
+                  { type: "array", items: { type: "string" } },
+                ],
+              },
+            },
+          },
+        },
+      },
+    })
+  })
+
+  test("retains explicit array items and object properties in their generated branches", () => {
+    const schema: JSONSchema7 = {
+      type: ["array", "object", "string"],
+      items: { type: "number" },
+      properties: { name: { type: "string" } },
+      required: ["name"],
+      description: "mixed value",
+    }
+    const result = ProviderTransform.schema(geminiModel, schema)
+
+    expect(result.anyOf).toEqual([
+      { type: "array", items: { type: "number" } },
+      { type: "object", properties: { name: { type: "string" } }, required: ["name"] },
+      { type: "string" },
+    ])
+    expect(result.description).toBe("mixed value")
+    expect(ProviderTransform.schema(geminiModel, result)).toEqual(result)
+    expect(schema.type).toEqual(["array", "object", "string"])
+  })
+
+  test("retains tuple items and prefixItems intent in generated array branches", () => {
+    const items: JSONSchema7[] = [{ type: "integer" }, { type: "string" }]
+    const schema: JSONSchema7 & { prefixItems: JSONSchema7[] } = {
+      type: ["array", "string"],
+      items,
+      prefixItems: items,
+    }
+    const result = ProviderTransform.schema(geminiModel, schema)
+
+    const arrayBranch: JSONSchema7 & { prefixItems: JSONSchema7[] } = { type: "array", items, prefixItems: items }
+    expect(result.anyOf).toEqual([arrayBranch, { type: "string" }])
+    expect(ProviderTransform.schema(geminiModel, result)).toEqual(result)
+  })
+
+  test("normalizes single array types with and without null without discarding item combiners", () => {
+    for (const types of [["array"], ["array", "null"]] as const) {
+      const schema: JSONSchema7 = {
+        type: [...types],
+        items: { anyOf: [{ type: "number" }, { type: "string" }] },
+      }
+      const result = ProviderTransform.schema(geminiModel, schema)
+
+      expect(result.anyOf).toEqual([{ type: "array", items: { anyOf: [{ type: "number" }, { type: "string" }] } }])
+      expect(result).not.toHaveProperty("type")
+      if (types.length === 2) expect(result).toHaveProperty("nullable", true)
+      if (types.length === 1) expect(result).not.toHaveProperty("nullable")
+      expect(ProviderTransform.schema(geminiModel, result)).toEqual(result)
+    }
+  })
+
+  test("normalizes nested type unions inside existing combiners without replacing their branches", () => {
+    const schema: JSONSchema7 = {
+      anyOf: [
+        { type: ["string", "array"], items: { type: "integer" } },
+        { type: "array", items: { type: ["boolean", "array"] } },
+      ],
+      oneOf: [{ type: "object", properties: { values: { type: ["number", "array"] } } }],
+      allOf: [{ description: "existing constraint" }],
+    }
+    const result = ProviderTransform.schema(geminiModel, schema)
+
+    expect(result).toEqual({
+      anyOf: [
+        { items: { type: "integer" }, anyOf: [{ type: "string" }, { type: "array", items: { type: "integer" } }] },
+        { type: "array", items: { anyOf: [{ type: "boolean" }, { type: "array", items: { type: "string" } }] } },
+      ],
+      oneOf: [
+        {
+          type: "object",
+          properties: { values: { anyOf: [{ type: "number" }, { type: "array", items: { type: "string" } }] } },
+        },
+      ],
+      allOf: [{ description: "existing constraint" }],
+    })
+    expect(ProviderTransform.schema(geminiModel, result)).toEqual(result)
+  })
+
+  test("does not rewrite type-array schemas for non-Gemini models", () => {
+    const model = { ...geminiModel, providerID: "anthropic", api: { ...geminiModel.api, id: "claude" } }
+    const schema: JSONSchema7 = {
+      type: ["array", "object"],
+      properties: { name: { type: "string" } },
+      required: ["name"],
+    }
+    expect(ProviderTransform.schema(model, schema)).toEqual(schema)
+  })
 
   test("splits a multi-type array into anyOf and drops the type array", () => {
     const schema = {

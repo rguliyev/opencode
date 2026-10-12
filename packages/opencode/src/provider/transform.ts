@@ -1679,7 +1679,16 @@ export function schema(model: Provider.Model, schema: JSONSchema7): JSONSchema7 
           result.type = "null"
         } else {
           delete result.type
-          result.anyOf = nonNull.map((entry: unknown) => ({ type: entry }))
+          result.anyOf = nonNull.map((entry: unknown) => {
+            const keys =
+              entry === "array" ? ["items", "prefixItems"] : entry === "object" ? ["properties", "required"] : []
+            // These branches are created after the recursive walk: normalize
+            // them too, retaining the schema intent for each applicable type.
+            return sanitizeGemini({
+              type: entry,
+              ...Object.fromEntries(keys.filter((key) => key in result).map((key) => [key, result[key]])),
+            })
+          })
           if (hasNull) result.nullable = true
         }
       }
