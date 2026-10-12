@@ -712,3 +712,15 @@ test("pointing gcloud at a credential file uses it; reading the file or expandin
     expect(await g.bash(`cat ${adc}`)).toBe("ask")
     expect(await g.bash(`GOOGLE_APPLICATION_CREDENTIALS=${adc} sh -c 'cat "$GOOGLE_APPLICATION_CREDENTIALS"'`)).toBe("ask")
   }))
+
+test("rm -rf of a variable set once, earlier, to a scratch path is judged as that path", () =>
+  withEnv(async () => {
+    const g = await gate("solo", "Validate the patch in a fresh worktree, then clean it up.", () => 0.01)
+    const run = (command: string) => g.bash(command, command.split("\n"))
+    const val = "/data/rguliyev/tmp/opencode/gate-test-val/wt"
+    expect(await run(`VAL=${val}\nrm -rf "$VAL"`)).toBe("allow")
+    // Set only after the delete: "$VAL/" is "/" when rm runs.
+    expect(await run(`rm -rf "$VAL/"\nVAL=${val}`)).toBe("ask")
+    expect(await run(`VAL=${val}\nVAL=/data/rguliyev\nrm -rf "$VAL"`)).toBe("ask")
+    expect(await run(`VAL=/data/rguliyev\nrm -rf "$VAL"`)).toBe("ask")
+  }))

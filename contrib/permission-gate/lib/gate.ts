@@ -903,10 +903,27 @@ function segmentRequiresHumanOperation(raw: string) {
 // human gate: variables, home-relative paths, substitutions, sudo, a target
 // outside those classes or equal to a class root, or relative targets with no
 // known base directory.
+// A variable assigned once, to a literal absolute path, before the delete in
+// the same call names that path: VAL=/tmp/x/val; rm -rf "$VAL". One set only
+// after the delete is still empty when rm runs ("$VAL/" would be "/"), so it
+// stays unresolved.
+function withEarlierPathAssignments(segment: string, raw: string, fullCommand: unknown) {
+  if (typeof fullCommand !== "string" || !segment.includes("$")) return segment
+  const at = fullCommand.indexOf(raw.trim())
+  if (at <= 0) return segment
+  const vars = pathAssignments(fullCommand.slice(0, at))
+  const whole = pathAssignments(fullCommand)
+  return segment.replace(/(["']?)\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))/g, (found, quote, braced, bare) => {
+    const name = braced ?? bare
+    const value = vars.get(name)
+    return value !== undefined && whole.get(name) === value ? quote + value : found
+  })
+}
+
 function localDeleteTargets(raw: string, fullCommand: unknown, workdir: string | undefined) {
   const policy = loadEnvironmentPolicy()
   // Discarding the delete's own output changes nothing else.
-  const segment = raw
+  const segment = withEarlierPathAssignments(raw, raw, fullCommand)
     .replace(/^(?:(?:if|then|elif|else|while|until|do|!|\{|\()\s+)+/, "")
     .replace(/\s\d?>>?\s*\/dev\/null(?=\s|$)|\s\d?>&\d(?=\s|$)/g, "")
   if (!policy || /[$`<>~]|\bsudo\b/.test(segment)) return undefined
