@@ -1668,6 +1668,7 @@ test("a read-only agent's dual-use shell command needs both the final reviewer a
     }
     expect(await mcp("grafana-prod_list_loki_label_values")).toBe("allow")
     expect(await mcp("grafana-prod_query_loki_logs")).toBe("allow")
+    expect(await mcp("grafana-foxtrot_check_datasources_health")).toBe("allow")
     expect(await mcp("grafana-prod_update_dashboard")).toBe("ask")
     expect(await mcp("grafana-prod_create_incident")).toBe("ask")
     finalReviewChoice = "ask"

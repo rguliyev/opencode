@@ -1361,10 +1361,11 @@ const ghReadOnly = new Set([
 ])
 
 // Grafana MCP tools named as reads (grafana-<instance>_list_*, _get_*,
-// _search_*, _query_*, _find_*, _user_info) only read; a read-only agent may
-// ask the reviewers for them. Every other MCP tool stays outside the role.
+// _search_*, _query_*, _find_*, _check_* health probes, _user_info) only read;
+// a read-only agent may ask the reviewers for them. Every other MCP tool stays
+// outside the role.
 const grafanaMcpReadTool =
-  /^grafana-[a-z0-9-]+_(?:(?:list|get|search|query|find)_[a-z0-9_]+|[a-z0-9_]+_read|user_info|assistant_search)$/
+  /^grafana-[a-z0-9-]+_(?:(?:list|get|search|query|find|check)_[a-z0-9_]+|[a-z0-9_]+_read|user_info|assistant_search)$/
 
 // "Allow once" for a command shape: after the human directly approves a
 // prompt, a later command in the same session tree that differs only in
