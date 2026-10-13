@@ -380,6 +380,11 @@ const killSwitchEnabled = () => {
 // targets (tools on PATH) are skipped. Jev judges those from the command
 // text alone (`bash ./deploy-prod.sh` -> deny 0.99), so this is a note, not a stop.
 const worktreeRoot = () => process.env.OPENCODE_GATE_WORKTREE_ROOT ?? "/data/rguliyev/tmp/opencode/worktrees/"
+// A dedicated worktree, or a repo clone in the agents' scratch root: repo code
+// the agent checked out, not the gate's runtime or another user's files.
+const agentCheckout = (real: string) =>
+  real.startsWith(worktreeRoot()) ||
+  (real.startsWith(configuredExternalRoot + path.sep) && !real.startsWith(path.join(configuredExternalRoot, "gate-delegation-runtime") + path.sep))
 const hardInspectionFailures = ["credential-like content", "loads another file"]
 const isHardInspectionFailure = (reason: string) => hardInspectionFailures.some((x) => reason.includes(x))
 
@@ -2048,14 +2053,14 @@ async function inspectScripts(command: string, cwd: string, fullCommand?: unknow
         // command's working directory; resolve a plain relative path there.
         const target =
           !path.isAbsolute(literal) &&
-          scriptReal.startsWith(worktreeRoot()) &&
+          agentCheckout(scriptReal) &&
           /^[A-Za-z0-9._][A-Za-z0-9._/-]*$/.test(literal) &&
           !literal.split("/").includes("..")
             ? path.resolve(root, literal)
             : literal
         const dynamic =
           !path.isAbsolute(target) || /[$`*?[\]{}~"']/.test(target) || path.normalize(target) !== target
-        if (dynamic && scriptReal.startsWith(worktreeRoot())) {
+        if (dynamic && agentCheckout(scriptReal)) {
           worktreeNote = `script in a dedicated worktree sources a generated or dynamic file the gate could not read (${sourced.slice(0, 120)})`
           continue
         }
@@ -4776,7 +4781,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
               evidence.push({ finding: "ambient_credentials", detail: "inspected script uses ambient credentials without printing them" })
             const operations = scriptHumanOperations(
               script.content,
-              path.resolve(workdir, script.path).startsWith(worktreesRoot + path.sep),
+              agentCheckout(path.resolve(workdir, script.path)),
               inspection.scripts.map((item) => item.content).join("\n"),
             )
             if (operations.hard) hard.push("script human-only operation")
