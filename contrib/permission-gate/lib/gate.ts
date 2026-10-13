@@ -717,6 +717,24 @@ function metadataOnly(command: string) {
   return ["ls", "stat"].includes(executableName(commandParts(command).verb))
 }
 
+// A read-only agent's command that cannot change anything outside scratch:
+// ls/stat, or mkdir of directories inside the scratch class (where it may
+// already save reports). Jev's mutation score for it reflects the batch, not
+// this command, so it does not veto the final reviewer's allow.
+function scratchOnlyShell(command: string) {
+  if (metadataOnly(command)) return true
+  if (/[|<>`;&]|\$/.test(command)) return false
+  const policy = loadEnvironmentPolicy()
+  const parts = commandParts(command)
+  if (!policy || parts.error || parts.directory || executableName(parts.verb) !== "mkdir") return false
+  const targets = parts.args.filter((argument) => !argument.startsWith("-"))
+  return (
+    targets.length > 0 &&
+    parts.args.every((argument) => !argument.startsWith("-") || /^-[pv]+$/.test(argument)) &&
+    targets.every((target) => path.isAbsolute(target) && classifyPath(policy, path.normalize(target)) === "scratch")
+  )
+}
+
 function requiresHuman(command: string) {
   if (pythonTextOnly(command)) return false
   if (metadataOnly(command)) return false
@@ -4816,7 +4834,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
           const finalReviewAllow =
             finalReviewNeeded &&
             !hard.length &&
-            (!reviewer || jevJudgedReadOnly(raw)) &&
+            (!reviewer || scratchOnlyShell(command) || jevJudgedReadOnly(raw)) &&
             finalReview.status === "score" &&
             finalReview.choice === "allow"
 

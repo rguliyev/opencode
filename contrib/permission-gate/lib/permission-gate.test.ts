@@ -1639,6 +1639,21 @@ test("a read-only agent's dual-use shell command needs both the final reviewer a
       noPurpose,
     )
     expect(noPurpose.status).toBe("allow")
+    // A read-only agent may make its own scratch directory and list it; Jev's
+    // batch-wide mutation score does not veto that. Outside scratch it may not.
+    finalReviewChoice = "allow"
+    const scratchDir = async (dir: string) => {
+      const commands = [`mkdir -p ${dir}`, `ls -ld ${dir}`]
+      for (const command of commands) mutation[command] = 0.9
+      const output = { status: "ask" }
+      await hooks["permission.ask"](
+        { permission: "bash", sessionID: "ses_reviewer_shell", patterns: commands, metadata: { command: commands.join(" && ") } },
+        output,
+      )
+      return output.status
+    }
+    expect(await scratchDir("/data/rguliyev/tmp/opencode/grafana-log-growth")).toBe("allow")
+    expect(await scratchDir("/data/rguliyev/src/opencode/newdir")).toBe("ask")
     // A literal echo between reviewed commands needs no model at all, even
     // when the final reviewer would ask; a variable echo is still reviewed.
     finalReviewChoice = "ask"
