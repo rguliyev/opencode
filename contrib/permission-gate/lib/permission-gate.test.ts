@@ -1632,6 +1632,13 @@ test("a read-only agent's dual-use shell command needs both the final reviewer a
     }))
     await hooks.provider.models({ models: {} }, { auth: { type: "api", key: "fake-test-key" } })
     expect(await ask(hooks, "git status --short")).toBe("allow")
+    // The shell tool's reason is optional: a call without one is still reviewed.
+    const noPurpose = { status: "ask" }
+    await hooks["permission.ask"](
+      { permission: "bash", sessionID: "ses_reviewer_shell", patterns: ["git status --short"], metadata: { command: "git status --short" } },
+      noPurpose,
+    )
+    expect(noPurpose.status).toBe("allow")
     // A literal echo between reviewed commands needs no model at all, even
     // when the final reviewer would ask; a variable echo is still reviewed.
     finalReviewChoice = "ask"

@@ -4568,7 +4568,9 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
           (typeof fullCommand !== "string" ||
             !safeFullCommand ||
             !safeTitle ||
-            !safePurpose ||
+            // The shell tool's reason is optional and agent-stated; only one
+            // that is present but unsafe to share stops the review.
+            (input.metadata?.purpose !== undefined && !safePurpose) ||
             (commands.length > 1 && !batch)))
       ) {
         output.message = "Read-only reviewer command needs a complete, safe-to-share call and verified workdir"
