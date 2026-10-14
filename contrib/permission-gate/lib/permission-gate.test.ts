@@ -1682,6 +1682,9 @@ test("a read-only agent's dual-use shell command needs both the final reviewer a
     expect(await shell1("gh repo clone e2b-dev/belt /data/rguliyev/tmp/opencode/check/belt -- --depth=50 2>/dev/null")).toBe("allow")
     expect(await shell1("git clone https://github.com/e2b-dev/terraform /data/rguliyev/tmp/opencode/check/tf")).toBe("allow")
     expect(await shell1("gh repo clone e2b-dev/belt /data/rguliyev/src/belt2")).toBe("ask")
+    expect(await shell1("git -C /data/rguliyev/tmp/opencode/check/belt checkout 0123abc")).toBe("allow")
+    expect(await shell1("git -C /data/rguliyev/src/belt checkout 0123abc")).toBe("ask")
+    expect(await shell1("git -C /data/rguliyev/tmp/opencode/check/belt push origin HEAD")).toBe("ask")
     expect(await scratchDir("/data/rguliyev/src/opencode/newdir")).toBe("ask")
     // A literal echo between reviewed commands needs no model at all, even
     // when the final reviewer would ask; a variable echo is still reviewed.

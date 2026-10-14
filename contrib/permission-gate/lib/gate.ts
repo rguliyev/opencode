@@ -726,8 +726,29 @@ function metadataOnly(command: string) {
 // ls/stat, or mkdir/mv/cp whose every path lies inside the scratch class
 // (where it may already save reports). Jev's mutation score for it reflects
 // the batch, not this command, so it does not veto the final reviewer's allow.
-function scratchOnlyShell(command: string) {
+// Git that only changes the local checkout it runs in. Inside a scratch clone
+// a fetch, checkout, or log writes nothing outside scratch.
+const scratchGitSubcommands = new Set(["fetch", "checkout", "switch", "log", "show", "diff", "status", "rev-parse", "ls-files", "grep", "blame"])
+
+function scratchOnlyShell(command: string, directory?: string) {
   if (metadataOnly(command)) return true
+  {
+    const policy = loadEnvironmentPolicy()
+    const parts = commandParts(command.replace(/\s2>\s*\/dev\/null(?=\s|$)|\s2>&1(?=\s|$)/g, ""))
+    const gitDir = parts.args[0] === "-C" ? parts.args[1] : directory
+    const sub = parts.args[0] === "-C" ? parts.args[2] : parts.args[0]
+    if (
+      policy &&
+      !parts.error &&
+      executableName(parts.verb) === "git" &&
+      !/[|<>`;&]|\$/.test(command.replace(/\s2>\s*\/dev\/null(?=\s|$)|\s2>&1(?=\s|$)/g, "")) &&
+      gitDir &&
+      path.isAbsolute(gitDir) &&
+      classifyPath(policy, path.normalize(parts.directory ? path.resolve(gitDir, parts.directory) : gitDir)) === "scratch" &&
+      scratchGitSubcommands.has(sub ?? "")
+    )
+      return true
+  }
   // Discarding the command's own stderr changes nothing else.
   command = command.replace(/\s2>\s*\/dev\/null(?=\s|$)|\s2>&1(?=\s|$)/g, "")
   if (/[|<>`;&]|\$/.test(command)) return false
@@ -4866,7 +4887,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
           const finalReviewAllow =
             finalReviewNeeded &&
             !hard.length &&
-            (!reviewer || scratchOnlyShell(command) || jevJudgedReadOnly(raw)) &&
+            (!reviewer || scratchOnlyShell(command, precedingDirectory(fullCommand, command, workdir)) || jevJudgedReadOnly(raw)) &&
             finalReview.status === "score" &&
             finalReview.choice === "allow"
 
