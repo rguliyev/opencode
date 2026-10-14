@@ -1663,6 +1663,16 @@ test("a read-only agent's dual-use shell command needs both the final reviewer a
     }
     expect(await move("/data/rguliyev/tmp/opencode/a.go.tmp", "/data/rguliyev/tmp/opencode/research/a.go")).toBe("allow")
     expect(await move("/data/rguliyev/tmp/opencode/a.go.tmp", "/data/rguliyev/src/opencode/a.go")).toBe("ask")
+    expect(await move("/data/rguliyev/src/opencode/a.go", "/data/rguliyev/tmp/opencode/a.go")).toBe("ask")
+    const copy = async (from: string, to: string) => {
+      const command = `cp ${from} ${to}`
+      mutation[command] = 0.9
+      const output = { status: "ask" }
+      await hooks["permission.ask"]({ permission: "bash", sessionID: "ses_reviewer_shell", patterns: [command], metadata: { command } }, output)
+      return output.status
+    }
+    expect(await copy("/data/rguliyev/src/charts/x.tgz", "/data/rguliyev/tmp/opencode/prep/")).toBe("allow")
+    expect(await copy("/data/rguliyev/tmp/opencode/x.tgz", "/data/rguliyev/src/charts/")).toBe("ask")
     expect(await scratchDir("/data/rguliyev/src/opencode/newdir")).toBe("ask")
     // A literal echo between reviewed commands needs no model at all, even
     // when the final reviewer would ask; a variable echo is still reviewed.

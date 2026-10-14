@@ -738,7 +738,13 @@ function scratchOnlyShell(command: string) {
   return (
     targets.length > (verb === "mkdir" ? 0 : 1) &&
     parts.args.every((argument) => !argument.startsWith("-") || flags.test(argument)) &&
-    targets.every((target) => path.isAbsolute(target) && classifyPath(policy, path.normalize(target)) === "scratch")
+    // cp only writes its destination; mv also removes its sources, so every
+    // path must be in scratch. A credential-store source still stops on its own.
+    (verb === "cp" ? targets.slice(-1) : targets).every(
+      (target) => path.isAbsolute(target) && classifyPath(policy, path.normalize(target)) === "scratch",
+    ) &&
+    targets.every((target) => path.isAbsolute(target)) &&
+    !credentialStoreReference(command)
   )
 }
 
