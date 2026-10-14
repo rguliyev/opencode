@@ -2111,7 +2111,9 @@ test("shell segments get module evidence and self-contained segments are judged 
       }
       expect(await authStatus("status")).toBe("allow")
       expect(await authStatus("verify")).toBe("allow")
+      expect(await authStatus("status 2>&1")).toBe("allow")
       expect(await authStatus("start")).toBe("ask")
+      expect(await authStatus("start 2>&1")).toBe("ask")
       if (previousAuthHelper === undefined) delete process.env.OPENCODE_GCLOUD_AUTH_HELPER
       else process.env.OPENCODE_GCLOUD_AUTH_HELPER = previousAuthHelper
 

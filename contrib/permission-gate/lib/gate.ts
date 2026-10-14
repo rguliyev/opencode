@@ -1619,7 +1619,9 @@ function invokesHelper(verb: string, name: string, helperPath: string) {
 
 // `gcloud-remote-auth.sh status` / `verify`, and nothing else in the segment.
 function gcloudAuthStatusCheck(command: string) {
-  const parts = commandParts(command)
+  // Merging or discarding the check's own output (2>&1, 2>/dev/null) does not
+  // change what it does.
+  const parts = commandParts(command.replace(/\s\d?>&\d(?=\s|$)|\s\d?>>?\s*\/dev\/null(?=\s|$)/g, ""))
   return (
     invokesHelper(parts.verb, "gcloud-remote-auth.sh", gcloudAuthHelperPath()) &&
     parts.args.length === 1 &&
