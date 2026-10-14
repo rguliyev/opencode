@@ -728,10 +728,25 @@ function metadataOnly(command: string) {
 // the batch, not this command, so it does not veto the final reviewer's allow.
 function scratchOnlyShell(command: string) {
   if (metadataOnly(command)) return true
+  // Discarding the command's own stderr changes nothing else.
+  command = command.replace(/\s2>\s*\/dev\/null(?=\s|$)|\s2>&1(?=\s|$)/g, "")
   if (/[|<>`;&]|\$/.test(command)) return false
   const policy = loadEnvironmentPolicy()
   const parts = commandParts(command)
   const verb = executableName(parts.verb)
+  // Cloning a repository into scratch writes only the new clone there.
+  const clone =
+    (verb === "gh" && parts.args[0] === "repo" && parts.args[1] === "clone" ? parts.args.slice(2) : undefined) ??
+    (verb === "git" && parts.args[0] === "clone" ? parts.args.slice(1) : undefined)
+  if (policy && !parts.error && !parts.directory && clone) {
+    const positional = clone.slice(0, clone.includes("--") ? clone.indexOf("--") : undefined).filter((argument) => !argument.startsWith("-"))
+    const destination = positional[1]
+    return (
+      positional.length === 2 &&
+      path.isAbsolute(destination) &&
+      classifyPath(policy, path.normalize(destination)) === "scratch"
+    )
+  }
   if (!policy || parts.error || parts.directory || !["mkdir", "mv", "cp"].includes(verb)) return false
   const targets = parts.args.filter((argument) => !argument.startsWith("-"))
   const flags = verb === "mkdir" ? /^-[pv]+$/ : /^-[fvnrR]+$/
