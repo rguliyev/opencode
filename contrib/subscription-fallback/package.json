@@ -1,0 +1,8 @@
+{
+  "name": "local-subscription-fallback",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsgo --noEmit"
+  }
+}

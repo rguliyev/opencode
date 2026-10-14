@@ -1,0 +1,8 @@
+{
+  "extends": "../../packages/opencode/tsconfig.json",
+  "compilerOptions": {
+    "types": ["bun"],
+    "typeRoots": ["../../packages/opencode/node_modules/@types"]
+  },
+  "include": ["./**/*.ts"]
+}
