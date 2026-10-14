@@ -723,19 +723,21 @@ function metadataOnly(command: string) {
 }
 
 // A read-only agent's command that cannot change anything outside scratch:
-// ls/stat, or mkdir of directories inside the scratch class (where it may
-// already save reports). Jev's mutation score for it reflects the batch, not
-// this command, so it does not veto the final reviewer's allow.
+// ls/stat, or mkdir/mv/cp whose every path lies inside the scratch class
+// (where it may already save reports). Jev's mutation score for it reflects
+// the batch, not this command, so it does not veto the final reviewer's allow.
 function scratchOnlyShell(command: string) {
   if (metadataOnly(command)) return true
   if (/[|<>`;&]|\$/.test(command)) return false
   const policy = loadEnvironmentPolicy()
   const parts = commandParts(command)
-  if (!policy || parts.error || parts.directory || executableName(parts.verb) !== "mkdir") return false
+  const verb = executableName(parts.verb)
+  if (!policy || parts.error || parts.directory || !["mkdir", "mv", "cp"].includes(verb)) return false
   const targets = parts.args.filter((argument) => !argument.startsWith("-"))
+  const flags = verb === "mkdir" ? /^-[pv]+$/ : /^-[fvnrR]+$/
   return (
-    targets.length > 0 &&
-    parts.args.every((argument) => !argument.startsWith("-") || /^-[pv]+$/.test(argument)) &&
+    targets.length > (verb === "mkdir" ? 0 : 1) &&
+    parts.args.every((argument) => !argument.startsWith("-") || flags.test(argument)) &&
     targets.every((target) => path.isAbsolute(target) && classifyPath(policy, path.normalize(target)) === "scratch")
   )
 }
