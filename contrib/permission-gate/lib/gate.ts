@@ -4163,7 +4163,9 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
     // project named "recent". The subagent's actual commands are still scoped.
     // Task prompts and edit diffs are text being handed over or written; they
     // run nothing. Terraform that mentions projects/<id> is not a gcloud call.
-    if (input.permission !== "task" && input.permission !== "edit") {
+    // A local read or search pattern ("projects/default/flags/") is text to
+    // match, not a project to call.
+    if (!["task", "edit", "read", "grep", "glob", "list", "lsp"].includes(input.permission)) {
       const aws = awsScopeReviewMessage(policyRaw, sessions)
       if (aws) reasons.push(aws)
       addGcpScope([gcpScopeFinding(policyRaw, sessions)], reasons, evidence)

@@ -747,6 +747,8 @@ test("a grep is judged by the lines it returns: a token elsewhere in the file do
     expect(await grep("fixture_token")).toBe("ask")
     expect(await grep(".")).toBe("ask")
     expect(await grep("(?i)parse")).toBe("ask")
+    // A search pattern naming a resource path is text, not a GCP project to call.
+    expect(await grep("projects/default/flags/")).toBe("allow")
   }))
 
 test("pointing gcloud at a credential file uses it; reading the file or expanding the variable still stops", () =>
