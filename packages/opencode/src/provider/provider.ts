@@ -32,9 +32,6 @@ import { ModelStatus } from "./model-status"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import { ProviderError } from "./error"
 import type { PermissionReviewInput } from "@opencode-ai/plugin"
-import { createSubscriptionFallback } from "./subscription-fallback"
-import { EventV2Bridge } from "@/event-v2-bridge"
-import { TuiEvent } from "@/server/tui-event"
 
 const permissionReviewSchema = Schema.Struct({
   choice: Schema.Literals(["allow", "ask"]),
@@ -1456,7 +1453,6 @@ const layer = Layer.effect(
     const plugin = yield* Plugin.Service
     const modelsDevSvc = yield* ModelsDev.Service
     const runtimeFlags = yield* RuntimeFlags.Service
-    const events = yield* EventV2Bridge.Service
 
     const state = yield* InstanceState.make<State>(() =>
       Effect.gen(function* () {
@@ -1683,21 +1679,6 @@ const layer = Layer.effect(
             ),
           )
           const opts = options ?? {}
-          if ((providerID === "openai" || providerID === "anthropic") && typeof opts.fetch === "function") {
-            opts.fetch = createSubscriptionFallback({
-              provider: providerID === "openai" ? "openai" : "anthropic",
-              primary: opts.fetch,
-              getPrimary: () => bridge.promise(auth.get(providerID).pipe(Effect.orDie)),
-              getFallback: () => bridge.promise(auth.get(`${providerID}-fallback`).pipe(Effect.orDie)),
-              notify: (notice) =>
-                bridge.promise(
-                  Effect.logWarning(notice.message).pipe(
-                    Effect.andThen(events.publish(TuiEvent.ToastShow, notice)),
-                    Effect.ignore,
-                  ),
-                ),
-            })
-          }
           const patch: Partial<Info> = providers[providerID] ? { options: opts } : { source: "custom", options: opts }
           mergeProvider(providerID, patch)
         }
@@ -2169,16 +2150,7 @@ export function parseModel(model: string) {
 export const node = LayerNode.make({
   service: Service,
   layer: layer,
-  deps: [
-    FSUtil.node,
-    Config.node,
-    Auth.node,
-    Env.node,
-    Plugin.node,
-    ModelsDev.node,
-    RuntimeFlags.node,
-    EventV2Bridge.node,
-  ],
+  deps: [FSUtil.node, Config.node, Auth.node, Env.node, Plugin.node, ModelsDev.node, RuntimeFlags.node],
 })
 
 export * as Provider from "./provider"
