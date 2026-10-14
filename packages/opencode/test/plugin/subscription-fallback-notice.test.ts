@@ -13,9 +13,13 @@ import { markPluginDependenciesReady } from "../fixture/plugin"
 import { testEffect } from "../lib/effect"
 
 const it = testEffect(LayerNode.compile(LayerNode.group([Provider.node, Auth.node, FSUtil.node])))
-for (const provider of ["openai", "anthropic"] as const) {
+for (const [provider, native] of [
+  ["openai", false],
+  ["anthropic", false],
+  ["anthropic", true],
+] as const) {
   it.instance(
-    `${provider} external wrapper publishes a usage warning through the real SDK and server event bus`,
+    `${provider} external wrapper publishes ${native ? "native extra usage" : "missing fallback"} warning through the real SDK and server event bus`,
     () =>
       Effect.gen(function* () {
         const tmp = yield* TestInstance
@@ -42,7 +46,7 @@ for (const provider of ["openai", "anthropic"] as const) {
     export default async (input) => wrapAuth({ auth: {
       provider: ${JSON.stringify(provider)}, methods: [],
       loader: async () => ({ fetch: async () => Response.json({ error: { type: ${JSON.stringify(provider === "openai" ? "usage_limit_reached" : "rate_limit_error")} } }, {
-        status: 429, headers: { "anthropic-ratelimit-unified-status": "rejected" }
+        status: ${native ? 200 : 429}, headers: { "anthropic-ratelimit-unified-status": "rejected", ${native ? '"anthropic-ratelimit-unified-overage-status": "allowed"' : ""} }
       }) })
     } }, input, ${JSON.stringify(provider)}, ${JSON.stringify(path.join(tmp.directory, "missing-private-credentials.json"))})`,
         )
@@ -64,8 +68,8 @@ for (const provider of ["openai", "anthropic"] as const) {
               { method: "POST", body: JSON.stringify({ model: "test", stream: true }) },
             ) as Promise<Response>,
         )
-        expect(response.status).toBe(429)
-        expect(messages.some((message) => message.includes("NOT started"))).toBe(true)
+        expect(response.status).toBe(native ? 200 : 429)
+        expect(messages.some((message) => message.includes(native ? "PAID extra usage" : "NOT started"))).toBe(true)
         expect(messages.some((message) => message.includes(`${provider}: usage warning`))).toBe(true)
       }),
     { git: true },

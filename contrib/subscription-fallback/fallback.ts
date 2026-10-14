@@ -22,6 +22,7 @@ export function createSubscriptionFallback(options: {
   const transport = options.transport ?? fetch
   const limits = new Map<string, { retry: number; reset?: number }>()
   const notices = new Map<string, number>()
+  const extraUsage = new Set<string>()
   let identity = ""
 
   async function notify(key: string, message: string, recovered = false) {
@@ -65,6 +66,7 @@ export function createSubscriptionFallback(options: {
     if (identity !== current) {
       limits.clear()
       notices.clear()
+      extraUsage.clear()
       identity = current
     }
     const model = body.model
@@ -126,6 +128,30 @@ export function createSubscriptionFallback(options: {
     if (credential && limited && limited.retry > now()) return paid(limited.reset)
     // Plugins may mutate init.headers. Keep the original SDK request for the paid retry.
     const response = await options.primary(input, { ...init, headers: new Headers(headers) })
+    // Anthropic can serve paid extra usage with the SAME OAuth credential and
+    // HTTP 200. Allowed overage alone is eligibility, not evidence of charging.
+    const native = options.provider === "anthropic" ? anthropicUsage(response.headers) : undefined
+    if (response.ok && native?.mode === "paid") {
+      if (extraUsage.size >= 1024 && !extraUsage.has(key)) extraUsage.delete(extraUsage.values().next().value!)
+      extraUsage.add(key)
+      limits.delete(model)
+      notices.delete(`native-restored:${key}`)
+      await notify(
+        `native-paid:${key}`,
+        `${model}: Anthropic reports PAID extra usage on your existing Claude login. ` +
+          "Check/reset your allowance or adjust extra-usage spending in Claude Settings > Usage. " +
+          "No API key or credential switch was used.",
+      )
+      return response
+    }
+    if (response.ok && native?.mode === "included" && extraUsage.delete(key)) {
+      notices.delete(`native-paid:${key}`)
+      await notify(
+        `native-restored:${key}`,
+        `${model}: Anthropic reports included subscription usage again; extra usage is no longer reported for this request.`,
+        true,
+      )
+    }
     const limit = await subscriptionLimit(options.provider, response)
     if (!limit) {
       if (response.ok && limited) {
@@ -137,25 +163,51 @@ export function createSubscriptionFallback(options: {
           true,
         )
       }
-      if (response.ok && nearLimit(options.provider, response.headers))
+      if (response.ok && (nearLimit(options.provider, response.headers) || native?.warning))
         await notify(
           `near:${key}`,
-          `${model}: subscription usage is at least 90%. Check/reset limits if needed. ${credential ? "Paid fallback is configured and may incur charges when the allowance is exhausted." : "No paid fallback credential is configured."}`,
+          options.provider === "anthropic"
+            ? `${model}: included subscription usage is ${nearLimit(options.provider, response.headers) ? "at least 90%" : "approaching its limit"}. ` +
+                "Check/reset your allowance in Claude Settings > Usage. " +
+                "If extra usage is enabled, Anthropic can continue with PAID usage on this same login; a separate API key is not required."
+            : `${model}: subscription usage is at least 90%. Check/reset limits if needed. ${credential ? "Paid fallback is configured and may incur charges when the allowance is exhausted." : "No paid fallback credential is configured."}`,
         )
       return response
     }
     const retry = Math.min(now() + 60_000, limit.reset && limit.reset > now() ? limit.reset : Infinity)
     limits.set(model, { retry, reset: limit.reset })
+    if (native?.overage === "rejected")
+      await notify(
+        `native-blocked:${key}`,
+        `${model}: Anthropic rejected extra usage. Check your extra-usage balance, spending limits and enablement in Claude Settings > Usage.`,
+      )
     if (!credential) {
       await notify(
         `missing:${key}`,
-        `${model}: subscription allowance exhausted. No valid ${options.provider}-fallback credential is configured; paid usage was NOT started. Check/reset your subscription limits.`,
+        options.provider === "anthropic"
+          ? `${model}: Anthropic rejected this request at the subscription limit. Check/reset your allowance or check extra usage in Claude Settings > Usage. Separate API-key retry was NOT started.`
+          : `${model}: subscription allowance exhausted. No valid ${options.provider}-fallback credential is configured; paid usage was NOT started. Check/reset your subscription limits.`,
       )
       return response
     }
     init.signal?.throwIfAborted()
     await response.body?.cancel()
     return paid(limit.reset)
+  }
+}
+
+function anthropicUsage(headers: Headers) {
+  const status = headers.get("anthropic-ratelimit-unified-status")
+  const overage = headers.get("anthropic-ratelimit-unified-overage-status")
+  const inUse = headers.get("anthropic-ratelimit-unified-overage-in-use") === "true"
+  // Matches the signal semantics in Anthropic's installed Claude Code 2.1.284:
+  // explicit overage-in-use, or rejected included allowance + allowed overage.
+  // Do not infer charging from representative-claim or enabled/allowed alone.
+  const paid = inUse || (status === "rejected" && (overage === "allowed" || overage === "allowed_warning"))
+  return {
+    mode: paid ? "paid" : status === "allowed" || status === "allowed_warning" ? "included" : "unknown",
+    warning: status === "allowed_warning",
+    overage,
   }
 }
 

@@ -27,6 +27,35 @@ Sources: [Ex Machina](https://github.com/ex-machina-co/opencode-anthropic-auth),
 [CortexKit OpenAI](https://github.com/cortexkit/openai-auth),
 [CortexKit Anthropic](https://github.com/cortexkit/anthropic-auth).
 
+## Anthropic native paid extra usage
+
+The Claude OAuth account may already have extra usage enabled. No separate API
+key is needed for this provider-managed path, and an HTTP 200 response can be
+paid. The plugin now observes the successful response headers before returning
+its stream, without sending another request or changing credentials:
+
+- Explicit `anthropic-ratelimit-unified-overage-in-use: true`, OR unified status
+  `rejected` plus overage status `allowed` / `allowed_warning`, signals paid extra
+  usage. This matches the installed Anthropic Claude Code **2.1.284** parser.
+- Overage `allowed` alone only means eligible, **not** that the request is paid.
+  Representative claim alone is not treated as proof of paid usage either.
+- Warn through toast and server log when paid extra usage is reported. Deduplicate
+  per session/model, warn again on reentry, and announce a return to included
+  usage only on an explicit included-status response. Missing headers are unknown.
+- Warn near the included limit (90% utilization or provider `allowed_warning`)
+  and explain the native extra-usage path instead of claiming an API key is needed.
+- On an actual quota rejection with rejected overage, direct the user to Claude
+  Settings > Usage to check balance, limits and enablement; do not auto-purchase
+  credits, alter limits, or claim an unsuccessful request was billed.
+
+The paid warning arrives with response headers: it cannot retroactively prevent
+charges on that first request. The near-limit warning provides advance notice
+when Anthropic supplies the relevant telemetry. No usage polling or background
+model requests are added. Real billing/exhaustion is not forced in tests.
+
+[Anthropic's explanation of usage credits](https://support.claude.com/en/articles/12429409-manage-usage-credits-for-paid-claude-plans)
+confirms continuation on the existing subscription account when funded/enabled.
+
 ## Behavior
 
 - Subscription first. At 90% usage, warn when the provider supplies usage headers.
@@ -92,7 +121,8 @@ auth). Do not put helpers or credential files in auto-discovered `plugins/`:
 The mode-0600 sidecar accepts `openai-fallback` as an OAuth-shaped record with
 `access` holding the existing Codex PAT, empty `refresh`, and optional `expires`;
 `anthropic-fallback` is an API record with `key`. Never commit real values.
-Leave Anthropic fallback absent until the human supplies its API key.
+Leave Anthropic fallback absent when using native Claude extra usage. A separate
+API key is only needed for the optional separate-credential fallback route.
 
 Back up and preserve native `auth.json` subscription entries. Explicit approval
 is required for protected config installation. Config activation requires a

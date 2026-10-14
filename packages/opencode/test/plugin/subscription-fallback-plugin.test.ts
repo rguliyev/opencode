@@ -60,11 +60,19 @@ describe.skipIf(!bundles)("actual built plugin bundles, loopback transport", () 
       const logs: string[] = []
       const requests: Array<{ headers: Headers; body: string }> = []
       let limit = false
+      let native = false
       using server = Bun.serve({
         hostname: "127.0.0.1",
         port: 0,
         async fetch(req) {
           requests.push({ headers: req.headers, body: await req.text() })
+          if (native)
+            return new Response("native-extra-usage", {
+              headers: {
+                "anthropic-ratelimit-unified-status": "rejected",
+                "anthropic-ratelimit-unified-overage-status": "allowed",
+              },
+            })
           const paid =
             req.headers.get("authorization") === "Bearer at-test-paid" ||
             req.headers.get("x-api-key") === "sk-test-paid"
@@ -165,6 +173,19 @@ describe.skipIf(!bundles)("actual built plugin bundles, loopback transport", () 
         expect(logs.join(" ")).not.toContain("refresh-test")
         expect(await Bun.file(file).text()).toBe(stored)
         expect(auth.access).toBe("subscription-test")
+        if (provider === "anthropic") {
+          // The deployed setup has no Anthropic API key. HTTP 200 can still be
+          // paid extra usage through the original OAuth login.
+          await Bun.write(file, "{}")
+          native = true
+          expect(await (await loaded.fetch(endpoint, request)).text()).toBe("native-extra-usage")
+          expect(requests).toHaveLength(4)
+          expect(requests[3].headers.get("authorization")).toBe("Bearer subscription-test")
+          expect(requests[3].headers.has("x-api-key")).toBe(false)
+          expect(notices.at(-1)).toContain("PAID extra usage")
+          expect(logs.at(-1)).toContain("PAID extra usage")
+          expect(await Bun.file(file).text()).toBe("{}")
+        }
       } finally {
         await hooks?.dispose?.()
         globalThis.fetch = original

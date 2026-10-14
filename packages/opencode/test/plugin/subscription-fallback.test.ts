@@ -323,3 +323,133 @@ test("invalid reset timestamp cannot break fallback", async () => {
   const t = setup("openai", async () => quota("openai", 1e100))
   expect(await (await t.run()).text()).toBe("paid")
 })
+
+function nativeHeaders(status = "rejected", overage = "allowed", extra: Record<string, string> = {}) {
+  return {
+    "anthropic-ratelimit-unified-status": status,
+    "anthropic-ratelimit-unified-overage-status": overage,
+    ...extra,
+  }
+}
+
+describe("Anthropic native extra usage (same OAuth login)", () => {
+  test.each(["allowed", "allowed_warning"])(
+    "successful overflow with %s overage warns without retry or API key",
+    async (status) => {
+      let sent = 0
+      const t = setup("anthropic", async () => {
+        sent++
+        return new Response("stream unchanged", { headers: nativeHeaders("rejected", status) })
+      })
+      t.state.fallback = undefined
+      const response = await t.run()
+      expect(t.notices[0].message).toContain("PAID extra usage")
+      expect(await response.text()).toBe("stream unchanged")
+      expect(sent).toBe(1)
+      expect(t.calls).toHaveLength(0)
+      expect(t.notices[0].message).not.toContain("NOT started")
+    },
+  )
+  test("explicit overage-in-use also detects grace-zone paid usage", async () => {
+    const t = setup(
+      "anthropic",
+      async () =>
+        new Response("ok", {
+          headers: nativeHeaders("allowed", "allowed", { "anthropic-ratelimit-unified-overage-in-use": "true" }),
+        }),
+    )
+    await t.run()
+    expect(t.notices[0].message).toContain("PAID extra usage")
+    expect(t.calls).toHaveLength(0)
+  })
+  test("allowed extra usage and representative claim alone do not mean paid", async () => {
+    for (const status of ["allowed", ""]) {
+      const t = setup(
+        "anthropic",
+        async () =>
+          new Response("ok", {
+            headers: nativeHeaders(status, "allowed", {
+              "anthropic-ratelimit-unified-representative-claim": "overage",
+            }),
+          }),
+      )
+      await t.run()
+      expect(t.notices).toHaveLength(0)
+    }
+  })
+  test("native paid state is session scoped and deduplicated", async () => {
+    const t = setup("anthropic", async () => new Response("ok", { headers: nativeHeaders() }))
+    await t.run()
+    await t.run()
+    expect(t.notices).toHaveLength(1)
+    await t.run({ ...request, headers: { ...request.headers, "session-id": "other" } })
+    expect(t.notices).toHaveLength(2)
+  })
+  test("missing telemetry is not recovery; explicit included response is; immediate reentry warns", async () => {
+    let headers: Record<string, string> = nativeHeaders()
+    const t = setup("anthropic", async () => new Response("ok", { headers }))
+    await t.run()
+    headers = {}
+    await t.run()
+    expect(t.notices).toHaveLength(1)
+    headers = nativeHeaders("allowed")
+    await t.run()
+    expect(t.notices.at(-1)?.variant).toBe("success")
+    headers = nativeHeaders()
+    await t.run()
+    expect(t.notices).toHaveLength(3)
+    expect(t.notices.at(-1)?.message).toContain("PAID extra usage")
+    headers = nativeHeaders("allowed")
+    await t.run()
+    expect(t.notices.at(-1)?.variant).toBe("success")
+  })
+  test("native usage does not claim API-fallback recovery while still paid", async () => {
+    let headers: Record<string, string> = { "anthropic-ratelimit-unified-5h-status": "rejected" }
+    let status = 429
+    const t = setup("anthropic", async () =>
+      Response.json({ error: { type: "rate_limit_error" } }, { status, headers }),
+    )
+    await t.run()
+    t.state.now += 61000
+    status = 200
+    headers = nativeHeaders()
+    await t.run()
+    expect(t.notices.at(-1)?.message).toContain("PAID extra usage")
+    expect(t.notices.some((x) => x.variant === "success")).toBe(false)
+  })
+  test("near-limit warning explains existing-login extra usage without requiring key", async () => {
+    const t = setup("anthropic", async () => new Response("ok", { headers: nativeHeaders("allowed_warning") }))
+    t.state.fallback = undefined
+    await t.run()
+    expect(t.notices[0].message).toContain("approaching its limit")
+    expect(t.notices[0].message).toContain("separate API key is not required")
+    expect(t.notices[0].message).not.toContain("at least 90%")
+    expect(t.notices[0].message).not.toContain("No paid fallback credential")
+  })
+  test("rejected extra usage warns about balance/settings, without claiming the request was paid", async () => {
+    const t = setup("anthropic", async () =>
+      Response.json(
+        { error: { type: "rate_limit_error" } },
+        {
+          status: 429,
+          headers: nativeHeaders("rejected", "rejected"),
+        },
+      ),
+    )
+    t.state.fallback = undefined
+    expect((await t.run()).status).toBe(429)
+    expect(t.notices[0].message).toContain("rejected extra usage")
+    expect(t.notices.some((x) => x.message.includes("reports PAID extra usage"))).toBe(false)
+    expect(t.calls).toHaveLength(0)
+  })
+  test("failed HTTP request with allowed overage is not reported as paid", async () => {
+    const t = setup("anthropic", async () => new Response("unavailable", { status: 503, headers: nativeHeaders() }))
+    await t.run()
+    expect(t.notices).toHaveLength(0)
+  })
+  test("native detection is Anthropic-only", async () => {
+    const t = setup("openai", async () => new Response("ok", { headers: nativeHeaders() }))
+    await t.run()
+    expect(t.notices).toHaveLength(0)
+  })
+})
