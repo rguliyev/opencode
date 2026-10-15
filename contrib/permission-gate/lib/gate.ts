@@ -789,7 +789,12 @@ function requiresHuman(command: string) {
   if (metadataOnly(command)) return false
   // A `gcloud logging read` filter is search text, like a grep pattern: an
   // audit query for "secrets/x" access events reads log entries, not the secret.
-  if (/^\s*gcloud\s+logging\s+read\b/.test(command))
+  if (
+    (() => {
+      const parts = commandParts(command)
+      return executableName(parts.verb) === "gcloud" && parts.args[0] === "logging" && parts.args[1] === "read"
+    })()
+  )
     command = command.replace(/'[^']*'|"(?:\\.|[^"\\])*"/g, (quoted) =>
       quoted.startsWith("'") || !/\$\(|`/.test(quoted) ? '""' : quoted,
     )

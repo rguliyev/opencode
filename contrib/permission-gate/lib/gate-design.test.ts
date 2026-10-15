@@ -831,5 +831,8 @@ test("an audit-log query naming a secret reads log entries, not the secret", () 
     expect(
       await g.bash(`gcloud logging read 'protoPayload.methodName="google.cloud.secretmanager.v1.SecretManagerService.AccessSecretVersion" AND protoPayload.resourceName:"secrets/syncer-token"' --project=e2b-dev-rauf-guliyev --limit=50 --format=json`),
     ).toBe("allow")
+    expect(
+      await g.bash(`timeout 150 gcloud logging read 'protoPayload.resourceName:"secrets/syncer-token"' --project=e2b-dev-rauf-guliyev --limit=50`),
+    ).toBe("allow")
     expect(await g.bash("gcloud secrets versions access latest --secret=syncer-token --project=e2b-dev-rauf-guliyev")).toBe("ask")
   }))
