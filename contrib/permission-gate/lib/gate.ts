@@ -1461,6 +1461,15 @@ const ghReadOnly = new Set([
 // The generic Grafana MCP API tool reads when it sends a GET (the default when
 // no method is given) with no body; any other method can change Grafana.
 function grafanaApiReadRequest(permission: string, args: unknown) {
+  // Multi-operation Grafana MCP tools (alerting_manage_routing, ...) read when
+  // the chosen operation is a get/list/search; create/update/delete change Grafana.
+  if (
+    /^grafana-[a-z0-9-]+_[a-z0-9_]+$/.test(permission) &&
+    isRecord(args) &&
+    typeof args.operation === "string" &&
+    /^(?:get|list|search|find|query|describe)_[a-z0-9_]+$/.test(args.operation)
+  )
+    return true
   if (!/^grafana-[a-z0-9-]+_grafana_api_request$/.test(permission) || !isRecord(args)) return false
   const method = typeof args.method === "string" ? args.method.toUpperCase() : "GET"
   return ["GET", "HEAD"].includes(method) && (args.body === undefined || args.body === null || args.body === "")

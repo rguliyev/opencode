@@ -1736,6 +1736,18 @@ test("a read-only agent's dual-use shell command needs both the final reviewer a
     }
     expect(await api({ endpoint: "/api/serviceaccounts/search" }, "call_api_get")).toBe("allow")
     expect(await api({ endpoint: "/api/serviceaccounts", method: "POST", body: { name: "x" } }, "call_api_post")).toBe("ask")
+    const routing = async (args: Record<string, unknown>, id: string) => {
+      const tool = "grafana-foxtrot_alerting_manage_routing"
+      await hooks["tool.execute.before"]({ tool, sessionID: "ses_reviewer_shell", callID: id }, { args })
+      const output = { status: "ask" }
+      await hooks["permission.ask"](
+        { permission: tool, sessionID: "ses_reviewer_shell", patterns: ["*"], metadata: {}, tool: { callID: id } },
+        output,
+      )
+      return output.status
+    }
+    expect(await routing({ operation: "get_notification_policies" }, "call_route_get")).toBe("allow")
+    expect(await routing({ operation: "update_notification_policies", policy: {} }, "call_route_update")).toBe("ask")
     expect(await mcp("grafana-prod_update_dashboard")).toBe("ask")
     expect(await mcp("grafana-prod_create_incident")).toBe("ask")
     finalReviewChoice = "ask"
