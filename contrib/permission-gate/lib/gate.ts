@@ -1458,6 +1458,14 @@ const ghReadOnly = new Set([
 // _search_*, _query_*, _find_*, _check_* health probes, _user_info) only read;
 // a read-only agent may ask the reviewers for them. Every other MCP tool stays
 // outside the role.
+// The generic Grafana MCP API tool reads when it sends a GET (the default when
+// no method is given) with no body; any other method can change Grafana.
+function grafanaApiReadRequest(permission: string, args: unknown) {
+  if (!/^grafana-[a-z0-9-]+_grafana_api_request$/.test(permission) || !isRecord(args)) return false
+  const method = typeof args.method === "string" ? args.method.toUpperCase() : "GET"
+  return ["GET", "HEAD"].includes(method) && (args.body === undefined || args.body === null || args.body === "")
+}
+
 const grafanaMcpReadTool =
   /^grafana-[a-z0-9-]+_(?:(?:list|get|search|query|find|check)_[a-z0-9_]+|[a-z0-9_]+_read|user_info|assistant_search)$/
 
@@ -3789,7 +3797,8 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
       !new Set(["read", "glob", "grep", "lsp", "skill", "webfetch", "websearch", "external_directory"]).has(
         input.permission,
       ) &&
-      !grafanaMcpReadTool.test(input.permission)
+      !grafanaMcpReadTool.test(input.permission) &&
+      !grafanaApiReadRequest(input.permission, call?.args)
     const patterns = Array.isArray(input.patterns)
       ? input.patterns.filter((item): item is string => typeof item === "string")
       : []
@@ -3923,7 +3932,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
       ...(call ? { tool: call.tool, args } : {}),
       ...(trustedEffect ? { trusted_effect: trustedEffect } : {}),
       // The tool name comes from the configured Grafana MCP server, not the agent.
-      ...(grafanaMcpReadTool.test(input.permission)
+      ...(grafanaMcpReadTool.test(input.permission) || grafanaApiReadRequest(input.permission, call?.args)
         ? {
             tool_effect:
               "Grafana MCP read tool from the configured Grafana server: it lists, searches, or queries Grafana data (datasources, Loki, Prometheus, alert rules) and changes nothing.",

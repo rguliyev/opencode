@@ -1723,6 +1723,19 @@ test("a read-only agent's dual-use shell command needs both the final reviewer a
     expect(await mcp("grafana-prod_list_loki_label_values")).toBe("allow")
     expect(await mcp("grafana-prod_query_loki_logs")).toBe("allow")
     expect(await mcp("grafana-foxtrot_check_datasources_health")).toBe("allow")
+    // The generic API tool reads with GET (the default); other methods change Grafana.
+    const api = async (args: Record<string, unknown>, id: string) => {
+      const tool = "grafana-foxtrot_grafana_api_request"
+      await hooks["tool.execute.before"]({ tool, sessionID: "ses_reviewer_shell", callID: id }, { args })
+      const output = { status: "ask" }
+      await hooks["permission.ask"](
+        { permission: tool, sessionID: "ses_reviewer_shell", patterns: ["*"], metadata: {}, tool: { callID: id } },
+        output,
+      )
+      return output.status
+    }
+    expect(await api({ endpoint: "/api/serviceaccounts/search" }, "call_api_get")).toBe("allow")
+    expect(await api({ endpoint: "/api/serviceaccounts", method: "POST", body: { name: "x" } }, "call_api_post")).toBe("ask")
     expect(await mcp("grafana-prod_update_dashboard")).toBe("ask")
     expect(await mcp("grafana-prod_create_incident")).toBe("ask")
     finalReviewChoice = "ask"
