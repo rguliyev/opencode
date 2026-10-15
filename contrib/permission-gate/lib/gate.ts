@@ -787,6 +787,12 @@ function scratchOnlyShell(command: string, directory?: string) {
 function requiresHuman(command: string) {
   if (pythonTextOnly(command)) return false
   if (metadataOnly(command)) return false
+  // A `gcloud logging read` filter is search text, like a grep pattern: an
+  // audit query for "secrets/x" access events reads log entries, not the secret.
+  if (/^\s*gcloud\s+logging\s+read\b/.test(command))
+    command = command.replace(/'[^']*'|"(?:\\.|[^"\\])*"/g, (quoted) =>
+      quoted.startsWith("'") || !/\$\(|`/.test(quoted) ? '""' : quoted,
+    )
   command = withoutCredentialFileSetting(flattenArgvLists(command))
   return (
     /secretmanager\.googleapis\.com\/[^\s'"]*:access\b|google\.cloud\.secretmanager|\bgcloud\b[^\n;|&]*\bsecrets\s+versions\s+access\b|\bgcloud\b[^\n;|&]*\bauth\s+(?:print-access-token|print-identity-token|application-default\s+print-access-token)\b|application_default_credentials\.json|\b(?:credentials|access_tokens)\.db\b|\blegacy_credentials\b|oauth2\.googleapis\.com\/token|accounts\.google\.com\/o\/oauth2\/token/i.test(

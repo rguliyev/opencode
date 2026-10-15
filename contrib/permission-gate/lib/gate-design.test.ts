@@ -824,3 +824,12 @@ test("when a hard rule fires the reviewer still sees the masked command and the 
     expect(sent).not.toContain("withheld_by_local_guard")
     expect(output.message).toContain("Reviewer: It closes PR 7")
   }))
+
+test("an audit-log query naming a secret reads log entries, not the secret", () =>
+  withEnv(async () => {
+    const g = await gate("solo", "Find who read the syncer token this week.", () => 0.01)
+    expect(
+      await g.bash(`gcloud logging read 'protoPayload.methodName="google.cloud.secretmanager.v1.SecretManagerService.AccessSecretVersion" AND protoPayload.resourceName:"secrets/syncer-token"' --project=e2b-dev-rauf-guliyev --limit=50 --format=json`),
+    ).toBe("allow")
+    expect(await g.bash("gcloud secrets versions access latest --secret=syncer-token --project=e2b-dev-rauf-guliyev")).toBe("ask")
+  }))
