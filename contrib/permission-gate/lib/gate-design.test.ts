@@ -784,3 +784,40 @@ test("an rm -rf string inside inline JavaScript is data; JavaScript that spawns 
     const real = `node -e 'console.log(1)'; rm -rf /data/rguliyev/src/x`
     expect(await g.bash(real, [`node -e 'console.log(1)'`, "rm -rf /data/rguliyev/src/x"])).toBe("ask")
   }))
+
+test("when a hard rule fires the reviewer still sees the masked command and the rule, and the prompt explains it", () =>
+  withEnv(async () => {
+    const directory = path.resolve(import.meta.dir, "..")
+    const states: string[] = []
+    globalThis.fetch = (async (input: unknown) => {
+      const url = String(input)
+      if (url.includes("/session/ses_gate_design/message?"))
+        return Response.json([message("msg_gate_design", "user", "Explain the growth-only fallback.")])
+      if (url.startsWith("http://gate.test/session/"))
+        return Response.json({ id: "ses_gate_design", directory, agent: "solo", title: "gate design" })
+      if (url === "https://openrouter.ai/api/alpha/decisions")
+        return Response.json({ model: "typesafe/jev-1.13", answers: { verdict: { type: "choice", choice: "allow", confidence: 0.99, probabilities: { allow: 0.99, deny: 0.01 } } } })
+      throw new Error(`Unexpected fetch: ${url}`)
+    }) as typeof fetch
+    const hooks = await (CommandApproval as any)({
+      directory,
+      serverUrl: new URL("http://gate.test"),
+      reviewPermission: async ({ state }: { state: string }) => {
+        states.push(state)
+        return { model: "google/gemini-3.8-flash", choice: "ask", reason: "It closes PR 7 in e2b-dev/x, which you did not ask for." }
+      },
+    })
+    await hooks.provider.models({ models: {} }, { auth: { type: "api", key: "fake-test-key" } })
+    const command = "gh pr close 7 --repo e2b-dev/x"
+    const output: { status: string; message?: string } = { status: "ask" }
+    await hooks["permission.ask"](
+      { permission: "bash", sessionID: "ses_gate_design", patterns: [command], metadata: { command, purpose: "close", core_execution_agent: "solo" } },
+      output,
+    )
+    expect(output.status).toBe("ask")
+    const sent = states.find((state) => state.includes("gh pr close 7"))
+    expect(sent).toBeDefined()
+    expect(sent).toContain("local_rules")
+    expect(sent).not.toContain("withheld_by_local_guard")
+    expect(output.message).toContain("Reviewer: It closes PR 7")
+  }))

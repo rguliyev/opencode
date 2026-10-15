@@ -4891,12 +4891,21 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
 
           // Jev alone may clear a command whose only finding is unreadable
           // script evidence; every other finding needs the final reviewer's allow.
-          // A hard reason already forces an ask, so the second model is not called.
           const needsFinalAllow = evidence.some((item) => item.finding !== "missing_script_evidence")
           const finalReviewNeeded = !hard.length && (!result.allow || needsFinalAllow)
-          const finalReview = finalReviewNeeded
-            ? await reviewFinal(command, inspection.scripts, { ...context, jev_signal: jevSignal(result) }, inspection.error ?? undefined)
-            : ({ status: "not_needed" } as FinalReviewResult)
+          // A hard reason forces an ask whatever the reviewer says, but the
+          // reviewer still sees the masked command, scripts, and the rule that
+          // fired (context.local_rules), so the human's prompt explains what the
+          // command does instead of "details withheld".
+          const finalReview =
+            finalReviewNeeded || hard.length
+              ? await reviewFinal(
+                  command,
+                  inspection.scripts,
+                  { ...context, jev_signal: jevSignal(result), ...(hard.length ? { local_rules: hard } : {}) },
+                  inspection.error ?? undefined,
+                )
+              : ({ status: "not_needed" } as FinalReviewResult)
           if (finalReview.withheld) hard.push("review evidence withheld because redaction failed")
           const finalReviewAllow =
             finalReviewNeeded &&
