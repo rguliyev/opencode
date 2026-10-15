@@ -1085,7 +1085,9 @@ function withoutShellComments(content: string) {
 }
 
 function scriptHumanOperations(content: string, inWorktree = false, assignments = content) {
-  content = withoutShellComments(content)
+  // A backslash-newline continues the same command; `rm -rf "$a" \` + newline
+  // + `"$b"` is one delete of two targets, not a target named "\".
+  content = withoutShellComments(content).replace(/\\\r?\n/g, " ")
   const ownTemp = new Set(
     [...content.matchAll(/(?:^|[\s;&(])([A-Za-z_][A-Za-z0-9_]*)=["']?\$\(mktemp\s+-d\b[^)\n]*\)["']?/g)]
       .map((match) => match[1])
