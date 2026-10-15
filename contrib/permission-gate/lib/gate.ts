@@ -1178,8 +1178,22 @@ function secretMetadataOnly(command: string) {
   )
 }
 
+// Inline JavaScript (node/bun -e) that cannot start a process: strings in it
+// such as a test fixture 'sbx; rm -rf /' are data, not a shell command.
+function inlineScriptCannotSpawn(command: string) {
+  const match = command.match(
+    /^\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S+\s+)*(?:\S*\/)?(?:node|bun)\s+(?:(?:--import|-r|--require)\s+\S+\s+|--[\w-]+\s+)*-e\s+(["'])([\s\S]*)\1\s*$/,
+  )
+  return (
+    !!match &&
+    !/\b(?:child_process|spawn\w*|exec\w*|fork|eval|Function|Bun\s*\.\s*(?:spawn\w*|\$)|process\s*\.\s*(?:binding|dlopen)|require\s*\(\s*[^"'\x27]|import\s*\(\s*[^"'\x27]|worker_threads|vm)\b|\$`/.test(
+      match[2],
+    )
+  )
+}
+
 function requiresHumanOperation(command: string) {
-  if (inlinePythonCannotSpawn(command)) return false
+  if (inlinePythonCannotSpawn(command) || inlineScriptCannotSpawn(command)) return false
   if (secretMetadataOnly(command) && !/\bgcloud\s+secrets\s+(?:delete|versions\s+(?:add|destroy|disable))/.test(command))
     command = command.replace(/\bgcloud\s+secrets\s+(?:create|update)\b/g, "gcloud secrets-metadata")
   return /(?:^|[\n;|&(){}])\s*(?:(?:sudo|env)\s+)?(?:git\s+push|gh\s+pr\s+(?:create|edit|merge|close)|terraform\s+(?:apply|destroy)|terragrunt\s+(?:apply|destroy)|kubectl\s+(?:apply|delete|patch|replace|scale|rollout|set)|gcloud\s+(?:projects\s+add-iam-policy-binding|iam\s+(?!(?:(?:service-accounts|roles|workload-identity-pools|policies)(?:\s+keys)?\s+(?:list|describe|get-iam-policy)|list-grantable-roles|list-testable-permissions)(?:\s|$))|secrets\s+(?:create|delete|update|versions\s+(?:add|destroy|disable)))|aws\s+(?:iam\s+|secretsmanager\s+(?:create|delete|update|put|rotate))|tailscale\s+(?:set|up)\b[^\n;|&]*--exit-node|(?:rm\s+-rf|mkfs|wipefs)\b)/i.test(

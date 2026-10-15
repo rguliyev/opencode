@@ -774,3 +774,13 @@ test("rm -rf of a variable set once, earlier, to a scratch path is judged as tha
     expect(await run(`VAL=${val}\nVAL=/data/rguliyev\nrm -rf "$VAL"`)).toBe("ask")
     expect(await run(`VAL=/data/rguliyev\nrm -rf "$VAL"`)).toBe("ask")
   }))
+
+test("an rm -rf string inside inline JavaScript is data; JavaScript that spawns it still stops", () =>
+  withEnv(async () => {
+    const g = await gate("solo", "Fix the orphan-cgroup tests.", () => 0.01)
+    expect(await g.bash(`node -e 'const cases = ["sbx-a-b; rm -rf /"]; console.log(cases.length)'`)).toBe("allow")
+    expect(await g.bash(`PATH="/x/bin:$PATH" node -e 'require("fs").writeFileSync("t.mts", "x; rm -rf /")'`)).toBe("allow")
+    // A real rm -rf beside the inline script is still a shell command.
+    const real = `node -e 'console.log(1)'; rm -rf /data/rguliyev/src/x`
+    expect(await g.bash(real, [`node -e 'console.log(1)'`, "rm -rf /data/rguliyev/src/x"])).toBe("ask")
+  }))
