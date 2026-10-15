@@ -836,3 +836,45 @@ test("an audit-log query naming a secret reads log entries, not the secret", () 
     ).toBe("allow")
     expect(await g.bash("gcloud secrets versions access latest --secret=syncer-token --project=e2b-dev-rauf-guliyev")).toBe("ask")
   }))
+
+test("a read-only agent's folder grant for its tool output and scratch is the reviewer's call; elsewhere it stays read-only", () =>
+  withEnv(async () => {
+    const directory = path.resolve(import.meta.dir, "..")
+    const previousHome = process.env.OPENCODE_HOME
+    process.env.OPENCODE_HOME = "/data/rguliyev/opencode"
+    try {
+      globalThis.fetch = (async (input: unknown, init?: RequestInit) => {
+        const url = String(input)
+        if (url.includes("/session/ses_gate_design/message?"))
+          return Response.json([message("msg_gate_design", "user", "Save the sandbox output for the report.")])
+        if (url.startsWith("http://gate.test/session/"))
+          return Response.json({ id: "ses_gate_design", directory, agent: "researcher", title: "gate design" })
+        if (url === "https://openrouter.ai/api/alpha/decisions") {
+          const payload = JSON.parse(String(init?.body))
+          const answers: Record<string, unknown> = { verdict: { type: "choice", choice: "deny", confidence: 0.3, probabilities: { allow: 0.3, deny: 0.7 } } }
+          for (const id of Object.keys(payload.questions)) if (id !== "verdict") answers[id] = { type: "noul", noul: id === "reviewer_mutation" ? 0.9 : 0.01 }
+          return Response.json({ model: "typesafe/jev-1.13", answers })
+        }
+        throw new Error(`Unexpected fetch: ${url}`)
+      }) as typeof fetch
+      const hooks = await (CommandApproval as any)({
+        directory,
+        serverUrl: new URL("http://gate.test"),
+        reviewPermission: async () => ({ model: "google/gemini-3.8-flash", choice: "allow", reason: "saves output to scratch" }),
+      })
+      await hooks.provider.models({ models: {} }, { auth: { type: "api", key: "fake-test-key" } })
+      const grant = async (patterns: string[]) => {
+        const output: { status: string } = { status: "ask" }
+        await hooks["permission.ask"](
+          { permission: "external_directory", sessionID: "ses_gate_design", patterns, metadata: { core_trusted_builtin: true, core_execution_agent: "researcher" } },
+          output,
+        )
+        return output.status
+      }
+      expect(await grant(["/data/rguliyev/opencode/data/tool-output/*", "/data/rguliyev/tmp/opencode/sandbox-x/*"])).toBe("allow")
+      expect(await grant(["/data/rguliyev/opencode/data/tool-output/*", "/data/rguliyev/src/belt/*"])).toBe("ask")
+    } finally {
+      if (previousHome === undefined) delete process.env.OPENCODE_HOME
+      else process.env.OPENCODE_HOME = previousHome
+    }
+  }))

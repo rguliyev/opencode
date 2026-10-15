@@ -4080,7 +4080,26 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
       ].filter((value): value is string => typeof value === "string" && path.isAbsolute(value))
       return targets.length > 0 && targets.every((file) => classifyPath(policy, path.normalize(file)) === "scratch")
     })()
-    if (roleRestricted && !scratchOnlyEdit) reasons.push("read-only agent requested a non-read-only action")
+    // A folder grant for a read-only agent whose every folder is scratch (where
+    // it may save output) or OpenCode's own tool-output directory (its earlier,
+    // already-checked results) widens nothing beyond what it may already do.
+    const scratchOnlyGrant = (() => {
+      if (input.permission !== "external_directory") return false
+      const policy = loadEnvironmentPolicy()
+      if (!policy) return false
+      const targets = patterns.map((pattern) => pattern.replace(/\/\*+$/, "")).filter((target) => path.isAbsolute(target))
+      const toolOutput = path.normalize(toolOutputRoot())
+      return (
+        targets.length === patterns.length &&
+        targets.length > 0 &&
+        targets.every((target) => {
+          const normal = path.normalize(target)
+          return normal === toolOutput || normal.startsWith(toolOutput + path.sep) || classifyPath(policy, normal) === "scratch"
+        }) &&
+        targets.some((target) => classifyPath(policy, path.normalize(target)) === "scratch")
+      )
+    })()
+    if (roleRestricted && !scratchOnlyEdit && !scratchOnlyGrant) reasons.push("read-only agent requested a non-read-only action")
     if (
       (input.permission === "edit" &&
         [...patterns, metadata.filepath].some((value) => typeof value === "string" && protectedConfigReference(value))) ||
@@ -4269,7 +4288,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
     const finalReviewAllow =
       finalReviewNeeded &&
       reasons.length === 0 &&
-      (!reviewer || inherentlyReadOnly || scratchOnlyEdit || jevJudgedReadOnly(rawAnswers)) &&
+      (!reviewer || inherentlyReadOnly || scratchOnlyEdit || scratchOnlyGrant || jevJudgedReadOnly(rawAnswers)) &&
       eligibility.eligible &&
       finalReview.status === "score" &&
       finalReview.choice === "allow"
