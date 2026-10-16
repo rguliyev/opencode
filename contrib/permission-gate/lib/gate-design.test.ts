@@ -924,3 +924,10 @@ test("deletes inside a script's own mktemp directory are its scratch; a delete o
       rmSync(root, { recursive: true, force: true })
     }
   }))
+
+test("an rm -rf string in a quoted python heredoc is data; a heredoc that spawns stays a command", () =>
+  withEnv(async () => {
+    const g = await gate("solo", "Fix the lifecycle test.", () => 0.01)
+    expect(await g.bash(`python3 - <<'EOF'\nold = """\nrm -rf "$work/a"\n"""\np='t.sh'; s=open(p).read().replace(old, old.replace("$work", "\${work:?}")); open(p,'w').write(s)\nEOF`)).toBe("allow")
+    expect(await g.bash(`python3 - <<'EOF'\nimport subprocess\nsubprocess.call('true')\nrm -rf /data/rguliyev/src/x\nEOF`)).toBe("ask")
+  }))

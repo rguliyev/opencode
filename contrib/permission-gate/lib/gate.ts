@@ -1192,7 +1192,10 @@ function infraTargetClass(command: string, workdir: string): "local-dev" | "prod
 // kubectl, or wipefs; those words in its strings (a regex over a script, say)
 // are text. The reviewers still judge the code itself.
 function inlinePythonCannotSpawn(command: string) {
-  const match = command.match(/^\s*python3?\s+-c\s+(["'])([\s\S]*)\1\s*$/)
+  // `python3 - <<'EOF' ... EOF` with a quoted delimiter passes the code
+  // unexpanded, exactly like python3 -c '...'.
+  const heredoc = command.match(/^\s*python3?\s+-\s+<<-?\s*(['"])([A-Za-z_][A-Za-z0-9_]*)\1\s*\n([\s\S]*?)\n\s*\2\s*$/)
+  const match = heredoc ? [heredoc[0], "'", heredoc[3]] : command.match(/^\s*python3?\s+-c\s+(["'])([\s\S]*)\1\s*$/)
   return (
     !!match &&
     !/\b(?:subprocess|os\s*\.\s*(?:system|popen|exec\w*|spawn\w*|posix_spawn\w*|fork\w*)|pty|pexpect|plumbum|sh\s*\.|multiprocessing|ctypes|importlib|__import__|exec|eval|compile|getattr)\b/.test(
