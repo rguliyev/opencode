@@ -1807,6 +1807,24 @@ function nomadAddrEvidence(command: string) {
   return `nomad-tailscale-addr.sh: verified local helper; it runs a read-only gcloud compute instances list in ${match[2] ?? match[4]}'s project and prints only export NOMAD_ADDR="http://[addr]:port" (or the bare address); eval of its output only sets NOMAD_ADDR`
 }
 
+// `kubectl get secret X -o jsonpath='{.data}' | jq -r 'keys[]'` reads a secret's key names, not values: the
+// segment fetches the data map, but the only thing the pipeline prints is keys.
+function secretKeysOnlyEvidence(command: string, fullCommand: unknown) {
+  if (typeof fullCommand !== "string") return undefined
+  const parts = commandParts(command)
+  if (executableName(parts.verb) !== "kubectl" || !parts.args.includes("secret") || !parts.args.includes("get")) return undefined
+  const at = fullCommand.indexOf(command.trim())
+  if (at < 0) return undefined
+  const rest = fullCommand.slice(at + command.trim().length)
+  const pipe = rest.match(/^\s*\|\s*([^|\n;&]+?)(?:\s*(?:>\s*\S+))?\s*(?:$|[\n;&])/)
+  if (!pipe) return undefined
+  const filter = pipe[1]
+  const jqKeys = /^jq\s+(?:-[rc]+\s+)?(['"])(?:\.?\s*)?keys(?:\[\])?\1$/.test(filter.trim())
+  return jqKeys
+    ? "secret key names only: this segment's data map goes straight into a filter that prints only key names (jq keys), so no value is printed"
+    : undefined
+}
+
 function ghApiEvidence(command: string) {
   const nomad = nomadAddrEvidence(command)
   if (nomad) return nomad
@@ -4792,7 +4810,11 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
             ...(targetClass ? { target_class: targetClass } : {}),
             ...(commands.length > 1 && isSelfContainedSegment(command) ? { full_command: undefined } : {}),
             ...(moduleEvidence ? { module_evidence: moduleEvidence } : {}),
-            ...(ghApiEvidence(command) ? { command_evidence: ghApiEvidence(command) } : {}),
+            ...(ghApiEvidence(command)
+              ? { command_evidence: ghApiEvidence(command) }
+              : secretKeysOnlyEvidence(command, fullCommand)
+                ? { command_evidence: secretKeysOnlyEvidence(command, fullCommand) }
+                : {}),
           }
           const digest = createHash("sha256").update(command).digest("hex")
           const requestID = input.id ?? base.call ?? digest

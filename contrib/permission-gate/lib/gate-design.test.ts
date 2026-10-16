@@ -931,3 +931,40 @@ test("an rm -rf string in a quoted python heredoc is data; a heredoc that spawns
     expect(await g.bash(`python3 - <<'EOF'\nold = """\nrm -rf "$work/a"\n"""\np='t.sh'; s=open(p).read().replace(old, old.replace("$work", "\${work:?}")); open(p,'w').write(s)\nEOF`)).toBe("allow")
     expect(await g.bash(`python3 - <<'EOF'\nimport subprocess\nsubprocess.call('true')\nrm -rf /data/rguliyev/src/x\nEOF`)).toBe("ask")
   }))
+
+test("a secret's data piped straight into jq keys reaches the reviewer as key names only", () =>
+  withEnv(async () => {
+    const directory = path.resolve(import.meta.dir, "..")
+    const states: string[] = []
+    globalThis.fetch = (async (input: unknown) => {
+      const url = String(input)
+      if (url.includes("/session/ses_gate_design/message?"))
+        return Response.json([message("msg_gate_design", "user", "Which env vars does template-manager get from its secret?")])
+      if (url.startsWith("http://gate.test/session/"))
+        return Response.json({ id: "ses_gate_design", directory, agent: "solo", title: "gate design" })
+      if (url === "https://openrouter.ai/api/alpha/decisions")
+        return Response.json({ model: "typesafe/jev-1.13", answers: { verdict: { type: "choice", choice: "deny", confidence: 0.4, probabilities: { allow: 0.4, deny: 0.6 } } } })
+      throw new Error(`Unexpected fetch: ${url}`)
+    }) as typeof fetch
+    const hooks = await (CommandApproval as any)({
+      directory,
+      serverUrl: new URL("http://gate.test"),
+      reviewPermission: async ({ state }: { state: string }) => {
+        states.push(state)
+        return { model: "google/gemini-3.8-flash", choice: "allow", reason: "key names only" }
+      },
+    })
+    await hooks.provider.models({ models: {} }, { auth: { type: "api", key: "fake-test-key" } })
+    const send = async (full: string, segments: string[]) => {
+      states.length = 0
+      const output: { status: string } = { status: "ask" }
+      await hooks["permission.ask"](
+        { permission: "bash", sessionID: "ses_gate_design", patterns: segments, metadata: { command: full, purpose: "list keys", core_execution_agent: "solo" } },
+        output,
+      )
+      return states.join("\n")
+    }
+    const get = "kubectl --context gke_e2b-dev-rauf-guliyev_us-west1_dev-1-us-west1 -n e2b-orchestrator get secret tm-env -o jsonpath='{.data}'"
+    expect(await send(`${get} | jq -r 'keys[]'`, [get, "jq -r 'keys[]'"])).toContain("secret key names only")
+    expect(await send(`${get} | jq -r '.'`, [get, "jq -r '.'"])).not.toContain("secret key names only")
+  }))
