@@ -881,3 +881,46 @@ test("a read-only agent's folder grant for its tool output and scratch is the re
       else process.env.OPENCODE_HOME = previousHome
     }
   }))
+
+test("deletes inside a script's own mktemp directory are its scratch; a delete outside it stays hard", () =>
+  withEnv(async () => {
+    const { mkdtempSync, writeFileSync, rmSync } = await import("node:fs")
+    const root = mkdtempSync("/tmp/gate-test-own-")
+    try {
+      const directory = path.resolve(import.meta.dir, "..")
+      globalThis.fetch = (async (input: unknown) => {
+        const url = String(input)
+        if (url.includes("/session/ses_gate_design/message?"))
+          return Response.json([message("msg_gate_design", "user", "Run the lifecycle test.")])
+        if (url.startsWith("http://gate.test/session/"))
+          return Response.json({ id: "ses_gate_design", directory, agent: "solo", title: "gate design" })
+        if (url === "https://openrouter.ai/api/alpha/decisions")
+          return Response.json({ model: "typesafe/jev-1.13", answers: { verdict: { type: "choice", choice: "allow", confidence: 0.99, probabilities: { allow: 0.99, deny: 0.01 } } } })
+        throw new Error(`Unexpected fetch: ${url}`)
+      }) as typeof fetch
+      const hooks = await (CommandApproval as any)({
+        directory,
+        serverUrl: new URL("http://gate.test"),
+        reviewPermission: async () => ({ model: "google/gemini-3.8-flash", choice: "allow", reason: "local test" }),
+      })
+      await hooks.provider.models({ models: {} }, { auth: { type: "api", key: "fake-test-key" } })
+      let n = 0
+      const run = async (body: string) => {
+        writeFileSync(path.join(root, "t.sh"), `#!/usr/bin/env bash\nset -eu\nwork=$(mktemp -d "\${TMPDIR:-/tmp}/t.XXXXXX")\ntrap 'rm -rf "$work"' EXIT\n${body}\n`)
+        const callID = `call_own_${n++}`
+        const command = "bash t.sh"
+        await hooks["tool.execute.before"]({ tool: "bash", sessionID: "ses_gate_design", callID }, { args: { command, workdir: root } })
+        const output: { status: string } = { status: "ask" }
+        await hooks["permission.ask"](
+          { permission: "bash", sessionID: "ses_gate_design", patterns: [command], metadata: { command, purpose: "test", core_execution_agent: "solo" }, tool: { callID } },
+          output,
+        )
+        return output.status
+      }
+      expect(await run('repo="$work/repo"\nrm -rf "$work/state" "$work/host"\nrm -rf "$repo/gcp"')).toBe("allow")
+      expect(await run('rm -rf "${work:?}/state" "${work}/host"')).toBe("allow")
+      expect(await run('rm -rf "$work/state" "$HOME/.cache"')).toBe("ask")
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  }))

@@ -1106,6 +1106,17 @@ function scriptHumanOperations(content: string, inWorktree = false, assignments 
       .map((match) => match[1])
       .filter((name) => (content.match(new RegExp(`(?:^|[\\s;&(])(?:export\\s+|local\\s+|readonly\\s+)?${name}=`, "g")) ?? []).length === 1),
   )
+  // A variable assigned once to a path inside an own temp dir ("$work/repo")
+  // is inside it too.
+  for (const match of content.matchAll(/(?:^|[\s;&(])(?:export\s+|local\s+)?([A-Za-z_][A-Za-z0-9_]*)=["']?\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?\/[A-Za-z0-9._/-]+["']?(?=[\s;&)]|$)/g)) {
+    const [, name, base] = match
+    if (
+      ownTemp.has(base) &&
+      !match[0].includes("..") &&
+      (content.match(new RegExp(`(?:^|[\\s;&(])(?:export\\s+|local\\s+|readonly\\s+)?${name}=`, "g")) ?? []).length === 1
+    )
+      ownTemp.add(name)
+  }
   const checked = ownTemp.size
     ? content.replace(/\brm\s+-(?:rf|fr|r)\s+"?\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?"?(?=[\s;'"&|)]|$)/g, (found, name) =>
         ownTemp.has(name) ? "true" : found,
@@ -1130,6 +1141,16 @@ function scriptHumanOperations(content: string, inWorktree = false, assignments 
     }
     const rm = segment.match(/^\s*rm\s+-(?:rf|fr|r)\s+(.+?)\s*$/)
     const targets = rm ? rm[1].split(/\s+/).map((target) => target.replace(/^(["'])(.*)\1$/, "$2")) : []
+    // Paths inside the script's own mktemp directory ("$work/state") are its
+    // scratch, wherever the script lives.
+    const insideOwnTemp =
+      targets.length > 0 &&
+      targets.every((target) => {
+        // "$work/x", "${work}/x", and "${work:?}/x" (fail if unset) name the same path.
+        const variable = target.match(/^\$(?:\{([A-Za-z_][A-Za-z0-9_]*)(?::\?)?\}|([A-Za-z_][A-Za-z0-9_]*))(\/[A-Za-z0-9._/-]*)?$/)
+        return !!variable && ownTemp.has(variable[1] ?? variable[2]) && !(variable[3] ?? "").split("/").includes("..")
+      })
+    if (insideOwnTemp) continue
     const scriptOwned =
       inWorktree &&
       targets.length > 0 &&
