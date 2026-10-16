@@ -869,7 +869,9 @@ function credentialStoreTarget(target: string, stores: string[], containing: boo
 // and any push that could hit a shared branch or rewrite history, stays a
 // human gate.
 function finalReviewMayApprovePublish(command: string) {
-  const parts = commandParts(command)
+  // Merging or discarding the push's own output (2>&1, 2>/dev/null) does not
+  // change what it publishes.
+  const parts = commandParts(command.replace(/\s\d?>&\d(?=\s|$)|\s\d?>>?\s*\/dev\/null(?=\s|$)/g, ""))
   const name = executableName(parts.verb)
   if (name === "gh")
     return parts.args[0] === "pr" && ["create", "edit", "ready", "comment"].includes(parts.args[1] ?? "")

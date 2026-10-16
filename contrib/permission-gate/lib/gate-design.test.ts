@@ -85,6 +85,9 @@ test("a lease-pinned force push of the requested feature branch is the final rev
     expect(await g.bash("git push --force origin HEAD:refs/heads/staging-filestore-retirement")).toBe("ask")
     expect(await g.bash(`git push --force-with-lease=refs/heads/other:${sha} origin HEAD:refs/heads/staging-filestore-retirement`)).toBe("ask")
     expect(await g.bash(`git push --force-with-lease=refs/heads/main:${sha} origin HEAD:refs/heads/main`)).toBe("ask")
+    // Merging the push's own stderr does not change what it publishes.
+    expect(await g.bash("git push -u origin staging-filestore-retirement 2>&1")).toBe("allow")
+    expect(await g.bash("git push -u origin main 2>&1")).toBe("ask")
     g.setFinal("ask")
     expect(await g.bash(`git push --force-with-lease=refs/heads/staging-filestore-retirement:${sha} origin HEAD:refs/heads/staging-filestore-retirement`)).toBe("ask")
   }))
