@@ -4228,31 +4228,15 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
       input.permission === "external_directory" && call?.tool === "bash" && isRecord(call.args) && typeof call.args.command === "string"
         ? call.args.command
         : undefined
-    // A glob lists matching paths, never contents. When its last segment names
-    // one ordinary file (**/belt/infra/main.go), it cannot list a credential
-    // store's files, so a store inside the searched tree is not touched.
-    // Wildcard-only, key, and secret-like name patterns still count.
-    const globPattern =
-      input.permission === "glob"
-        ? patterns[0]
-        : input.permission === "external_directory" && call?.tool === "glob" && isRecord(call.args) && typeof call.args.pattern === "string"
-          ? call.args.pattern
-          : undefined
-    const globNamesOneFile = (() => {
-      const last = globPattern?.split("/").filter(Boolean).at(-1)
-      return (
-        !!last &&
-        /^[A-Za-z0-9][A-Za-z0-9._-]*\.[A-Za-z0-9]{1,8}$/.test(last) &&
-        !sensitiveFilename(last) &&
-        !/(?:^id_|\.pem$|\.key$|\.p12$|\.pfx$|_rsa|_ed25519|known_hosts|authorized_keys|\.netrc|config\.json$|auth\.json$)/i.test(last)
-      )
-    })()
+    // A glob lists matching paths, never contents, so a credential store
+    // somewhere inside the searched tree is not read (like ls of a key file).
+    // A glob rooted inside a store still counts.
     if (
       fileTargetPaths.some((file) =>
         credentialStorePath(
           file,
-          !globNamesOneFile &&
-            (["grep", "glob", "list"].includes(input.permission) || (input.permission === "external_directory" && shellCommand === undefined)),
+          ["grep", "list"].includes(input.permission) ||
+            (input.permission === "external_directory" && shellCommand === undefined && call?.tool !== "glob"),
         ),
       ) ||
       (shellCommand !== undefined && credentialStoreReference(shellCommand))
@@ -4930,9 +4914,14 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
           const scopes = [awsScopeReviewMessage(hardChecked, sessions)]
           const gcpScopes = [gcpScopeFindingInLoop(hardChecked, fullCommand, sessions)]
           // `script --help` (or -h) only asks for usage; whether the script reaches
-          // its secret reads before printing it is the reviewers' call with the
-          // script in front of them, not a hard gate.
-          const helpOnly = /^\s*(?:\S+=\S*\s+)*(?:env\s+(?:\S+=\S*\s+)*)?(?:\S*python3?\s+(?:-B\s+)?|bash\s+|sh\s+)?\S+\s+(?:--help|-h)\s*$/.test(command)
+          // its secret reads, credential switches, or other gated steps before
+          // printing it is the reviewers' call with the script in front of them,
+          // not a hard gate. Merging or discarding its output changes nothing.
+          const helpOnly = /^\s*(?:\S+=\S*\s+)*(?:env\s+(?:\S+=\S*\s+)*)?(?:\S*python3?\s+(?:-B\s+)?|bash\s+|sh\s+)?\S+\s+(?:--help|-h)\s*$/.test(
+            command.replace(/\s\d?>&\d(?=\s|$)|\s\d?>>?\s*\/dev\/null(?=\s|$)/g, ""),
+          )
+          const scriptScopes: string[] = []
+          const scriptGcpScopes: (GcpScopeFinding | undefined)[] = []
           for (const script of inspection.scripts) {
             if (requiresHuman(script.content) && helpOnly)
               evidence.push({ finding: "script_secret_access_help", detail: "the script can read secrets, but this run only passes --help/-h; judge whether it prints usage before any secret read" })
@@ -4944,13 +4933,24 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
               agentCheckout(path.resolve(workdir, script.path)),
               inspection.scripts.map((item) => item.content).join("\n"),
             )
-            if (operations.hard) hard.push("script human-only operation")
+            if (operations.hard && helpOnly)
+              evidence.push({ finding: "script_human_operation_help", detail: "the script can run a human-only operation, but this run only passes --help/-h; judge whether it prints usage first" })
+            else if (operations.hard) hard.push("script human-only operation")
             deletes.push(...operations.deletes)
-            scopes.push(awsScopeReviewMessage(script.content, sessions))
-            gcpScopes.push(gcpScopeFinding(script.content, sessions))
+            const aws = awsScopeReviewMessage(script.content, sessions)
+            if (aws) scriptScopes.push(aws)
+            scriptGcpScopes.push(gcpScopeFinding(script.content, sessions))
           }
           for (const scope of scopes) if (scope) hard.push(scope)
           addGcpScope(gcpScopes, hard, evidence)
+          if (helpOnly) {
+            const found = [...scriptScopes, ...scriptGcpScopes.flatMap((finding) => (finding ? [finding.message] : []))]
+            if (found.length)
+              evidence.push({ finding: "script_scope_help", detail: `the script selects cloud credentials or projects (${found.join("; ")}), but this run only passes --help/-h; judge whether it prints usage first` })
+          } else {
+            for (const scope of scriptScopes) hard.push(scope)
+            addGcpScope(scriptGcpScopes, hard, evidence)
+          }
           if (deletes.length)
             evidence.push({
               finding: "local_delete",

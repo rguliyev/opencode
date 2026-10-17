@@ -530,13 +530,33 @@ test("--help of a script that can read secrets is the reviewers' call; a real ru
       )
       const g = await gate("solo", "Validate the triage script for the PR.", () => 0.01)
       expect(await g.bash(`python3 -B ${script} --help`)).toBe("allow")
+      expect(await g.bash(`python3 -B ${script} --help 2>&1`)).toBe("allow")
       expect(await g.bash(`python3 -B ${script} --hosts a b`)).toBe("ask")
+      expect(await g.bash(`python3 -B ${script} --hosts a b 2>&1`)).toBe("ask")
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
   }))
 
-test("a glob naming one ordinary file across the home directory is not a credential-store read", () =>
+test("--help of a script that switches gcloud credentials is the reviewers' call; a real run stays hard", () =>
+  withEnv(async () => {
+    const { mkdtempSync, writeFileSync, rmSync } = await import("node:fs")
+    const dir = mkdtempSync(path.join((await import("node:os")).tmpdir(), "gate-help-"))
+    try {
+      const script = path.join(dir, "remote-auth.sh")
+      writeFileSync(
+        script,
+        '#!/usr/bin/env bash\nset -euo pipefail\ncase "${1:-}" in\n  start) gcloud auth login --no-launch-browser --update-adc ;;\n  verify) gcloud auth application-default print-access-token >/dev/null ;;\n  *) echo "usage: $0 start|verify"; exit 2 ;;\nesac\n',
+      )
+      const g = await gate("solo", "Re-check the gcloud login helper usage.", () => 0.01)
+      expect(await g.bash(`${script} --help 2>&1`)).toBe("allow")
+      expect(await g.bash(`${script} start 2>&1`)).toBe("ask")
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }))
+
+test("a glob across the home directory lists names, not a credential-store read; one rooted in a store stays hard", () =>
   withEnv(async () => {
     const directory = path.resolve(import.meta.dir, "..")
     const home = (await import("node:os")).homedir()
@@ -557,16 +577,16 @@ test("a glob naming one ordinary file across the home directory is not a credent
     })
     await hooks.provider.models({ models: {} }, { auth: { type: "api", key: "fake-test-key" } })
     let n = 0
-    const glob = async (pattern: string) => {
+    const glob = async (pattern: string, root = home) => {
       const callID = `call_glob_${n++}`
-      await hooks["tool.execute.before"]({ tool: "glob", sessionID: "ses_gate_design", callID }, { args: { pattern, path: home } })
+      await hooks["tool.execute.before"]({ tool: "glob", sessionID: "ses_gate_design", callID }, { args: { pattern, path: root } })
       const output: { status: string } = { status: "ask" }
       await hooks["permission.ask"](
         {
           permission: "glob",
           sessionID: "ses_gate_design",
           patterns: [pattern],
-          metadata: { pattern, path: home, matched_paths: [], match_count: 0, truncated: false, core_trusted_builtin: true, core_execution_agent: "solo" },
+          metadata: { pattern, path: root, matched_paths: [], match_count: 0, truncated: false, core_trusted_builtin: true, core_execution_agent: "solo" },
           tool: { callID },
         },
         output,
@@ -574,9 +594,9 @@ test("a glob naming one ordinary file across the home directory is not a credent
       return output.status
     }
     expect(await glob("**/belt/infra/main.go")).toBe("allow")
-    expect(await glob("**/*")).toBe("ask")
-    expect(await glob("**/id_ed25519")).toBe("ask")
-    expect(await glob("**/environments/*.env")).toBe("ask")
+    expect(await glob("**/filestore-ha-vpn/**")).toBe("allow")
+    expect(await glob("**/*")).toBe("allow")
+    expect(await glob("*", path.join(home, ".ssh"))).toBe("ask")
   }))
 
 test("a worktree script deleting its own relative output dir is reviewer evidence; an absolute one stays hard", () =>
