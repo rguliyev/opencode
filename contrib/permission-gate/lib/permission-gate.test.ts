@@ -3537,6 +3537,7 @@ test("configured OpenCode the final reviewer resolves Jev escalations with trust
     expect(seen.slice(beforeResearcher)).toEqual(["jev", "final_review"])
     expect((finalReviewState?.context as { role_policy?: string })?.role_policy).toContain("Read-only inspection only")
     expect((finalReviewState?.context as { role_policy?: string })?.role_policy).toContain("gh api GET calls, are allowed inspection")
+    expect((finalReviewState?.context as { role_policy?: string })?.role_policy).toContain("Creating or editing its own files there (notes, reports, helper scripts)")
 
     // A built-in glob cannot mutate anything, so Jev's mutation score does
     // not hold it back. Without core attestation it is not exempt.
