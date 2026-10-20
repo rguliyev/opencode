@@ -870,6 +870,7 @@ test("Jev receives paginated root human context and a distinct subagent task", a
   let childTaskAvailable = true
   let childTaskContainsPII = false
   let childTaskRedacted = false
+  let childTaskAttachment: "none" | "with_text" | "only" = "none"
   let childTaskWithheld = false
   let rootHumanAvailable = true
   const reviewCount = () => requests.filter((request) => request.startsWith("/api/alpha/decisions")).length
@@ -880,7 +881,17 @@ test("Jev receives paginated root human context and a distinct subagent task", a
     if (url.pathname === "/session/ses_child_context/message")
       return Response.json(
         childTaskAvailable
-          ? childTaskWithheld
+          ? childTaskAttachment !== "none"
+            ? [
+                {
+                  info: { id: "msg_child_attachment", role: "user", time: { created: 1_000 } },
+                  parts: [
+                    ...(childTaskAttachment === "with_text" ? [{ type: "text", text: "Build the overlay in the worktree." }] : []),
+                    { type: "file", mime: "image/png", url: "data:image/png;base64," + "A".repeat(64) },
+                  ],
+                },
+              ]
+            : childTaskWithheld
             ? [
                 {
                   info: { id: "msg_child_command", role: "user", time: { created: 1_000 } },
@@ -992,6 +1003,7 @@ test("Jev receives paginated root human context and a distinct subagent task", a
     expect(JSON.stringify(jevContext)).not.toContain("https://example.test/mcp/oauth/token")
     childTaskRedacted = false
 
+
     childTaskAvailable = false
     const missingTask = { status: "allow" }
     await hooks["permission.ask"](
@@ -1060,6 +1072,25 @@ test("Jev receives paginated root human context and a distinct subagent task", a
     )
     expect(withheldTask.status).toBe("ask")
     expect(reviewCount()).toBe(3)
+    // A task with an attached file keeps its text; the file is never sent.
+    childTaskAttachment = "with_text"
+    const attachedTask = { status: "ask" }
+    await hooks["permission.ask"](
+      { permission: "read", sessionID: "ses_child_context", patterns: ["fixture.txt"], metadata: { filepath: "fixture.txt" }, tool: { callID: "call_child_context" } },
+      attachedTask,
+    )
+    expect(attachedTask.status).toBe("allow")
+    expect(jevContext?.delegated_task).toBe("Build the overlay in the worktree.")
+    expect(JSON.stringify(jevContext)).not.toContain("A".repeat(64))
+    // An attachment with no task text is still unavailable.
+    childTaskAttachment = "only"
+    const attachmentOnly = { status: "allow", message: "" }
+    await hooks["permission.ask"](
+      { permission: "read", sessionID: "ses_child_context", patterns: ["fixture.txt"], metadata: { filepath: "fixture.txt" }, tool: { callID: "call_child_context" } },
+      attachmentOnly,
+    )
+    expect(attachmentOnly.status).toBe("ask")
+    childTaskAttachment = "none"
   } finally {
     globalThis.fetch = previousFetch
     if (previousStateHome === undefined) delete process.env.XDG_STATE_HOME

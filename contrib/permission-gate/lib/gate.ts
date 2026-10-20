@@ -3505,9 +3505,15 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
     if (!sessionID || !parentID) return undefined
     const latest = (await sessionUserMessages(sessionID))?.at(-1)
     // The delegated task is agent-authored context, never human authority.
-    // A redacted literal need not erase the rest of an otherwise reviewable
-    // task; synthetic prompts and non-text attachments remain unavailable.
-    return latest && (!latest.withheld || latest.withheld === "redacted_literal") ? latest.text : undefined
+    // A redacted literal or an attached file need not erase the rest of an
+    // otherwise reviewable task: the text is kept, the attachment itself is
+    // never sent. Synthetic prompts and attachment-only tasks stay unavailable.
+    return latest &&
+      (!latest.withheld ||
+        latest.withheld === "redacted_literal" ||
+        (latest.withheld === "non_text_attachment" && latest.text !== "[non-text attachment withheld]"))
+      ? latest.text
+      : undefined
   }
 
   function safeContextText(value: unknown, limit: number) {
