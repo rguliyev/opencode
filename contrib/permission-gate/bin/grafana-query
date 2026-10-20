@@ -4,6 +4,7 @@
 Usage:
   grafana-query HOST GET PATH
   grafana-query HOST POST PATH [JSON_BODY | @FILE | -]
+  grafana-query e2bfoxtrot.grafana.net CHECK_HOSTED_MCP /mcp
 
 HOST is e2bprod.grafana.net, e2bstg.grafana.net, or e2bfoxtrot.grafana.net.
 PATH starts with /.
@@ -14,12 +15,15 @@ datasource query and change nothing.
 The instance token is read from Google Secret Manager (the stack's project)
 into memory, sent only to HOST over HTTPS, and never printed, logged, or
 written. The response body goes to stdout; HTTP errors go to stderr with a
-non-zero exit.
+non-zero exit. The explicit CHECK_HOSTED_MCP exception sends the foxtrot token
+only to https://assistant-prod-us-west-0.grafana.net/mcp, for initialization
+and tool listing only, and prints sanitized compatibility results, never bodies.
 """
 import json
 import re
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 
@@ -33,6 +37,7 @@ SECRETS = {
 QUERY_POST = re.compile(r"^/(?:api/ds/query|apis/query\.grafana\.app/[A-Za-z0-9._/-]+/query)(?:\?[^\s]*)?$")
 MAX_BODY_BYTES = 1_000_000
 TIMEOUT_SECONDS = 60
+HOSTED_MCP_URL = "https://assistant-prod-us-west-0.grafana.net/mcp"
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -47,6 +52,105 @@ def fail(message: str) -> None:
     sys.exit(2)
 
 
+def read_mcp_result(response, request_id, deadline):
+    if "text/event-stream" not in response.headers.get("Content-Type", ""):
+        raw = response.read(MAX_BODY_BYTES + 1)
+        if len(raw) > MAX_BODY_BYTES:
+            raise ValueError("response_too_large")
+        message = json.loads(raw)
+        if not isinstance(message, dict) or message.get("id") != request_id:
+            raise ValueError("unexpected_rpc_response")
+        return message
+    total, data = 0, []
+    while time.monotonic() < deadline:
+        line = response.readline(MAX_BODY_BYTES - total + 1)
+        total += len(line)
+        if total > MAX_BODY_BYTES:
+            raise ValueError("response_too_large")
+        if not line or not line.strip():
+            if data:
+                message = json.loads("\n".join(data))
+                if isinstance(message, dict) and message.get("id") == request_id:
+                    return message
+                data = []
+            if not line:
+                break
+        elif line.startswith(b"data:"):
+            data.append(line[5:].decode().strip())
+    raise ValueError("missing_rpc_response")
+
+
+def check_hosted_mcp(token):
+    """Fixed-host, read-only protocol check; never returns or prints the token."""
+    opener = urllib.request.build_opener(NoRedirect)
+    deadline = time.monotonic() + 60
+    session, protocol = None, "2025-06-18"
+    calls = [
+        ("initialize", 1, {"protocolVersion": protocol, "capabilities": {},
+                           "clientInfo": {"name": "e2b-instance-token-check", "version": "1"}}),
+        ("notifications/initialized", None, None),
+        ("tools/list", 2, {}),
+    ]
+    for method, request_id, params in calls:
+        message = {"jsonrpc": "2.0", "method": method}
+        if request_id is not None:
+            message["id"] = request_id
+        if params is not None:
+            message["params"] = params
+        headers = {"Authorization": f"Bearer {token}",
+                   "Accept": "application/json, text/event-stream",
+                   "Content-Type": "application/json", "MCP-Protocol-Version": protocol}
+        if session:
+            headers["Mcp-Session-Id"] = session
+        request = urllib.request.Request(HOSTED_MCP_URL, data=json.dumps(message).encode(),
+                                         method="POST", headers=headers)
+        try:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError()
+            with opener.open(request, timeout=min(20, remaining)) as response:
+                status = response.status
+                if request_id is None:
+                    print(json.dumps({"stage": method, "http": status}))
+                    continue
+                payload = read_mcp_result(response, request_id, deadline)
+                result = payload.get("result")
+                ok = isinstance(result, dict) and "error" not in payload
+                summary = {"stage": method, "http": status, "rpc_result": ok}
+                if not ok:
+                    print(json.dumps(summary))
+                    return 1
+                if method == "initialize":
+                    negotiated = result.get("protocolVersion")
+                    if not isinstance(negotiated, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", negotiated):
+                        raise ValueError("invalid_protocol")
+                    protocol = negotiated
+                    session = response.headers.get("Mcp-Session-Id")
+                    summary["protocol"] = protocol
+                else:
+                    tools = result.get("tools")
+                    if not isinstance(tools, list):
+                        raise ValueError("invalid_tools_result")
+                    summary.update({"instance_token_accepted_by_hosted_mcp": True,
+                                    "tools_on_first_page": len(tools),
+                                    "more_pages": bool(result.get("nextCursor"))})
+                print(json.dumps(summary))
+        except urllib.error.HTTPError as error:
+            summary = {"stage": method, "http": error.code,
+                       "instance_token_accepted_by_hosted_mcp": False}
+            challenge = error.headers.get("WWW-Authenticate", "")
+            match = re.search(r'error="(invalid_token|insufficient_scope|invalid_request)"', challenge)
+            if match:
+                summary["auth_error"] = match.group(1)
+            error.close()
+            print(json.dumps(summary))
+            return 1
+        except Exception as error:
+            print(json.dumps({"stage": method, "probe_error": type(error).__name__}))
+            return 2
+    return 0
+
+
 def main() -> None:
     args = sys.argv[1:]
     if len(args) < 3 or args[0] in ("-h", "--help"):
@@ -58,7 +162,11 @@ def main() -> None:
     if not path.startswith("/") or "://" in path or any(c.isspace() for c in path):
         fail("PATH must be an absolute API path such as /api/datasources")
     body = None
-    if method == "GET":
+    hosted_check = method == "CHECK_HOSTED_MCP"
+    if hosted_check:
+        if host != "e2bfoxtrot.grafana.net" or path != "/mcp" or len(args) != 3:
+            fail("CHECK_HOSTED_MCP requires e2bfoxtrot.grafana.net and /mcp, with no body")
+    elif method == "GET":
         if len(args) != 3:
             fail("GET takes no request body")
     elif method == "POST":
@@ -93,6 +201,8 @@ def main() -> None:
     if token.returncode != 0 or not token.stdout.strip():
         # gcloud's stderr names the failure (e.g. expired login), not the token.
         fail("could not read the instance token: " + token.stderr.strip()[-300:])
+    if hosted_check:
+        sys.exit(check_hosted_mcp(token.stdout.strip()))
     request = urllib.request.Request(
         f"https://{host}{path}",
         data=body,

@@ -1605,10 +1605,10 @@ const opencodeScripts = "/data/rguliyev/opencode/scripts"
 // reads the Grafana instance token itself and never prints it, so a query
 // through it involves no credential handling by the agent. The gate trusts
 // it only when the installed file matches this hash.
-const grafanaHelperSha256 = "cd1d7767f5bd059347ac96259c4be42049ab498ff90ad73ecffc6b2500507b5d"
-// The previous release (consolidated stacks only) stays trusted until the
-// new helper is installed after the gate restarts.
-const previousGrafanaHelperSha256 = "c5d5277d4ee3c863e255b2def44cc6d36a22389b32c4544bf15ff4b60a348cff"
+const grafanaHelperSha256 = "7b734eec89e6b5ed7adcfc67e63ab59490d81ca00bd79916cff08dc12270a47d"
+// The previous release (no CHECK_HOSTED_MCP mode) stays trusted until the
+// new helper is installed.
+const previousGrafanaHelperSha256 = "cd1d7767f5bd059347ac96259c4be42049ab498ff90ad73ecffc6b2500507b5d"
 
 function grafanaHelperPath() {
   return process.env.OPENCODE_GRAFANA_HELPER ?? path.join(opencodeScripts, "grafana-query")
