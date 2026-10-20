@@ -1,6 +1,10 @@
 type Session = { id: string; parentID?: string }
 
-const indicator = (color: string) => `\x1b]21337;indicator=${color}\x07`
+// iTerm hides tab icons behind its background-output spinner. A paused progress
+// indicator takes that slot instead; specify 100 so no stale progress is reused.
+// Keep the dot for terminals that support session status but not paused progress.
+const indicator = (pending: boolean) =>
+  `\x1b]21337;indicator=${pending ? "#ffa500" : ""}\x07\x1b]9;4;${pending ? "4;100" : "0"}\x07`
 
 export function hasPendingPermission(
   sessionID: string,
@@ -26,12 +30,12 @@ export function createItermPermissionIndicator(input: {
     set(pending: boolean) {
       if (!enabled || active === pending) return
       active = pending
-      input.write(indicator(pending ? "#ffa500" : ""))
+      input.write(indicator(pending))
     },
     dispose() {
       if (!active) return
       active = false
-      input.write(indicator(""))
+      input.write(indicator(false))
     },
   }
 }
