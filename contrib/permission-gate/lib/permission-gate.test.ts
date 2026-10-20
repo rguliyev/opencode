@@ -1067,6 +1067,69 @@ test("Jev receives paginated root human context and a distinct subagent task", a
   }
 })
 
+test("a channel DB symlinked to the main DB is opened once, so a large session keeps its human request", async () => {
+  const directory = path.resolve(import.meta.dir, "..")
+  const home = mkdtempSync(path.join(tmpdir(), "permission-context-home-"))
+  const dataDir = path.join(home, "data")
+  mkdirSync(dataDir)
+  const filename = path.join(dataDir, "opencode.db")
+  const db = new SQLiteDatabase(filename)
+  const previous = { db: process.env.OPENCODE_DB, home: process.env.OPENCODE_HOME, state: process.env.XDG_STATE_HOME }
+  const previousFetch = globalThis.fetch
+  let state: Record<string, unknown> | undefined
+  try {
+    db.exec(
+      "CREATE TABLE session (id TEXT PRIMARY KEY, directory TEXT NOT NULL);" +
+        "CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, time_created INTEGER NOT NULL, data TEXT NOT NULL);" +
+        "CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT NOT NULL, data TEXT NOT NULL, session_id TEXT, time_created INTEGER);",
+    )
+    db.query("INSERT INTO session VALUES (?, ?)").run("ses_symlinked_db", directory)
+    db.query("INSERT INTO message VALUES (?, ?, ?, ?)").run("msg_user_1", "ses_symlinked_db", 1_000, JSON.stringify({ role: "user", time: { created: 1_000 } }))
+    db.query("INSERT INTO part (id, message_id, data) VALUES (?, ?, ?)").run("part_user_1", "msg_user_1", JSON.stringify({ type: "text", text: "Review the fixture locally." }))
+    db.close()
+    // opencode-<branch>.db -> opencode.db, as a channel build leaves behind.
+    symlinkSync("opencode.db", path.join(dataDir, "opencode-some-branch.db"))
+    delete process.env.OPENCODE_DB
+    process.env.OPENCODE_HOME = home
+    process.env.XDG_STATE_HOME = "/dev/null"
+    globalThis.fetch = async (input, init) => {
+      const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url)
+      if (url.pathname === "/session/ses_symlinked_db") return Response.json({ id: "ses_symlinked_db", directory, agent: "solo" })
+      // The message API is over the response cap for this session.
+      if (url.pathname === "/session/ses_symlinked_db/message") return new Response("x".repeat(300 * 1024), { headers: { "content-type": "application/json" } })
+      if (url.href === "https://openrouter.ai/api/alpha/decisions") {
+        if (typeof init?.body !== "string") throw new Error("Missing Jev request body")
+        const payload: unknown = JSON.parse(init.body)
+        if (!isRecord(payload) || !isRecord(payload.state) || !isRecord(payload.questions)) throw new Error("Invalid Jev request body")
+        state = payload.state
+        const answers: Record<string, unknown> = {
+          verdict: { type: "choice", choice: "allow", confidence: 0.99, probabilities: { allow: 0.99, deny: 0.01 } },
+        }
+        for (const id of Object.keys(payload.questions)) if (id !== "verdict") answers[id] = { type: "noul", noul: 0.01 }
+        return Response.json({ model: "typesafe/jev-1.13", answers })
+      }
+      throw new Error(`Unexpected fetch: ${url.href}`)
+    }
+    const hooks = await gateForTest(directory, "solo", async () => ({ model: "google/gemini-3.8-flash", choice: "allow", reason: "local read" }))
+    await hooks.provider.models({ models: {} }, { auth: { type: "api", key: "fake-test-key" } })
+    await hooks["tool.execute.before"]({ tool: "read", sessionID: "ses_symlinked_db", callID: "call_symlinked" }, { args: { filePath: "fixture.txt" } })
+    const output = { status: "ask" }
+    await hooks["permission.ask"](
+      { permission: "read", sessionID: "ses_symlinked_db", patterns: ["fixture.txt"], metadata: { filepath: "fixture.txt" }, tool: { callID: "call_symlinked" } },
+      output,
+    )
+    const context = state?.context
+    expect(isRecord(context) ? context.human_request : undefined).toBe("Review the fixture locally.")
+    expect(output.status).toBe("allow")
+  } finally {
+    globalThis.fetch = previousFetch
+    for (const [key, value] of [["OPENCODE_DB", previous.db], ["OPENCODE_HOME", previous.home], ["XDG_STATE_HOME", previous.state]] as const)
+      if (value === undefined) delete process.env[key]
+      else process.env[key] = value
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
 test("a long live-style session yields bounded user history without hydrating giant assistant replies", async () => {
   const directory = path.resolve(import.meta.dir, "..")
   const root = mkdtempSync(path.join(tmpdir(), "permission-context-db-"))

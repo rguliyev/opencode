@@ -3265,6 +3265,15 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
           .filter((name) => /^opencode(?:-[a-zA-Z0-9._-]+)?\.db$/.test(name))
           .sort()
           .map((name) => path.join(dataDir, name))
+        // A channel DB can be a symlink to another (opencode-<branch>.db ->
+        // opencode.db). Open each real file once; otherwise the same session
+        // is found twice and reads as an ambiguous match.
+        const real = new Map<string, string>()
+        for (const file of candidates) {
+          const target = await realpath(file).catch(() => undefined)
+          if (target && !real.has(target)) real.set(target, file)
+        }
+        candidates = [...real.values()]
       } catch {
         return { status: "not_found" as const }
       }
