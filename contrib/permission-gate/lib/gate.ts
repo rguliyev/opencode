@@ -768,11 +768,13 @@ function scratchOnlyShell(command: string, directory?: string) {
       classifyPath(policy, path.normalize(destination)) === "scratch"
     )
   }
-  if (!policy || parts.error || parts.directory || !["mkdir", "mv", "cp"].includes(verb)) return false
+  if (!policy || parts.error || parts.directory || !["mkdir", "mv", "cp", "rm"].includes(verb)) return false
   const targets = parts.args.filter((argument) => !argument.startsWith("-"))
-  const flags = verb === "mkdir" ? /^-[pv]+$/ : /^-[fvnrR]+$/
+  // rm removes only files the agent named; without -r it cannot take a
+  // directory, so it cannot clear the scratch root or another task's folder.
+  const flags = verb === "mkdir" ? /^-[pv]+$/ : verb === "rm" ? /^-[fv]+$/ : /^-[fvnrR]+$/
   return (
-    targets.length > (verb === "mkdir" ? 0 : 1) &&
+    targets.length > (verb === "mkdir" || verb === "rm" ? 0 : 1) &&
     parts.args.every((argument) => !argument.startsWith("-") || flags.test(argument)) &&
     // cp only writes its destination; mv also removes its sources, so every
     // path must be in scratch. A credential-store source still stops on its own.

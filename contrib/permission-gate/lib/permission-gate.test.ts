@@ -1891,6 +1891,15 @@ test("a read-only agent's dual-use shell command needs both the final reviewer a
     expect(await batched(["mkdir -p /data/rguliyev/tmp/opencode/gate-delegation-runtime/x"])).toBe("ask")
     expect(await batched(["mkdir -p /data/rguliyev/projects/x"])).toBe("ask")
     expect(await batched(["mkdir -p /data/rguliyev/tmp/opencode/../../x"])).toBe("ask")
+    // Removing named files it saved in scratch is the same scratch work;
+    // recursive deletes, the gate's runtime folder, and paths outside scratch still ask.
+    // The final reviewer's allow counts despite Jev's mutation score only for the scratch file.
+    finalReviewChoice = "allow"
+    expect(await batched(["rm -f /data/rguliyev/tmp/opencode/juliett_n1_allocs.json"])).toBe("allow")
+    expect(await batched(["rm -rf /data/rguliyev/tmp/opencode/audit-20261006"])).toBe("ask")
+    expect(await batched(["rm -f /data/rguliyev/tmp/opencode/gate-delegation-runtime/away-log.txt"])).toBe("ask")
+    expect(await batched(["rm -f /data/rguliyev/projects/x.json"])).toBe("ask")
+    finalReviewChoice = "ask"
     // Process substitution: the full call is itself one of the patterns.
     finalReviewChoice = "allow"
     mutation["diff <(git show HEAD:a.yaml) <(git show HEAD~1:a.yaml)"] = 0.05
