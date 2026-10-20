@@ -38,8 +38,24 @@ const webhook = /https:\/\/(?:hooks\.slack\.com\/services|discord(?:app)?\.com\/
 // private key, or chat webhook URL. The permission gate treats these as a hard
 // human gate; the generic assignment/header/URL-password patterns are only
 // evidence for its reviewers, because they are usually names or references.
+// A token-shaped literal whose own text says it is not real
+// (xoxb-fixture-..., a webhook URL ending in /fake...) is test data, not a
+// credential. Provider prefixes such as sk_test_ are real keys, so "test"
+// alone does not count.
+const declaredFake = /fixture|fake|dummy|example|placeholder|mock|sample|redacted|notreal|changeme/i
+
+function realMatch(pattern: RegExp, text: string) {
+  const global = new RegExp(pattern.source, pattern.flags.includes("g") ? pattern.flags : pattern.flags + "g")
+  return [...text.matchAll(global)].some((match) => !declaredFake.test(match[0]))
+}
+
 export function containsCredentialMaterial(text: string) {
-  return providerToken.test(text) || jwt.test(text) || webhook.test(text) || /-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(text)
+  return (
+    realMatch(providerToken, text) ||
+    realMatch(jwt, text) ||
+    realMatch(webhook, text) ||
+    /-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(text)
+  )
 }
 
 // This is deliberately a bounded, local detector rather than a claim that

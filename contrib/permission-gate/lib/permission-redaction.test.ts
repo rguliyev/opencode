@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs"
 import path from "node:path"
 import { expect, test } from "bun:test"
-import { sanitizeReviewText, sanitizeReviewValue } from "./permission-redaction"
+import { containsCredentialMaterial, sanitizeReviewText, sanitizeReviewValue } from "./permission-redaction"
 
 test("redacts credential values but keeps command action and target", () => {
   const token = "sk-" + "A".repeat(40)
@@ -209,4 +209,17 @@ test("a credential-named setting holding a file path is not masked; a slash-led 
   const path = "GOOGLE_APPLICATION_CREDENTIALS=/home/u/.config/gcloud/application_default_credentials.json gcloud info"
   expect(sanitizeReviewText(path).value).toBe(path)
   expect(sanitizeReviewText("API_TOKEN=/Xq9aB3kLmN0pQ7rS2tUv").value).toContain("[REDACTED:CREDENTIAL]")
+})
+
+test("a token-shaped literal that declares itself fake is test data, not credential material", () => {
+  const real = "xoxb-" + "1234567890-0987654321-AbCdEfGhIjKlMnOpQrStUv"
+  expect(containsCredentialMaterial(`const token = "${real}"`)).toBe(true)
+  expect(containsCredentialMaterial('const token = "xoxb-fixture-bot-token-for-incident-eval"')).toBe(false)
+  expect(containsCredentialMaterial("url = 'https://hooks.slack.com/services/T000/B000/fakefakefakefake'")).toBe(false)
+  // A fake literal next to a real one still counts.
+  expect(containsCredentialMaterial(`"xoxb-fixture-bot-token-for-incident-eval" "${real}"`)).toBe(true)
+  // Provider test-mode keys are real keys.
+  expect(containsCredentialMaterial('stripe = "sk_test_' + "4eC39HqLyjWDarjtT1zdp7dc" + '"')).toBe(true)
+  // Redaction still masks the fake value in what the reviewers see.
+  expect(sanitizeReviewText('const token = "xoxb-fixture-bot-token-for-incident-eval"').value).not.toContain("xoxb-fixture")
 })
