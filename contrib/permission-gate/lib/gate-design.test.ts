@@ -538,6 +538,16 @@ test("--help of a script that can read secrets is the reviewers' call; a real ru
     }
   }))
 
+test("printing a gcloud token straight to /dev/null is a login check; printing it anywhere else stays hard", () =>
+  withEnv(async () => {
+    const g = await gate("solo", "Render the template-manager chart.", () => 0.01)
+    expect(await g.bash("gcloud auth print-access-token >/dev/null 2>&1")).toBe("allow")
+    expect(await g.bash("gcloud auth print-access-token &>/dev/null")).toBe("allow")
+    expect(await g.bash("gcloud auth print-access-token")).toBe("ask")
+    expect(await g.bash("gcloud auth print-access-token 2>/dev/null")).toBe("ask")
+    expect(await g.bash("gcloud auth print-access-token > /data/rguliyev/tmp/opencode/token.txt")).toBe("ask")
+  }))
+
 test("--help of a script that switches gcloud credentials is the reviewers' call; a real run stays hard", () =>
   withEnv(async () => {
     const { mkdtempSync, writeFileSync, rmSync } = await import("node:fs")

@@ -1726,6 +1726,17 @@ function invokesHelper(verb: string, name: string, helperPath: string) {
 }
 
 // `gcloud-remote-auth.sh status` / `verify`, and nothing else in the segment.
+// The whole segment is a gcloud token print whose stdout goes to /dev/null
+// (stderr may be merged or discarded too); nothing is printed or kept.
+function discardedTokenCheck(command: string) {
+  const stdoutDiscarded = /\s(?:1|&)?>\s*\/dev\/null(?=\s|$)/.test(command)
+  const rest = command
+    .replace(/\s(?:1|&)?>\s*\/dev\/null(?=\s|$)/g, "")
+    .replace(/\s2>&1(?=\s|$)|\s2>\s*\/dev\/null(?=\s|$)/g, "")
+    .trim()
+  return stdoutDiscarded && /^gcloud\s+auth\s+(?:print-access-token|print-identity-token|application-default\s+print-access-token)$/.test(rest)
+}
+
 function gcloudAuthStatusCheck(command: string) {
   // Merging or discarding the check's own output (2>&1, 2>/dev/null) does not
   // change what it does.
@@ -4908,7 +4919,12 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
           // A read-only Google API call with the existing login is the final reviewer's to
           // confirm; the rest of the segment still faces the hard rules.
           const tokenRead = readOnlyGoogleApiTokenCall(command, fullCommand)
-          const hardChecked = tokenRead ?? command
+          // `gcloud auth print-access-token >/dev/null` discards the token: it only
+          // tests that the shared login works, like gcloud-remote-auth.sh status.
+          const loginCheck = discardedTokenCheck(command)
+          const hardChecked = loginCheck ? "" : (tokenRead ?? command)
+          if (loginCheck)
+            evidence.push({ finding: "login_check", detail: "login check: prints a gcloud token straight to /dev/null; it only tests that the shared login works" })
           if (tokenRead !== undefined)
             evidence.push({
               finding: "token_read",
