@@ -26,6 +26,10 @@ const pathValue = /^(?:\/|~\/|\.\.?\/)[A-Za-z0-9._/-]*$/
 const credentialFilePath = /^(?:\/|~\/|\.\.?\/)(?:[A-Za-z0-9._-]+\/)+[A-Za-z0-9_-][A-Za-z0-9._-]*\.(?:json|pem|key|p12|crt|yaml|yml|toml|ini|cfg|conf|txt)$/
 // A documentation placeholder such as NOMAD_TOKEN=<token> holds no value.
 const placeholder = /^<[A-Za-z][A-Za-z0-9_.-]{0,62}>$/
+// Unquoted, `apiKey: config.e2b.apiKey,` reads a property; the value lives
+// elsewhere. Quoted, the same text is a literal. Provider tokens with dots
+// (ya29.…) are still masked by their own pattern.
+const propertyPath = /^[A-Za-z_$][\w$]*(?:\??\.[A-Za-z_$][\w$]*)+\s*[;,})]?$/
 
 // Provider-issued token formats and signed JWTs: values with these shapes are
 // real credentials far more often than not, unlike the generic patterns below.
@@ -84,6 +88,7 @@ function sanitizeText(input: string): RedactionResult<string> {
         placeholder.test(secret.trim()) ||
         (pathSetting.test(prefix) && pathValue.test(secret.trim())) ||
         credentialFilePath.test(secret.trim()) ||
+        (!/["'`]\s*$/.test(prefix) && propertyPath.test(secret.trim())) ||
         !shouldRedact(prefix, secret)
       )
         return found

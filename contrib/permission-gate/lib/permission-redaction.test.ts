@@ -223,3 +223,13 @@ test("a token-shaped literal that declares itself fake is test data, not credent
   // Redaction still masks the fake value in what the reviewers see.
   expect(sanitizeReviewText('const token = "xoxb-fixture-bot-token-for-incident-eval"').value).not.toContain("xoxb-fixture")
 })
+
+test("an unquoted property path after a credential-named key is a reference, not a value", () => {
+  const code = "\t\t\tapiKey: config.e2b.apiKey,\n\t\t\ttoken = opts?.auth.token;\n\t\t\tpassword: user.password }"
+  const safe = sanitizeReviewText(code)
+  expect(safe.value).toBe(code)
+  expect(safe.kinds).toEqual([])
+  // Quoted, it is a literal string that happens to contain dots.
+  expect(sanitizeReviewText('password: "hunter.two"').value).toContain("[REDACTED:CREDENTIAL]")
+  expect(sanitizeReviewText("token = ya29." + "a".repeat(30)).value).toContain("[REDACTED:")
+})
