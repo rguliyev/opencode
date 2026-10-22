@@ -761,7 +761,12 @@ function scratchOnlyShell(command: string, directory?: string) {
     (verb === "git" && parts.args[0] === "clone" ? parts.args.slice(1) : undefined)
   if (policy && !parts.error && !parts.directory && clone) {
     const positional = clone.slice(0, clone.includes("--") ? clone.indexOf("--") : undefined).filter((argument) => !argument.startsWith("-"))
-    const destination = positional[1]
+    // A relative destination is resolved against the directory the clone runs
+    // in (`cd /scratch/repos && git clone URL review`).
+    const destination =
+      positional[1] && !path.isAbsolute(positional[1]) && directory && path.isAbsolute(directory)
+        ? path.resolve(directory, positional[1])
+        : positional[1]
     return (
       positional.length === 2 &&
       path.isAbsolute(destination) &&
@@ -944,6 +949,10 @@ const textOnlyTools = new Set(["grep", "egrep", "fgrep", "rg", "ag", "echo", "pr
 const helpExitTools = new Set(["gcloud", "kubectl", "gh", "git", "terraform", "terragrunt", "aws", "tailscale"])
 
 function segmentRequiresHumanOperation(raw: string) {
+  // `cat <<'EOF' > notes.json ... EOF` writes its quoted body to a file; words
+  // in that body (mkfs, rm -rf, git push) are data, not commands. Running the
+  // written file later is judged on its own.
+  if (/^\s*cat\s+<<-?\s*(['"])([A-Za-z_][A-Za-z0-9_]*)\1\s*>>?\s*[^\s;&|<>]+\s*\n[\s\S]*\n\s*\2\s*$/.test(raw)) return false
   // `if grep -q 'mkfs' f; then` runs grep; shell keywords are not the command.
   const segment = raw.replace(/^(?:(?:if|then|elif|else|while|until|do|!|\{|\()\s+)+/, "")
   const parts = commandParts(segment)
@@ -1956,7 +1965,20 @@ function pathAssignments(fullCommand: unknown) {
   const vars = new Map<string, string>()
   if (typeof fullCommand !== "string") return vars
   const seen = new Set<string>()
-  for (const segment of splitSegments(fullCommand)) {
+  // `. /abs/env.sh` (or `source`) runs that file's assignments here: its lines
+  // are read in place, so `T=/data/.../task` there names $T below. Anything
+  // that is not a plain literal assignment still makes the name unknown.
+  const segments = splitSegments(fullCommand).flatMap((segment) => {
+    const sourced = segment.match(/^\s*(?:\.|source)\s+(["']?)(\/[A-Za-z0-9._\/-]+)\1\s*$/)?.[2]
+    if (!sourced) return [segment]
+    try {
+      const text = readFileSync(sourced, "utf8")
+      return text.length <= 65536 ? text.split("\n").filter((line) => line.trim() && !line.trim().startsWith("#")) : [segment]
+    } catch {
+      return [segment]
+    }
+  })
+  for (const segment of segments) {
     const assignment = segment.match(/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=(["']?)([^\s"'`;|&]*)\2\s*$/)
     if (!assignment) {
       for (const match of segment.matchAll(/(?:^|[\s;&|(])(?:export\s+|local\s+|readonly\s+|declare\s+)?([A-Za-z_][A-Za-z0-9_]*)=/g)) {

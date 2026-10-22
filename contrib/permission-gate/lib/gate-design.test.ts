@@ -562,6 +562,29 @@ test("the whole-call copy of a chain does not turn its feature-branch push into 
     expect(await g.bash(forced, [forced, `cd ${dir}`, "git rev-parse origin/main", force])).toBe("ask")
   }))
 
+test("variables from a sourced env file and quoted heredoc data are resolved", () =>
+  withEnv(async () => {
+    const { mkdtempSync, writeFileSync, rmSync } = await import("node:fs")
+    const task = mkdtempSync("/data/rguliyev/tmp/opencode/gate-env-")
+    try {
+      writeFileSync(path.join(task, "env.sh"), `T=${task}\n`)
+      writeFileSync(path.join(task, "bad.sh"), "T=/etc\n")
+      const g = await gate("solo", "Regenerate the extracted scripts.", () => 0.01)
+      // $T comes from the sourced env.sh: a delete inside the task folder is reviewer evidence.
+      const ok = `. ${task}/env.sh && rm -rf $T/scripts`
+      expect(await g.bash(ok, [`. ${task}/env.sh`, "rm -rf $T/scripts"])).toBe("allow")
+      const bad = `. ${task}/bad.sh && rm -rf $T/scripts`
+      expect(await g.bash(bad, [`. ${task}/bad.sh`, "rm -rf $T/scripts"])).toBe("ask")
+      // A quoted heredoc written to a file is data, whatever words it holds.
+      const note = `cat <<'EOF' > ${task}/record.json\n{"disk": "mkfs.xfs -f /dev/nvme0n2", "cleanup": "rm -rf /"}\nEOF`
+      expect(await g.bash(note)).toBe("allow")
+      const live = `cat <<EOF > ${task}/record.json\n$(rm -rf /data/rguliyev/src)\nEOF`
+      expect(await g.bash(live)).toBe("ask")
+    } finally {
+      rmSync(task, { recursive: true, force: true })
+    }
+  }))
+
 test("printing a gcloud token straight to /dev/null is a login check; printing it anywhere else stays hard", () =>
   withEnv(async () => {
     const g = await gate("solo", "Render the template-manager chart.", () => 0.01)

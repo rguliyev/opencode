@@ -1908,6 +1908,9 @@ test("a read-only agent's dual-use shell command needs both the final reviewer a
     expect(await batched(["rm -rf /data/rguliyev/tmp/opencode/audit-20261006"])).toBe("ask")
     expect(await batched(["rm -f /data/rguliyev/tmp/opencode/gate-delegation-runtime/away-log.txt"])).toBe("ask")
     expect(await batched(["rm -f /data/rguliyev/projects/x.json"])).toBe("ask")
+    // A clone into scratch counts as scratch work with a relative target after cd too.
+    expect(await batched(["cd /data/rguliyev/tmp/opencode/repos", "git clone https://github.com/example/repo review"])).toBe("allow")
+    expect(await batched(["cd /data/rguliyev/src", "git clone https://github.com/example/repo review"])).toBe("ask")
     finalReviewChoice = "ask"
     // Process substitution: the full call is itself one of the patterns.
     finalReviewChoice = "allow"
