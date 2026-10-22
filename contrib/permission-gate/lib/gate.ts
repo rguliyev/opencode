@@ -4950,7 +4950,14 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
               .every((segment) => commands.some((other) => other !== command && other.trim() === segment.trim()))
           if (segmentRequiresHumanOperation(command) && !wholeCallCopy && !(targetClass === "local-dev" && !reviewer)) {
             const local = localDeleteTargets(command, fullCommand, workdir)
-            if (finalReviewMayApprovePublish(command))
+            // A chain reported as one pattern (`cd x && go test ./... && git push
+            // origin HEAD:feature`) is judged step by step: when every human-only
+            // step in it is a publish step, it follows the publish rule.
+            const humanSteps = splitSegments(command).filter((segment) => segmentRequiresHumanOperation(segment))
+            if (
+              finalReviewMayApprovePublish(command) ||
+              (humanSteps.length > 0 && humanSteps.every((segment) => finalReviewMayApprovePublish(segment.trim())))
+            )
               evidence.push({ finding: "publish", detail: "publish: needs the final reviewer to confirm an explicit human request" })
             else if (local) deletes.push(...local)
             else hard.push("human-only operation")

@@ -545,8 +545,17 @@ test("the whole-call copy of a chain does not turn its feature-branch push into 
     const push = "git push -u origin dashboard-20261022"
     const full = `cd ${dir} && B=$(git rev-parse origin/main) && ${push}`
     expect(await g.bash(full, [full, `cd ${dir}`, "git rev-parse origin/main", push])).toBe("allow")
-    // Without the push as its own pattern the whole call still decides.
-    expect(await g.bash(full, [full, `cd ${dir}`, "git rev-parse origin/main"])).toBe("ask")
+    // Without the push as its own pattern the whole call is judged step by
+    // step: its only human-only step is a feature-branch push, so the publish
+    // rule (the reviewer confirming the human's request) decides.
+    expect(await g.bash(full, [full, `cd ${dir}`, "git rev-parse origin/main"])).toBe("allow")
+    // A chain reported as a single pattern is judged step by step too.
+    const single = `cd ${dir} && go test ./... && git push origin HEAD:dashboard-20261022`
+    expect(await g.bash(single, [single])).toBe("allow")
+    const singleForce = `cd ${dir} && go test ./... && git push --force origin HEAD:dashboard-20261022`
+    expect(await g.bash(singleForce, [singleForce])).toBe("ask")
+    const singleMain = `cd ${dir} && go test ./... && git push origin HEAD:main`
+    expect(await g.bash(singleMain, [singleMain])).toBe("ask")
     // A force push stays human-only either way.
     const force = "git push --force origin dashboard-20261022"
     const forced = `cd ${dir} && B=$(git rev-parse origin/main) && ${force}`
