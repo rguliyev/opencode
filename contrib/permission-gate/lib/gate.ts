@@ -3324,7 +3324,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
             `WITH users AS (
               SELECT id, time_created, data FROM message
               WHERE session_id = ? AND json_extract(data, '$.role') = 'user'
-              ORDER BY time_created, id LIMIT ?
+              ORDER BY time_created DESC, id DESC LIMIT ?
             )
             SELECT users.id, users.time_created, users.data, part.id AS part_id,
               json_extract(part.data, '$.type') AS part_type,
@@ -3336,7 +3336,9 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
             FROM users LEFT JOIN part ON part.message_id = users.id
             ORDER BY users.time_created, users.id, part.id LIMIT 2049`,
           )
-          .all(root, 513)
+          // A long session keeps its most recent 512 user messages; older ones
+          // would be replaced by markers in storeHumanMessages anyway.
+          .all(root, 512)
         if (rows.length > 2048) return { status: "invalid" as const }
         const messages: HumanMessage[] = []
         let current: string | undefined

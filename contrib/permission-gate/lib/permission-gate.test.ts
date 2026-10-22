@@ -1098,7 +1098,7 @@ test("Jev receives paginated root human context and a distinct subagent task", a
   }
 })
 
-test("a channel DB symlinked to the main DB is opened once, so a large session keeps its human request", async () => {
+test("a channel DB symlinked to the main DB is opened once and a session past 512 user messages keeps its latest request", async () => {
   const directory = path.resolve(import.meta.dir, "..")
   const home = mkdtempSync(path.join(tmpdir(), "permission-context-home-"))
   const dataDir = path.join(home, "data")
@@ -1115,8 +1115,17 @@ test("a channel DB symlinked to the main DB is opened once, so a large session k
         "CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT NOT NULL, data TEXT NOT NULL, session_id TEXT, time_created INTEGER);",
     )
     db.query("INSERT INTO session VALUES (?, ?)").run("ses_symlinked_db", directory)
-    db.query("INSERT INTO message VALUES (?, ?, ?, ?)").run("msg_user_1", "ses_symlinked_db", 1_000, JSON.stringify({ role: "user", time: { created: 1_000 } }))
-    db.query("INSERT INTO part (id, message_id, data) VALUES (?, ?, ?)").run("part_user_1", "msg_user_1", JSON.stringify({ type: "text", text: "Review the fixture locally." }))
+    // A long session: more user messages than the fallback reads. The most
+    // recent ones are kept, so the latest request is still found.
+    const insertMessage = db.query("INSERT INTO message VALUES (?, ?, ?, ?)")
+    const insertPart = db.query("INSERT INTO part (id, message_id, data) VALUES (?, ?, ?)")
+    db.transaction(() => {
+      for (let index = 0; index < 600; index++) {
+        const id = `msg_user_${String(index).padStart(4, "0")}`
+        insertMessage.run(id, "ses_symlinked_db", 1_000 + index, JSON.stringify({ role: "user", time: { created: 1_000 + index } }))
+        insertPart.run(`part_user_${index}`, id, JSON.stringify({ type: "text", text: index === 599 ? "Review the fixture locally." : `Earlier note ${index}.` }))
+      }
+    })()
     db.close()
     // opencode-<branch>.db -> opencode.db, as a channel build leaves behind.
     symlinkSync("opencode.db", path.join(dataDir, "opencode-some-branch.db"))
