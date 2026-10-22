@@ -538,6 +538,21 @@ test("--help of a script that can read secrets is the reviewers' call; a real ru
     }
   }))
 
+test("the whole-call copy of a chain does not turn its feature-branch push into a human-only step", () =>
+  withEnv(async () => {
+    const g = await gate("solo", "Push the dashboard branch and open the PR.", () => 0.01)
+    const dir = "/data/rguliyev/tmp/opencode/worktrees"
+    const push = "git push -u origin dashboard-20261022"
+    const full = `cd ${dir} && B=$(git rev-parse origin/main) && ${push}`
+    expect(await g.bash(full, [full, `cd ${dir}`, "git rev-parse origin/main", push])).toBe("allow")
+    // Without the push as its own pattern the whole call still decides.
+    expect(await g.bash(full, [full, `cd ${dir}`, "git rev-parse origin/main"])).toBe("ask")
+    // A force push stays human-only either way.
+    const force = "git push --force origin dashboard-20261022"
+    const forced = `cd ${dir} && B=$(git rev-parse origin/main) && ${force}`
+    expect(await g.bash(forced, [forced, `cd ${dir}`, "git rev-parse origin/main", force])).toBe("ask")
+  }))
+
 test("printing a gcloud token straight to /dev/null is a login check; printing it anywhere else stays hard", () =>
   withEnv(async () => {
     const g = await gate("solo", "Render the template-manager chart.", () => 0.01)

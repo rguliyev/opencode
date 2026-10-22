@@ -4937,7 +4937,18 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
           // aimed at any other project, and every live kubectl mutation, stays
           // a human ask even when Jev allows. Kev still receives both.
           const deletes: { path: string; class: string }[] = []
-          if (segmentRequiresHumanOperation(command) && !(targetClass === "local-dev" && !reviewer)) {
+          // With command substitution core also reports the whole call as a
+          // pattern. When every human-only step in it is also its own pattern,
+          // those steps are judged there (a feature-branch push by the publish
+          // rule); the whole-call copy adds nothing to judge.
+          const wholeCallCopy =
+            commands.length > 1 &&
+            typeof fullCommand === "string" &&
+            command.trim() === fullCommand.trim() &&
+            splitSegments(fullCommand)
+              .filter((segment) => segmentRequiresHumanOperation(segment))
+              .every((segment) => commands.some((other) => other !== command && other.trim() === segment.trim()))
+          if (segmentRequiresHumanOperation(command) && !wholeCallCopy && !(targetClass === "local-dev" && !reviewer)) {
             const local = localDeleteTargets(command, fullCommand, workdir)
             if (finalReviewMayApprovePublish(command))
               evidence.push({ finding: "publish", detail: "publish: needs the final reviewer to confirm an explicit human request" })
