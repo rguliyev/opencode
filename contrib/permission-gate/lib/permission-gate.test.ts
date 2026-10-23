@@ -2118,6 +2118,24 @@ test("shell segments get module evidence and self-contained segments are judged 
       "rm -rf /data/rguliyev/.cache/x",
     ])
       expect(await shellStatus(command)).toBe("ask")
+    // $PWD is the directory the earlier literal cd moved to, not the gate's own.
+    const chainStatus = async (command: string) => {
+      const output = { status: "ask" }
+      await hooks["permission.ask"](
+        { permission: "bash", sessionID: "ses_go_module", patterns: command.split(" && "), metadata: { command } },
+        output,
+      )
+      return output.status
+    }
+    // The delete reaches the reviewers as a worktree-scoped delete, not a hard human-only gate.
+    await chainStatus("cd /data/rguliyev/tmp/opencode/worktrees/terraform/x && V=$PWD/.validation/final && rm -rf $V")
+    expect(JSON.stringify(contexts["rm -rf $V"])).toContain(
+      "recursive delete inside writable local paths: /data/rguliyev/tmp/opencode/worktrees/terraform/x/.validation/final (worktree)",
+    )
+    expect(await chainStatus('cd "$X" && V=$PWD/.validation/final && rm -rf $V')).toBe("ask")
+    expect(await chainStatus("cd /data/rguliyev/tmp/opencode/worktrees/charts && V=$PWD && rm -rf $V")).toBe("ask")
+    await chainStatus("(cd /data/rguliyev/tmp/opencode/worktrees/terraform/y && V=$PWD/out && rm -rf $V)")
+    expect(JSON.stringify(contexts["rm -rf $V)"] ?? {})).not.toContain("worktrees/terraform/y/out (worktree)")
     expect(
       await shellStatus(
         `gcloud logging read 'resource.type="gce_instance" AND textPayload=~"(?i)xfs|mkfs|nvme|rm -rf"' --project=e2b-dev-rauf-guliyev --limit=50`,

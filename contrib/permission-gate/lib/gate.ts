@@ -1000,12 +1000,12 @@ function segmentRequiresHumanOperation(raw: string) {
 // the same call names that path: VAL=/tmp/x/val; rm -rf "$VAL". One set only
 // after the delete is still empty when rm runs ("$VAL/" would be "/"), so it
 // stays unresolved.
-function withEarlierPathAssignments(segment: string, raw: string, fullCommand: unknown) {
+function withEarlierPathAssignments(segment: string, raw: string, fullCommand: unknown, cwd?: string) {
   if (typeof fullCommand !== "string" || !segment.includes("$")) return segment
   const at = fullCommand.indexOf(raw.trim())
   if (at <= 0) return segment
-  const vars = pathAssignments(fullCommand.slice(0, at))
-  const whole = pathAssignments(fullCommand)
+  const vars = pathAssignments(fullCommand.slice(0, at), cwd)
+  const whole = pathAssignments(fullCommand, cwd)
   return segment.replace(/(["']?)\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))/g, (found, quote, braced, bare) => {
     const name = braced ?? bare
     const value = vars.get(name)
@@ -1016,7 +1016,7 @@ function withEarlierPathAssignments(segment: string, raw: string, fullCommand: u
 function localDeleteTargets(raw: string, fullCommand: unknown, workdir: string | undefined) {
   const policy = loadEnvironmentPolicy()
   // Discarding the delete's own output changes nothing else.
-  const segment = withEarlierPathAssignments(raw, raw, fullCommand)
+  const segment = withEarlierPathAssignments(raw, raw, fullCommand, workdir)
     .replace(/^(?:(?:if|then|elif|else|while|until|do|!|\{|\()\s+)+/, "")
     .replace(/\s\d?>>?\s*\/dev\/null(?=\s|$)|\s\d?>&\d(?=\s|$)/g, "")
   if (!policy || /[$`<>~]|\bsudo\b/.test(segment)) return undefined
@@ -1966,8 +1966,11 @@ function precedingDirectory(fullCommand: unknown, command: string, cwd: string) 
 
 // A variable assigned more than once could name a different file where the
 // script runs, so it stays unresolved and the script is reported missing.
-function pathAssignments(fullCommand: unknown) {
+// $PWD is the directory the command has reached through literal `cd` steps
+// from cwd; any other `cd` makes it unknown. The gate's own PWD is never used.
+function pathAssignments(fullCommand: unknown, cwd?: string) {
   const vars = new Map<string, string>()
+  let dir = cwd
   if (typeof fullCommand !== "string") return vars
   const seen = new Set<string>()
   // `. /abs/env.sh` (or `source`) runs that file's assignments here: its lines
@@ -1984,6 +1987,11 @@ function pathAssignments(fullCommand: unknown) {
     }
   })
   for (const segment of segments) {
+    if (/(?:^|[\s({!])(?:builtin\s+)?(?:cd|pushd|popd)(?:\s|$)/.test(segment)) {
+      const target = segment.match(/^\s*cd\s+(["']?)([^\s"'$`;&|~]+)\1\s*$/)?.[2]
+      dir = target && (dir || path.isAbsolute(target)) ? path.resolve(dir ?? "/", target) : undefined
+      continue
+    }
     const assignment = segment.match(/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=(["']?)([^\s"'`;|&]*)\2\s*$/)
     if (!assignment) {
       for (const match of segment.matchAll(/(?:^|[\s;&|(])(?:export\s+|local\s+|readonly\s+|declare\s+)?([A-Za-z_][A-Za-z0-9_]*)=/g)) {
@@ -1998,7 +2006,11 @@ function pathAssignments(fullCommand: unknown) {
     }
     seen.add(assignment[1])
     const value = assignment[3].replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)/g, (whole, braced, bare) =>
-      vars.get(braced ?? bare) ?? process.env[braced ?? bare] ?? whole,
+      (braced ?? bare) === "PWD"
+        ? (dir ?? whole)
+        : (braced ?? bare) === "OLDPWD"
+          ? whole
+          : (vars.get(braced ?? bare) ?? process.env[braced ?? bare] ?? whole),
     )
     if (path.isAbsolute(value) && !value.includes("$")) vars.set(assignment[1], value)
     else vars.delete(assignment[1])
@@ -2133,7 +2145,7 @@ function heredocScripts(fullCommand: unknown, cwd: string) {
 
 async function inspectScripts(command: string, cwd: string, fullCommand?: unknown) {
   const heredocs = heredocScripts(fullCommand, cwd)
-  const found = scriptPaths(command, precedingDirectory(fullCommand, command, cwd), 0, pathAssignments(fullCommand))
+  const found = scriptPaths(command, precedingDirectory(fullCommand, command, cwd), 0, pathAssignments(fullCommand, cwd))
   if (found.error) return { error: found.error, scripts: [] as ScriptEvidence[] }
   const paths = found.scripts
   if (paths.length > maxScripts)
