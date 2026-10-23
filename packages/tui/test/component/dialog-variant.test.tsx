@@ -3,11 +3,13 @@ import { expect, test } from "bun:test"
 import { createDefaultOpenTuiKeymap } from "@opentui/keymap/opentui"
 import { testRender, useRenderer } from "@opentui/solid"
 import { onCleanup, Show } from "solid-js"
+import { createStore } from "solid-js/store"
 import path from "node:path"
 import { tmpdir } from "../fixture/fixture"
 import { TestTuiContexts } from "../fixture/tui-environment"
 import { createTuiResolvedConfig } from "../fixture/tui-runtime"
-import { eventSource, createFetch } from "../fixture/tui-sdk"
+import { eventSource, createFetch, json } from "../fixture/tui-sdk"
+import { ModelContextControl } from "../../src/component/dialog-context"
 import { ModelVariantControl } from "../../src/component/dialog-variant"
 import { TuiConfigProvider } from "../../src/config"
 import { ArgsProvider } from "../../src/context/args"
@@ -22,7 +24,13 @@ import { OpencodeKeymapProvider, registerOpencodeKeymap } from "../../src/keymap
 import { DialogProvider, useDialog } from "../../src/ui/dialog"
 import { ToastProvider } from "../../src/ui/toast"
 
-async function mount(options?: { directory?: string; sessionID?: string; model?: string }) {
+async function mount(options?: {
+  directory?: string
+  sessionID?: string
+  model?: string
+  context?: boolean
+  backend?: { metadata: Record<string, unknown>; fail?: boolean }
+}) {
   const tmp = await tmpdir()
   const directory = options?.directory ?? tmp.path
   const config = createTuiResolvedConfig()
@@ -31,20 +39,43 @@ async function mount(options?: { directory?: string; sessionID?: string; model?:
   let route!: ReturnType<typeof useRoute>
   let dialog!: ReturnType<typeof useDialog>
   const calls = createFetch()
+  const [data, setData] = createStore({
+    session: options?.backend ? [{ id: options.sessionID!, metadata: structuredClone(options.backend.metadata) }] : [],
+  })
+  const fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const request = input instanceof Request ? input : new Request(input, init)
+    if (options?.backend && new URL(request.url).pathname === `/session/${options.sessionID}`) {
+      if (request.method === "PATCH") {
+        if (options.backend.fail) return json({ message: "save failed" }, { status: 500 })
+        options.backend.metadata = (await request.json()).metadata
+      }
+      return json({ id: options.sessionID, metadata: options.backend.metadata })
+    }
+    return calls.fetch(input, init)
+  }) as typeof globalThis.fetch
   // This fixture supplies only the synchronized data consumed by LocalProvider.
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion
   const sync = {
+    session: { get: (id: string) => data.session.find((session) => session.id === id) },
+    set: setData,
     data: {
       agent: [{ name: "build", mode: "primary", model: { providerID: "test", modelID: "reasoner" } }],
       config: {},
       provider_default: {},
-      session: [],
+      get session() {
+        return data.session
+      },
       provider: [
         {
           id: "test",
           name: "Test",
           models: {
-            reasoner: { name: "Reasoner", capabilities: { reasoning: true }, variants: { low: {}, high: {} } },
+            reasoner: {
+              limit: { context: 1_050_000, input: 922_000, output: 128_000 },
+              name: "Reasoner",
+              capabilities: { reasoning: true },
+              variants: { low: {}, high: {} },
+            },
             plain: { name: "Plain", capabilities: { reasoning: false }, variants: { fast: {} } },
             fixed: { name: "Fixed", capabilities: { reasoning: false } },
           },
@@ -58,6 +89,7 @@ async function mount(options?: { directory?: string; sessionID?: string; model?:
     route = useRoute()
     dialog = useDialog()
     const { theme } = useTheme()
+    if (options?.context) return <ModelContextControl color={theme.textMuted} />
     return (
       <Show when={local.model.variant.list().length > 0}>
         <ModelVariantControl color={theme.warning} />
@@ -80,7 +112,7 @@ async function mount(options?: { directory?: string; sessionID?: string; model?:
                   <RouteProvider
                     initialRoute={options?.sessionID ? { type: "session", sessionID: options.sessionID } : undefined}
                   >
-                    <SDKProvider url="http://test" events={eventSource()} fetch={calls.fetch}>
+                    <SDKProvider url="http://test" events={eventSource()} fetch={fetch}>
                       <PermissionProvider>
                         <SyncContext.Provider value={sync}>
                           <ThemeProvider mode="dark" source={{ discover: async () => ({}) }}>
@@ -338,5 +370,88 @@ test("CLI preserves saved reasoning and does not replace a new session's submitt
     expect(home.local.model.variant.current()).toBe("fast")
   } finally {
     await home.cleanup()
+  }
+})
+
+test("context control opens, saves a draft budget via keyboard, rejects oversized values, and resets", async () => {
+  const setup = await mount({ context: true })
+  try {
+    await setup.frame("Context:")
+    expect(setup.local.model.context.info()?.effective).toBe(902_000)
+    await setup.app.mockMouse.click(3, 0)
+    await setup.frame("Context size / compaction budget")
+    setup.app.mockInput.pressArrow("down")
+    setup.app.mockInput.pressEnter()
+    for (let i = 0; i < 50 && setup.dialog.stack.length; i++) await Bun.sleep(10)
+    expect(setup.local.model.context.info()?.selected).toBe(32_000)
+    expect(setup.local.model.context.metadata()).toEqual({ contextBudgets: { "test/reasoner": 32_000 } })
+    await expect(setup.local.model.context.set(2_000_000)).rejects.toThrow("Choose between")
+    expect(setup.local.model.context.info()?.selected).toBe(32_000)
+    await setup.app.mockMouse.click(3, 0)
+    await setup.frame("Context size / compaction budget")
+    setup.app.mockInput.pressArrow("up")
+    setup.app.mockInput.pressEnter()
+    for (let i = 0; i < 50 && setup.dialog.stack.length; i++) await Bun.sleep(10)
+    expect(setup.local.model.context.info()?.selected).toBeUndefined()
+    expect(setup.local.model.context.info()?.effective).toBe(902_000)
+  } finally {
+    await setup.cleanup()
+  }
+})
+
+test("attached context budget persists through SDK updates and client reopen; failed saves preserve selection", async () => {
+  const backend = {
+    metadata: { owner: "server", contextBudgets: { "other/model": 64_000 } } as Record<string, unknown>,
+    fail: false,
+  }
+  const setup = await mount({ context: true, sessionID: "ses_context", backend })
+  try {
+    await setup.local.model.context.set(256_000)
+    expect(backend.metadata).toEqual({
+      owner: "server",
+      contextBudgets: { "other/model": 64_000, "test/reasoner": 256_000 },
+    })
+    expect(setup.local.model.context.info()?.effective).toBe(256_000)
+    await setup.frame("256")
+    backend.fail = true
+    await expect(setup.local.model.context.set(64_000)).rejects.toBeDefined()
+    expect(setup.local.model.context.info()?.effective).toBe(256_000)
+  } finally {
+    await setup.cleanup()
+  }
+  backend.fail = false
+  const reopened = await mount({ context: true, sessionID: "ses_context", backend })
+  try {
+    expect(reopened.local.model.context.info()?.effective).toBe(256_000)
+    reopened.local.model.set({ providerID: "test", modelID: "plain" })
+    expect(reopened.local.model.context.info()).toBeUndefined()
+    reopened.local.model.set({ providerID: "test", modelID: "reasoner" })
+    expect(reopened.local.model.context.info()?.effective).toBe(256_000)
+    await reopened.local.model.context.set()
+    expect(reopened.local.model.context.info()?.effective).toBe(902_000)
+    expect(backend.metadata).toEqual({ owner: "server", contextBudgets: { "other/model": 64_000 } })
+  } finally {
+    await reopened.cleanup()
+  }
+})
+
+test("custom context entry accepts k suffix through the dialog keyboard path", async () => {
+  const setup = await mount({ context: true })
+  try {
+    await setup.app.mockMouse.click(3, 0)
+    await setup.frame("Context size / compaction budget")
+    await Bun.sleep(25)
+    await setup.app.mockInput.typeText("Custom")
+    await setup.frame("Custom…")
+    setup.app.mockInput.pressEnter()
+    await setup.frame("Custom context budget")
+    await Bun.sleep(10)
+    setup.app.mockInput.pressKey("u", { ctrl: true })
+    for (const key of "384k") setup.app.mockInput.pressKey(key)
+    setup.app.mockInput.pressEnter()
+    for (let i = 0; i < 50 && setup.dialog.stack.length; i++) await Bun.sleep(10)
+    expect(setup.local.model.context.info()?.selected).toBe(384_000)
+  } finally {
+    await setup.cleanup()
   }
 })

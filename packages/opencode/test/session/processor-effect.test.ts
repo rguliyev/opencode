@@ -1,4 +1,5 @@
 import { SessionV1 } from "@opencode-ai/core/v1/session"
+import { withContextBudget } from "@opencode-ai/core/session/context-budget"
 import { Database } from "@opencode-ai/core/database/database"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { EventV2Bridge } from "@/event-v2-bridge"
@@ -371,52 +372,57 @@ it.live("session.processor effect tests preserve text start time", () =>
   ),
 )
 
-it.live("session.processor effect tests stop after token overflow requests compaction", () =>
-  provideTmpdirServer(
-    ({ dir, llm }) =>
-      Effect.gen(function* () {
-        const database = yield* Database.Service
-        const { processors, session, provider } = yield* boot()
+for (const budget of [undefined, 32_000]) {
+  it.live(`session.processor requests compaction at ${budget ? "the session budget" : "the native limit"}`, () =>
+    provideTmpdirServer(
+      ({ dir, llm }) =>
+        Effect.gen(function* () {
+          const database = yield* Database.Service
+          const { processors, session, provider } = yield* boot()
 
-        yield* llm.text("after", { usage: { input: 100, output: 0 } })
+          yield* llm.text("after", { usage: { input: budget ? 40_000 : 100, output: 0 } })
 
-        const chat = yield* session.create({})
-        const parent = yield* user(chat.id, "compact")
-        const msg = yield* assistant(chat.id, parent.id, path.resolve(dir))
-        const base = yield* provider.getModel(ref.providerID, ref.modelID)
-        const mdl = { ...base, limit: { context: 20, output: 10 } }
-        const handle = yield* processors.create({
-          assistantMessage: msg,
-          sessionID: chat.id,
-          model: mdl,
-        })
-
-        const value = yield* handle.process({
-          user: {
-            id: parent.id,
+          const chat = yield* session.create({})
+          const parent = yield* user(chat.id, "compact")
+          const msg = yield* assistant(chat.id, parent.id, path.resolve(dir))
+          const base = yield* provider.getModel(ref.providerID, ref.modelID)
+          const mdl = { ...base, limit: budget ? { context: 100_000, output: 32_000 } : { context: 20, output: 10 } }
+          const handle = yield* processors.create({
+            assistantMessage: msg,
             sessionID: chat.id,
-            role: "user",
-            time: parent.time,
-            agent: parent.agent,
-            model: { providerID: ref.providerID, modelID: ref.modelID },
-          } satisfies SessionV1.User,
-          sessionID: chat.id,
-          model: mdl,
-          agent: agent(),
-          system: [],
-          messages: [{ role: "user", content: "compact" }],
-          tools: {},
-        })
+            model: mdl,
+          })
 
-        const parts = yield* MessageV2.parts(msg.id)
+          // A running processor reads the new selection at the next completed step.
+          if (budget) yield* session.setMetadata({ sessionID: chat.id, metadata: withContextBudget({}, ref, budget) })
 
-        expect(value).toBe("compact")
-        expect(parts.some((part) => part.type === "text" && part.text === "after")).toBe(true)
-        expect(parts.some((part) => part.type === "step-finish")).toBe(true)
-      }),
-    { config: (url) => providerCfg(url) },
-  ),
-)
+          const value = yield* handle.process({
+            user: {
+              id: parent.id,
+              sessionID: chat.id,
+              role: "user",
+              time: parent.time,
+              agent: parent.agent,
+              model: { providerID: ref.providerID, modelID: ref.modelID },
+            } satisfies SessionV1.User,
+            sessionID: chat.id,
+            model: mdl,
+            agent: agent(),
+            system: [],
+            messages: [{ role: "user", content: "compact" }],
+            tools: {},
+          })
+
+          const parts = yield* MessageV2.parts(msg.id)
+
+          expect(value).toBe("compact")
+          expect(parts.some((part) => part.type === "text" && part.text === "after")).toBe(true)
+          expect(parts.some((part) => part.type === "step-finish")).toBe(true)
+        }),
+      { config: (url) => providerCfg(url) },
+    ),
+  )
+}
 
 it.live("session.processor effect tests capture reasoning from http mock", () =>
   provideTmpdirServer(

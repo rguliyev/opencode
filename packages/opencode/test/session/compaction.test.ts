@@ -1,3 +1,4 @@
+import { withContextBudget } from "@opencode-ai/core/session/context-budget"
 import { afterEach, describe, expect, mock, test } from "bun:test"
 import { ConfigV1 } from "@opencode-ai/core/v1/config/config"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
@@ -383,6 +384,30 @@ function compactionContext(context: string) {
 }
 
 describe("session.compaction.isOverflow", () => {
+  it.live(
+    "uses persisted per-session/model budgets, supports reset, and leaves other sessions unchanged",
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const compact = yield* SessionCompaction.Service
+        const ssn = yield* SessionNs.Service
+        const model = createModel({ context: 1_050_000, input: 922_000, output: 128_000 })
+        const tokens = { input: 260_000, output: 1_000, reasoning: 0, cache: { read: 0, write: 0 } }
+        const first = yield* ssn.create({})
+        const second = yield* ssn.create({})
+        const metadata = withContextBudget({ owner: "user" }, ref, 256_000)
+        yield* ssn.setMetadata({ sessionID: first.id, metadata })
+        expect((yield* ssn.get(first.id)).metadata).toEqual(metadata)
+        expect(yield* compact.isOverflow({ sessionID: first.id, tokens, model })).toBe(true)
+        expect(yield* compact.isOverflow({ sessionID: second.id, tokens, model })).toBe(false)
+        expect(yield* compact.isOverflow({ tokens, model })).toBe(false)
+        yield* ssn.setMetadata({ sessionID: first.id, metadata: withContextBudget(metadata, ref) })
+        expect(yield* compact.isOverflow({ sessionID: first.id, tokens, model })).toBe(false)
+        expect((yield* ssn.get(first.id)).metadata?.owner).toBe("user")
+        expect(model.limit.context).toBe(1_050_000)
+      }),
+    ),
+  )
+
   it.live(
     "returns true when token count exceeds usable context",
     provideTmpdirInstance(() =>

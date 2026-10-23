@@ -81,6 +81,7 @@ import {
 
 import type { EventSource } from "./context/sdk"
 import { DialogVariant } from "./component/dialog-variant"
+import { DialogContextBudget } from "./component/dialog-context"
 import { createTuiAttention } from "./attention"
 import * as TuiAudio from "./audio"
 import { win32DisableProcessedInput, win32FlushInputBuffer } from "./terminal-win32"
@@ -117,6 +118,7 @@ const appBindingCommands = [
   "agent.cycle.reverse",
   "variant.cycle",
   "variant.list",
+  "context.list",
   "provider.connect",
   "console.org.switch",
   "opencode.status",
@@ -724,6 +726,13 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
         run: () => {
           local.model.variant.cycle()
         },
+      },
+      {
+        name: "context.list",
+        title: "Change context size / compaction budget",
+        category: "Agent",
+        slashName: "context",
+        run: () => dialog.replace(() => <DialogContextBudget />),
       },
       {
         name: "variant.list",

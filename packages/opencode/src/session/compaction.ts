@@ -1,3 +1,4 @@
+import { contextBudget } from "@opencode-ai/core/session/context-budget"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { ConfigV1 } from "@opencode-ai/core/v1/config/config"
@@ -112,11 +113,11 @@ function completedCompactions(messages: SessionV1.WithParts[]) {
   })
 }
 
-function preserveRecentBudget(input: { cfg: ConfigV1.Info; model: Provider.Model }) {
-  return (
+function preserveRecentBudget(input: { cfg: ConfigV1.Info; model: Provider.Model; budget?: number }) {
+  const configured =
     input.cfg.compaction?.preserve_recent_tokens ??
     Math.min(MAX_PRESERVE_RECENT_TOKENS, Math.max(MIN_PRESERVE_RECENT_TOKENS, Math.floor(usable(input) * 0.25)))
-  )
+  return input.budget === undefined ? configured : Math.min(configured, Math.floor(usable(input) * 0.25))
 }
 
 function turns(messages: SessionV1.WithParts[]) {
@@ -164,6 +165,7 @@ function splitTurn(input: {
 
 export interface Interface {
   readonly isOverflow: (input: {
+    sessionID?: SessionID
     tokens: SessionV1.Assistant["tokens"]
     model: Provider.Model
   }) => Effect.Effect<boolean>
@@ -201,6 +203,7 @@ const layer = Layer.effect(
     const flags = yield* RuntimeFlags.Service
 
     const isOverflow = Effect.fn("SessionCompaction.isOverflow")(function* (input: {
+      sessionID?: SessionID
       tokens: SessionV1.Assistant["tokens"]
       model: Provider.Model
     }) {
@@ -208,6 +211,12 @@ const layer = Layer.effect(
         cfg: yield* config.get(),
         tokens: input.tokens,
         model: input.model,
+        budget: input.sessionID
+          ? contextBudget((yield* session.get(input.sessionID).pipe(Effect.orDie)).metadata, {
+              providerID: input.model.providerID,
+              modelID: input.model.id,
+            })
+          : undefined,
         outputTokenMax: flags.outputTokenMax,
       })
     })
@@ -221,13 +230,14 @@ const layer = Layer.effect(
     })
 
     const select = Effect.fn("SessionCompaction.select")(function* (input: {
+      budget?: number
       messages: SessionV1.WithParts[]
       cfg: ConfigV1.Info
       model: Provider.Model
     }) {
       const limit = input.cfg.compaction?.tail_turns
       if (limit !== undefined && limit <= 0) return { head: input.messages, tail_start_id: undefined }
-      const budget = preserveRecentBudget({ cfg: input.cfg, model: input.model })
+      const budget = preserveRecentBudget(input)
       const all = turns(input.messages)
       if (!all.length) return { head: input.messages, tail_start_id: undefined }
       const recent = limit === undefined ? all : all.slice(-limit)
@@ -365,6 +375,7 @@ const layer = Layer.effect(
       const hidden = new Set(prior.flatMap((item) => [item.userIndex, item.assistantIndex]))
       const previousSummary = prior.at(-1)?.summary
       const selected = yield* select({
+        budget: contextBudget((yield* session.get(input.sessionID).pipe(Effect.orDie)).metadata, userMessage.model),
         messages: history.filter((_, index) => !hidden.has(index)),
         cfg,
         model,
@@ -483,7 +494,11 @@ const layer = Layer.effect(
             if (part.type === "compaction") continue
             const replayPart =
               part.type === "file" && MessageV2.isMedia(part.mime)
-                ? { type: "text" as const, text: `[Attached ${part.mime}: ${part.filename ?? "file"}]`, synthetic: true }
+                ? {
+                    type: "text" as const,
+                    text: `[Attached ${part.mime}: ${part.filename ?? "file"}]`,
+                    synthetic: true,
+                  }
                 : part.type === "text"
                   ? { ...part, synthetic: true }
                   : part

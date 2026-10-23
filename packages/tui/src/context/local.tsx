@@ -1,6 +1,12 @@
-import { createStore } from "solid-js/store"
+import {
+  contextBudget,
+  withContextBudget,
+  usableContext,
+  MIN_CONTEXT_BUDGET,
+} from "@opencode-ai/core/session/context-budget"
+import { createStore, reconcile } from "solid-js/store"
 import { createSimpleContext } from "./helper"
-import { batch, createEffect, createMemo } from "solid-js"
+import { batch, createEffect, createMemo, createSignal } from "solid-js"
 import { useSync } from "./sync"
 import { useEvent } from "./event"
 import path from "path"
@@ -288,7 +294,59 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
         )
       })
 
+      const [draftMetadata, setDraftMetadata] = createSignal<Record<string, unknown>>({})
+      const contextMetadata = () => {
+        const id = sessionID()
+        return id ? sync.session.get(id)?.metadata : draftMetadata()
+      }
+      const contextInfo = createMemo(() => {
+        const selected = currentModel()
+        if (!selected) return
+        const info = sync.data.provider.find((p) => p.id === selected.providerID)?.models[selected.modelID]
+        if (!info?.limit) return
+        const budget = contextBudget(contextMetadata(), selected)
+        const maximum = usableContext({ limit: info.limit, reserved: sync.data.config.compaction?.reserved })
+        return {
+          maximum,
+          window: info.limit.context,
+          selected: budget,
+          effective: budget === undefined ? maximum : Math.min(maximum, budget),
+          auto: sync.data.config.compaction?.auto !== false,
+        }
+      })
+
       return {
+        context: {
+          info: contextInfo,
+          metadata: contextMetadata,
+          clearDraft: () => setDraftMetadata({}),
+          async set(value?: number) {
+            const model = currentModel()
+            const info = contextInfo()
+            if (!model || !info || !info.maximum) throw new Error("Model context size is unknown")
+            if (!info.auto) throw new Error("Automatic compaction is disabled in the server configuration")
+            if (
+              value !== undefined &&
+              (!Number.isSafeInteger(value) || value < MIN_CONTEXT_BUDGET || value > info.maximum)
+            )
+              throw new Error(`Choose between ${MIN_CONTEXT_BUDGET} and ${info.maximum} tokens`)
+            const id = sessionID()
+            if (!id) {
+              setDraftMetadata(withContextBudget(draftMetadata(), model, value))
+              return
+            }
+            // Read fresh metadata so unrelated server-owned fields are preserved.
+            const current = await sdk.client.session.get({ sessionID: id }, { throwOnError: true })
+            const result = await sdk.client.session.update(
+              {
+                sessionID: id,
+                metadata: withContextBudget(current.data.metadata, model, value),
+              },
+              { throwOnError: true },
+            )
+            sync.set("session", (session) => session.id === id, "metadata", reconcile(result.data.metadata ?? {}))
+          },
+        },
         current: currentModel,
         get selectionReady() {
           const id = sessionID()

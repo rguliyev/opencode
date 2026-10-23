@@ -36,6 +36,7 @@ import { expandPastedTextPlaceholders, expandTrackedPastedText } from "../../pro
 import { usePromptStash } from "../../prompt/stash"
 import { DialogStash } from "../dialog-stash"
 import { ModelVariantControl } from "../dialog-variant"
+import { ModelContextControl } from "../dialog-context"
 import { type AutocompleteRef, Autocomplete } from "./autocomplete"
 import { useRenderer, useTerminalDimensions, type JSX } from "@opentui/solid"
 import type { AssistantMessage, FilePart, UserMessage } from "@opencode-ai/sdk/v2"
@@ -273,11 +274,11 @@ export function Prompt(props: PromptProps) {
     if (!last) return
 
     const tokens =
-      last.tokens.input + last.tokens.output + last.tokens.reasoning + last.tokens.cache.read + last.tokens.cache.write
+      last.tokens.total || last.tokens.input + last.tokens.output + last.tokens.cache.read + last.tokens.cache.write
     if (tokens <= 0) return
 
-    const model = sync.data.provider.find((item) => item.id === last.providerID)?.models[last.modelID]
-    const pct = model?.limit.context ? `${Math.round((tokens / model.limit.context) * 100)}%` : undefined
+    const budget = local.model.context.info()?.effective
+    const pct = budget ? `${Math.round((tokens / budget) * 100)}%` : undefined
     const cost = session?.cost ?? 0
     return {
       context: pct ? `${Locale.number(tokens)} (${pct})` : Locale.number(tokens),
@@ -1054,6 +1055,7 @@ export function Prompt(props: PromptProps) {
       finishMoveProgress = Boolean(move.progress())
 
       const res = await sdk.client.session.create({
+        metadata: local.model.context.metadata(),
         directory,
         workspace: workspaceID,
         agent: agent.name,
@@ -1077,6 +1079,7 @@ export function Prompt(props: PromptProps) {
       }
 
       sessionID = res.data.id
+      local.model.context.clearDraft()
       local.model.remember(sessionID, selectedModel, variant ?? "default")
     }
 
@@ -1524,6 +1527,7 @@ export function Prompt(props: PromptProps) {
                             <text fg={fadeColor(theme.textMuted, variantMetaAlpha())}>·</text>
                             <ModelVariantControl color={fadeColor(theme.warning, variantMetaAlpha())} />
                           </Show>
+                          <ModelContextControl color={fadeColor(theme.textMuted, modelMetaAlpha())} />
                         </box>
                       </Show>
                     </>

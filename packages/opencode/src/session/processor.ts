@@ -1,3 +1,4 @@
+import { contextBudget } from "@opencode-ai/core/session/context-budget"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { PermissionV1 } from "@opencode-ai/core/v1/permission"
 import { Image } from "@/image/image"
@@ -490,7 +491,15 @@ const layer = Layer.effect(
               .pipe(Effect.ignore, Effect.forkIn(scope))
             if (
               !ctx.assistantMessage.summary &&
-              isOverflow({ cfg: yield* config.get(), tokens: usage.tokens, model: ctx.model })
+              isOverflow({
+                cfg: yield* config.get(),
+                tokens: usage.tokens,
+                model: ctx.model,
+                budget: contextBudget((yield* session.get(ctx.sessionID)).metadata, {
+                  providerID: ctx.model.providerID,
+                  modelID: ctx.model.id,
+                }),
+              })
             ) {
               ctx.needsCompaction = true
             }
