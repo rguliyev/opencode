@@ -26,6 +26,9 @@ const pathValue = /^(?:\/|~\/|\.\.?\/)[A-Za-z0-9._/-]*$/
 const credentialFilePath = /^(?:\/|~\/|\.\.?\/)(?:[A-Za-z0-9._-]+\/)+[A-Za-z0-9_-][A-Za-z0-9._-]*\.(?:json|pem|key|p12|crt|yaml|yml|toml|ini|cfg|conf|txt)$/
 // A documentation placeholder such as NOMAD_TOKEN=<token> holds no value.
 const placeholder = /^<[A-Za-z][A-Za-z0-9_.-]{0,62}>$/
+// printf 'X-API-Key: %s\n' "$KEY" fills the value in at run time; the format
+// verbs (and escapes) are the template, not the credential.
+const formatVerbs = /^(?:%[-+ #0-9.]*[a-zA-Z]|\\[nrt])+$/
 // Unquoted, `apiKey: config.e2b.apiKey,` reads a property; the value lives
 // elsewhere. Quoted, the same text is a literal. Provider tokens with dots
 // (ya29.…) are still masked by their own pattern.
@@ -94,6 +97,7 @@ function sanitizeText(input: string): RedactionResult<string> {
         !secret ||
         reference.test(secret) ||
         placeholder.test(secret.trim()) ||
+        formatVerbs.test(secret.trim()) ||
         (pathSetting.test(prefix) && pathValue.test(secret.trim())) ||
         credentialFilePath.test(secret.trim()) ||
         (!/["'`]\s*$/.test(prefix) && propertyPath.test(secret.trim())) ||

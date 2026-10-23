@@ -243,3 +243,12 @@ test("a header name in its own quoted string, with the value read from a file, i
   expect(sanitizeReviewText("printf 'X-API-Key: hunter2value'").value).toContain("[REDACTED:CREDENTIAL]")
   expect(sanitizeReviewText(`bash -c 'export PASSWORD="hunter2value"'`).value).toContain("[REDACTED:CREDENTIAL]")
 })
+
+test("a printf format verb after a credential-named key is a template, not a value", () => {
+  const command = `KEY=$(cat ./dev-api-key); printf 'X-API-Key: %s\\n' "$KEY" | curl -sS -H @- http://127.0.0.1:15001/templates`
+  const safe = sanitizeReviewText(command)
+  expect(safe.value).toBe(command)
+  expect(safe.kinds).toEqual([])
+  expect(sanitizeReviewText(`printf "token=%-10s\\t" "$T"`).kinds).toEqual([])
+  expect(sanitizeReviewText("printf 'X-API-Key: %shunter2'").value).toContain("[REDACTED:CREDENTIAL]")
+})
