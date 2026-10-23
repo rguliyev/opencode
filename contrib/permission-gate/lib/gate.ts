@@ -1301,6 +1301,9 @@ function splitSegments(command: string) {
     } else if (character === '"' || character === "'") {
       quote = character
       value += character
+    } else if (character === "&" && (/[<>]$/.test(value) || command[index + 1] === ">")) {
+      // `2>&1`, `>&2`, `<&3` and `&>file` are redirections, not a background `&`.
+      value += character
     } else if (character === ";" || character === "\n" || character === "|" || character === "&") {
       push()
       if ((character === "|" || character === "&") && command[index + 1] === character) index += 1

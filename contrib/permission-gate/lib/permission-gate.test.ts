@@ -249,6 +249,24 @@ test("Jev receives a scrubbed command and context, while the local gate asks", a
     expect(heredocScripts[0].content).toContain('print(len(json.load(open("serials.json"))))')
     expect(JSON.stringify(heredocState)).not.toContain("referenced script does not exist")
 
+    // `cd DIR; timeout 600 bash phase.sh 2>&1 | tee log` runs DIR/phase.sh.
+    const phaseDir = mkdtempSync(path.join(tmpdir(), "gate-cd-phase-"))
+    writeFileSync(path.join(phaseDir, "phase.sh"), "#!/bin/bash\necho phase-marker\n")
+    const phaseFull = `cd ${phaseDir}; timeout 600 bash phase.sh 2>&1 | tee phase.log; echo "rc=\${PIPESTATUS[0]}"`
+    await hooks["permission.ask"](
+      {
+        permission: "bash",
+        sessionID: "ses_redaction_test",
+        patterns: [`cd ${phaseDir}`, "timeout 600 bash phase.sh 2>&1", "tee phase.log", 'echo "rc=${PIPESTATUS[0]}"'],
+        metadata: { command: phaseFull },
+      },
+      { status: "ask" },
+    )
+    const phaseState = (sent as { state: Record<string, unknown> }).state
+    rmSync(phaseDir, { recursive: true, force: true })
+    expect(JSON.stringify(phaseState)).not.toContain("referenced script does not exist")
+    expect(JSON.stringify(phaseState.scripts)).toContain("phase-marker")
+
     await hooks["tool.execute.before"](
       { tool: "skill", sessionID: "ses_redaction_test", callID: "call_skill_redaction" },
       { args: { name: "example" } },
