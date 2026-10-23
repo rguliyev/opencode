@@ -233,3 +233,13 @@ test("an unquoted property path after a credential-named key is a reference, not
   expect(sanitizeReviewText('password: "hunter.two"').value).toContain("[REDACTED:CREDENTIAL]")
   expect(sanitizeReviewText("token = ya29." + "a".repeat(30)).value).toContain("[REDACTED:")
 })
+
+test("a header name in its own quoted string, with the value read from a file, is not a credential", () => {
+  const command = `{ printf 'X-API-Key: '; cat ../run/dev-api-key; echo; } | curl -sS -H @- http://127.0.0.1:15001/sandboxes | python3 -c "print('live')"`
+  const safe = sanitizeReviewText(command)
+  expect(safe.value).toBe(command)
+  expect(safe.kinds).toEqual([])
+  // The value inside the quotes is still masked.
+  expect(sanitizeReviewText("printf 'X-API-Key: hunter2value'").value).toContain("[REDACTED:CREDENTIAL]")
+  expect(sanitizeReviewText(`bash -c 'export PASSWORD="hunter2value"'`).value).toContain("[REDACTED:CREDENTIAL]")
+})

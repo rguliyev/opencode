@@ -67,6 +67,14 @@ export function containsCredentialMaterial(text: string) {
 const residualCredential =
   /\b(?:sk-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{20,}|AIza[A-Za-z0-9_-]{25,}|(?:AKIA|ASIA)[A-Z0-9]{16}|ya29\.[A-Za-z0-9_-]{20,}|4\/0A[A-Za-z0-9_-]{20,}|1\/\/[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9-]{20,})\b|-----BEGIN [A-Z ]*PRIVATE KEY-----/i
 
+// In `printf 'X-API-Key: '; cat key`, the quote after the colon closes the
+// string the header name sits in; it does not open a value. Counted on the
+// current line, so an earlier line's unbalanced quote cannot flip it.
+function opensQuote(text: string, quote: string) {
+  const line = text.slice(text.lastIndexOf("\n") + 1, -1)
+  return line.split(quote).length % 2 === 1
+}
+
 function sanitizeText(input: string): RedactionResult<string> {
   const kinds = new Set<string>()
   let value = input
@@ -79,9 +87,9 @@ function sanitizeText(input: string): RedactionResult<string> {
   const replaceValue = (
     pattern: RegExp,
     kind: string,
-    shouldRedact: (prefix: string, secret: string) => boolean = () => true,
+    shouldRedact: (prefix: string, secret: string, before: string) => boolean = () => true,
   ) => {
-    value = value.replace(pattern, (found, prefix: string, secret: string) => {
+    value = value.replace(pattern, (found, prefix: string, secret: string, offset: number, whole: string) => {
       if (
         !secret ||
         reference.test(secret) ||
@@ -89,7 +97,7 @@ function sanitizeText(input: string): RedactionResult<string> {
         (pathSetting.test(prefix) && pathValue.test(secret.trim())) ||
         credentialFilePath.test(secret.trim()) ||
         (!/["'`]\s*$/.test(prefix) && propertyPath.test(secret.trim())) ||
-        !shouldRedact(prefix, secret)
+        !shouldRedact(prefix, secret, whole.slice(0, offset))
       )
         return found
       kinds.add(kind)
@@ -166,10 +174,12 @@ function sanitizeText(input: string): RedactionResult<string> {
   replaceValue(
     /((?:["']?(?:[A-Za-z_][A-Za-z0-9_.-]{0,63})?(?:api[_-]?key|access[_-]?key|token|secret|password|passwd|credential|private[_-]?key)[A-Za-z0-9_.-]{0,63}["']?)\s*(?:=|:)\s*")((?:\\.|[^"\\\n])*)(?=")/gi,
     "CREDENTIAL",
+    (prefix, _secret, before) => opensQuote(before + prefix, '"'),
   )
   replaceValue(
     /((?:["']?(?:[A-Za-z_][A-Za-z0-9_.-]{0,63})?(?:api[_-]?key|access[_-]?key|token|secret|password|passwd|credential|private[_-]?key)[A-Za-z0-9_.-]{0,63}["']?)\s*(?:=|:)\s*')((?:\\.|[^'\\\n])*)(?=')/gi,
     "CREDENTIAL",
+    (prefix, _secret, before) => opensQuote(before + prefix, "'"),
   )
   // YAML plain scalars can contain spaces. Mask the whole value, not just its
   // first word, while leaving ordinary type annotations untouched.
