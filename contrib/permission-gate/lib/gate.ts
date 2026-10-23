@@ -155,6 +155,8 @@ function gateEvidence(findings: Finding[], history?: Map<string, AnswerCounts>) 
 
 type EnvironmentFacts = {
   workdir_class: string
+  // Set when an earlier `cd` in the same call moves this step elsewhere.
+  command_workdir?: string
   gcp_projects?: { project: string; class: string }[]
   paths?: { path: string; class: string }[]
 }
@@ -4894,8 +4896,9 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
             }
           const inspection = await inspectScripts(command, workdir, fullCommand)
           const policy = loadEnvironmentPolicy()
-          const environment = environmentFacts(workdir, [command, ...inspection.scripts.map((script) => script.content)], [])
-          if (environment) context.environment = environment
+          const commandDir = precedingDirectory(fullCommand, command, workdir)
+          const environment = environmentFacts(commandDir, [command, ...inspection.scripts.map((script) => script.content)], [])
+          if (environment) context.environment = commandDir === workdir ? environment : { ...environment, command_workdir: commandDir }
           recordKev(
             "bash",
             command,

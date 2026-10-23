@@ -266,6 +266,10 @@ test("Jev receives a scrubbed command and context, while the local gate asks", a
     rmSync(phaseDir, { recursive: true, force: true })
     expect(JSON.stringify(phaseState)).not.toContain("referenced script does not exist")
     expect(JSON.stringify(phaseState.scripts)).toContain("phase-marker")
+    // The step runs in phaseDir, so that directory's class is what the reviewer judges.
+    const phaseEnvironment = (phaseState.context as { environment: Record<string, unknown> }).environment
+    expect(phaseEnvironment.command_workdir).toBe(phaseDir)
+    expect(phaseEnvironment.workdir_class).not.toBe("worktree")
 
     await hooks["tool.execute.before"](
       { tool: "skill", sessionID: "ses_redaction_test", callID: "call_skill_redaction" },
