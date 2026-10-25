@@ -1646,6 +1646,7 @@ describe("ProviderTransform.schema - gemini type arrays", () => {
       { type: "string" },
     ])
     expect(result.description).toBe("mixed value")
+    for (const key of ["items", "properties", "required"]) expect(result).not.toHaveProperty(key)
     expect(ProviderTransform.schema(geminiModel, result)).toEqual(result)
     expect(schema.type).toEqual(["array", "object", "string"])
   })
@@ -1661,6 +1662,8 @@ describe("ProviderTransform.schema - gemini type arrays", () => {
 
     const arrayBranch: JSONSchema7 & { prefixItems: JSONSchema7[] } = { type: "array", items, prefixItems: items }
     expect(result.anyOf).toEqual([arrayBranch, { type: "string" }])
+    expect(result).not.toHaveProperty("items")
+    expect(result).not.toHaveProperty("prefixItems")
     expect(ProviderTransform.schema(geminiModel, result)).toEqual(result)
   })
 
@@ -1674,6 +1677,7 @@ describe("ProviderTransform.schema - gemini type arrays", () => {
 
       expect(result.anyOf).toEqual([{ type: "array", items: { anyOf: [{ type: "number" }, { type: "string" }] } }])
       expect(result).not.toHaveProperty("type")
+      expect(result).not.toHaveProperty("items")
       if (types.length === 2) expect(result).toHaveProperty("nullable", true)
       if (types.length === 1) expect(result).not.toHaveProperty("nullable")
       expect(ProviderTransform.schema(geminiModel, result)).toEqual(result)
@@ -1693,7 +1697,7 @@ describe("ProviderTransform.schema - gemini type arrays", () => {
 
     expect(result).toEqual({
       anyOf: [
-        { items: { type: "integer" }, anyOf: [{ type: "string" }, { type: "array", items: { type: "integer" } }] },
+        { anyOf: [{ type: "string" }, { type: "array", items: { type: "integer" } }] },
         { type: "array", items: { anyOf: [{ type: "boolean" }, { type: "array", items: { type: "string" } }] } },
       ],
       oneOf: [

@@ -1689,6 +1689,13 @@ export function schema(model: Provider.Model, schema: JSONSchema7): JSONSchema7 
               ...Object.fromEntries(keys.filter((key) => key in result).map((key) => [key, result[key]])),
             })
           })
+          // These constraints now belong to their typed branches. Leaving them
+          // on the untyped union makes Google's wire schema invalid (for example,
+          // nullable MCP array arguments become `anyOf` plus orphaned `items`).
+          delete result.items
+          delete result.prefixItems
+          delete result.properties
+          delete result.required
           if (hasNull) result.nullable = true
         }
       }
