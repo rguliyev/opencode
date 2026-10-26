@@ -252,3 +252,11 @@ test("a printf format verb after a credential-named key is a template, not a val
   expect(sanitizeReviewText(`printf "token=%-10s\\t" "$T"`).kinds).toEqual([])
   expect(sanitizeReviewText("printf 'X-API-Key: %shunter2'").value).toContain("[REDACTED:CREDENTIAL]")
 })
+
+test("an assigned value that declares itself fake is a fixture, not a credential", () => {
+  const line = "export TESTS_E2B_API_KEY=fake-unused-api-key-fixture TESTS_SANDBOX_TEMPLATE_ID=fake-template-fixture"
+  expect(sanitizeReviewText(line).value).toBe(line)
+  expect(sanitizeReviewText('password: "dummy-value"').kinds).toEqual([])
+  // A real-looking value stays masked; "example" alone is not a declaration.
+  expect(sanitizeReviewText("TESTS_E2B_API_KEY=k8Zq2Lx9PwV4mT7c").value).toContain("[REDACTED:CREDENTIAL]")
+})

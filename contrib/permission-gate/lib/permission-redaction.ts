@@ -98,6 +98,8 @@ function sanitizeText(input: string): RedactionResult<string> {
         reference.test(secret) ||
         placeholder.test(secret.trim()) ||
         formatVerbs.test(secret.trim()) ||
+        // AGENTS.md has fixtures say so in the value itself (fake-…-fixture).
+        /fake|fixture|dummy|notreal/i.test(secret) ||
         (pathSetting.test(prefix) && pathValue.test(secret.trim())) ||
         credentialFilePath.test(secret.trim()) ||
         (!/["'`]\s*$/.test(prefix) && propertyPath.test(secret.trim())) ||
