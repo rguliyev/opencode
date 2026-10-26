@@ -2163,6 +2163,13 @@ test("shell segments get module evidence and self-contained segments are judged 
     expect(await shellStatus("gcloud logging read \"$(mkfs.ext4 /dev/sdb)\" --project=e2b-dev-rauf-guliyev")).toBe("ask")
     expect(await shellStatus('echo "$(mkfs.ext4 /dev/sdb)"')).toBe("ask")
     expect(await shellStatus('bash -c "grep x f | mkfs.ext4 /dev/sdb"')).toBe("ask")
+    // A python -c program that starts no processes cannot run mkfs; the words are data.
+    expect(
+      await shellStatus(
+        `timeout 30 python3 -B -c "\nimport re\ninit = open('init.sh').read()\nfor bad in (r'mkfs', r'swapoff', r'parted|sgdisk|wipefs'):\n    assert not re.search(bad, init), bad\nassert 'mount --bind \\"\\$backing_path\\" \\"\\$mount_point\\"' in init\n"`,
+      ),
+    ).toBe("allow")
+    expect(await shellStatus(`python3 -c "print('$(mkfs.xfs /dev/sdb)')"`)).toBe("ask")
 
     // A command withheld from the reviewers is shown to the human with its
     // secret values masked instead of "[command withheld]".

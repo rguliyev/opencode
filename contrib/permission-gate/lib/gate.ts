@@ -1209,9 +1209,17 @@ function inlinePythonCannotSpawn(command: string) {
   // `python3 - <<'EOF' ... EOF` with a quoted delimiter passes the code
   // unexpanded, exactly like python3 -c '...'.
   const heredoc = command.match(/^\s*python3?\s+-\s+<<-?\s*(['"])([A-Za-z_][A-Za-z0-9_]*)\1\s*\n([\s\S]*?)\n\s*\2\s*$/)
-  const match = heredoc ? [heredoc[0], "'", heredoc[3]] : command.match(/^\s*python3?\s+-c\s+(["'])([\s\S]*)\1\s*$/)
+  // Wrappers that only run the next command (timeout 30, nice, env X=y) and
+  // single-letter interpreter flags (-B, -u) do not change what the code can do.
+  const match = heredoc
+    ? [heredoc[0], "'", heredoc[3]]
+    : command.match(
+        /^\s*(?:(?:timeout\s+(?:-[a-z]+\s+)*\d+[smh]?|nice(?:\s+-n\s*-?\d+)?|nohup|env(?:\s+[A-Za-z_][A-Za-z0-9_]*=\S*)*|[A-Za-z_][A-Za-z0-9_]*=\S*)\s+)*(?:\S*\/)?python3?(?:\.\d+)?(?:\s+-[BdEIOqsSuvx]+)*\s+-c\s+(["'])([\s\S]*)\1\s*$/,
+      )
   return (
     !!match &&
+    // In double quotes the shell runs $(...) and backticks before Python starts.
+    !(match[1] === '"' && /\$\(|`/.test(match[2])) &&
     !/\b(?:subprocess|os\s*\.\s*(?:system|popen|exec\w*|spawn\w*|posix_spawn\w*|fork\w*)|pty|pexpect|plumbum|sh\s*\.|multiprocessing|ctypes|importlib|__import__|exec|eval|compile|getattr)\b/.test(
       match[2],
     )
