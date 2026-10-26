@@ -2135,6 +2135,11 @@ test("shell segments get module evidence and self-contained segments are judged 
     expect(await chainStatus('cd "$X" && V=$PWD/.validation/final && rm -rf $V')).toBe("ask")
     expect(await chainStatus("cd /data/rguliyev/tmp/opencode/worktrees/charts && V=$PWD && rm -rf $V")).toBe("ask")
     await chainStatus("(cd /data/rguliyev/tmp/opencode/worktrees/terraform/y && V=$PWD/out && rm -rf $V)")
+    // A cd into a directory named by an earlier literal assignment is a known base.
+    await chainStatus("R=/data/rguliyev/tmp/opencode/e2e-x && mkdir -p $R/src && cd $R/src && rm -rf tests/__pycache__")
+    expect(JSON.stringify(contexts["rm -rf tests/__pycache__"])).toContain(
+      "recursive delete inside writable local paths: tests/__pycache__ (scratch)",
+    )
     expect(JSON.stringify(contexts["rm -rf $V)"] ?? {})).not.toContain("worktrees/terraform/y/out (worktree)")
     expect(
       await shellStatus(

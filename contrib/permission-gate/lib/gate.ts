@@ -1051,7 +1051,8 @@ function deleteBase(raw: string, fullCommand: unknown, workdir: string | undefin
   let base: string | undefined = workdir
   for (const segment of typeof fullCommand === "string" ? splitSegments(fullCommand) : []) {
     if (segment === raw.trim()) return base
-    const parts = commandParts(segment)
+    // `R=/abs; cd $R/src` names a literal directory once R is known.
+    const parts = commandParts(withEarlierPathAssignments(segment, segment, fullCommand, workdir))
     if (executableName(parts.verb) !== "cd") continue
     const target = parts.args[0]
     base = parts.args.length === 1 && base && !/[$`~]/.test(target) ? path.resolve(base, target) : undefined
