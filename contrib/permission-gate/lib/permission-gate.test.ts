@@ -263,9 +263,23 @@ test("Jev receives a scrubbed command and context, while the local gate asks", a
       { status: "ask" },
     )
     const phaseState = (sent as { state: Record<string, unknown> }).state
-    rmSync(phaseDir, { recursive: true, force: true })
     expect(JSON.stringify(phaseState)).not.toContain("referenced script does not exist")
     expect(JSON.stringify(phaseState.scripts)).toContain("phase-marker")
+    // `R=DIR; cd $R && bash phase.sh` runs DIR/phase.sh too.
+    writeFileSync(path.join(phaseDir, "phase.sh"), "#!/bin/bash\necho phase-marker\n")
+    const varFull = `R=${phaseDir}; cd $R && nohup bash phase.sh > phase.log 2>&1`
+    await hooks["permission.ask"](
+      {
+        permission: "bash",
+        sessionID: "ses_redaction_test",
+        patterns: [`R=${phaseDir}`, "cd $R", "nohup bash phase.sh"],
+        metadata: { command: varFull },
+      },
+      { status: "ask" },
+    )
+    const varState = (sent as { state: Record<string, unknown> }).state
+    expect(JSON.stringify(varState)).not.toContain("referenced script does not exist")
+    rmSync(phaseDir, { recursive: true, force: true })
     // The step runs in phaseDir, so that directory's class is what the reviewer judges.
     const phaseEnvironment = (phaseState.context as { environment: Record<string, unknown> }).environment
     expect(phaseEnvironment.command_workdir).toBe(phaseDir)

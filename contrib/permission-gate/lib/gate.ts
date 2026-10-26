@@ -1953,13 +1953,19 @@ function versionManagerDispatcher(file: string) {
 // `export D=...`), in order, so a segment can resolve `$D/x.sh`.
 // `cd /worktree && bash scripts/x.sh` arrives as separate segments, so a
 // script path is resolved from the last literal `cd` before it in the call.
+function withoutRedirects(segment: string) {
+  return segment.replace(/\s+(?:\d*>>?|&>>?|\d*<)\s*(?:&\d+|[^\s;&|<>]+)/g, "").trim()
+}
+
 function precedingDirectory(fullCommand: unknown, command: string, cwd: string) {
   if (typeof fullCommand !== "string") return cwd
   let base = cwd
   // `cd /x && \<newline>bash s.sh`: line continuations are not part of a segment.
   for (const segment of splitSegments(fullCommand.replace(/\\\r?\n/g, " "))) {
-    if (segment.trim() === command.replace(/\\\r?\n/g, " ").trim()) return base
-    const target = segment.match(/^\s*cd\s+(["']?)([^\s"'$`;&|]+)\1\s*$/)?.[2]
+    // OpenCode's per-command pattern drops redirections (`bash s.sh` for `bash s.sh > log 2>&1`).
+    if (withoutRedirects(segment) === withoutRedirects(command.replace(/\\\r?\n/g, " "))) return base
+    // `R=/abs; cd $R` names a literal directory once R is known.
+    const target = withEarlierPathAssignments(segment, segment, fullCommand, cwd).match(/^\s*cd\s+(["']?)([^\s"'$`;&|]+)\1\s*$/)?.[2]
     if (target) base = path.resolve(base, target.replace(/^~(?=\/)/, process.env.HOME ?? "~"))
   }
   return cwd
