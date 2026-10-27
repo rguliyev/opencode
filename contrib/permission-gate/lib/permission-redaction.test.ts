@@ -260,3 +260,10 @@ test("an assigned value that declares itself fake is a fixture, not a credential
   // A real-looking value stays masked; "example" alone is not a declaration.
   expect(sanitizeReviewText("TESTS_E2B_API_KEY=k8Zq2Lx9PwV4mT7c").value).toContain("[REDACTED:CREDENTIAL]")
 })
+
+test("a boolean or type after a credential-named key keeps its meaning before closing punctuation", () => {
+  const prose = "seccompProfile: {type: RuntimeDefault}, automountServiceAccountToken: false). Then token: none."
+  expect(sanitizeReviewText(prose).value).toBe(prose)
+  expect(sanitizeReviewText("(apiToken: string),").kinds).toEqual([])
+  expect(sanitizeReviewText("token: k8Zq2Lx9PwV4mT7c).").value).toContain("[REDACTED:CREDENTIAL]")
+})

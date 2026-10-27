@@ -214,7 +214,8 @@ function sanitizeText(input: string): RedactionResult<string> {
       !/(?:count|length|size|max|min|timeout|ttl)["']?\s*(?:=|:)/i.test(prefix) &&
       !(
         !/["']\s*$/.test(prefix) &&
-        /^(?:string|number|boolean|int|float|str|bool|bytes|any|unknown|object|none|null|undefined|true|false)$/i.test(
+        // Prose closes around the value: `automountServiceAccountToken: false).`
+        /^(?:string|number|boolean|int|float|str|bool|bytes|any|unknown|object|none|null|undefined|true|false)[)\].:!?]*$/i.test(
           secret,
         )
       ),
