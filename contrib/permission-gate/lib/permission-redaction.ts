@@ -198,7 +198,9 @@ function sanitizeText(input: string): RedactionResult<string> {
       ),
   )
   replaceValue(
-    /((?:["']?(?:[A-Za-z_][A-Za-z0-9_.-]{0,63})?(?:api[_-]?key|access[_-]?key|token|secret|password|passwd|credential|private[_-]?key)[A-Za-z0-9_.-]{0,63}["']?)\s*(?:=|:)\s*["']?)([^\s'"`;|&,}]+)/gi,
+    // The value shares the key's line; `serviceAccountToken:` followed by an
+    // indented `path: token` is a YAML mapping, not a value.
+    /((?:["']?(?:[A-Za-z_][A-Za-z0-9_.-]{0,63})?(?:api[_-]?key|access[_-]?key|token|secret|password|passwd|credential|private[_-]?key)[A-Za-z0-9_.-]{0,63}["']?)[ \t]*(?:=|:)[ \t]*["']?)([^\s'"`;|&,}]+)/gi,
     "CREDENTIAL",
     (prefix, secret) =>
       // A value with no letters or digits ("=== ClusterSecretStore ===") is

@@ -267,3 +267,9 @@ test("a boolean or type after a credential-named key keeps its meaning before cl
   expect(sanitizeReviewText("(apiToken: string),").kinds).toEqual([])
   expect(sanitizeReviewText("token: k8Zq2Lx9PwV4mT7c).").value).toContain("[REDACTED:CREDENTIAL]")
 })
+
+test("a credential-named key with its value on the next line is a YAML mapping, not a value", () => {
+  const manifest = "  volumes:\n    - name: node-readiness-api-token\n      projected:\n        sources:\n          - serviceAccountToken:\n              path: token\n              expirationSeconds: 3600\n"
+  expect(sanitizeReviewText(manifest).value).toBe(manifest)
+  expect(sanitizeReviewText("token: k8Zq2Lx9PwV4mT7c\n").value).toContain("[REDACTED:CREDENTIAL]")
+})
