@@ -105,7 +105,7 @@
     },
     {
       "service": "kubernetes",
-      "policy": "A cluster belongs to the GCP project named in its kubectl context (gke_<project>_<location>_<cluster> or connectgateway_<project>_<location>_<cluster>); judge every kubectl action, including exec into pods or nodes, by that project's class above, exactly as for gcloud. Reads are allowed for the task everywhere."
+      "policy": "A cluster belongs to the GCP project named in its kubectl context (gke_<project>_<location>_<cluster> or connectgateway_<project>_<location>_<cluster>); judge every kubectl action, including exec into pods or nodes, by that project's class above, exactly as for gcloud. Reads are allowed for the task everywhere. A pod started only to run one command on a node (kubectl run or kubectl debug with privileged, hostPID, or nsenter into the host, the command given in --overrides or arguments, with or without --rm) is judged by the command it runs, exactly like kubectl exec: read-only inspection (cat, ls, findmnt, swapon --show, readlink, stat, grep of /proc or /sys) is a read; a host change (swapoff, umount, rm, mount, sysctl writes) follows the cluster's class and the task. Deleting such a probe pod the agent itself started is cleanup."
     },
     {
       "service": "secret_manager",
