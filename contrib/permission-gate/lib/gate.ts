@@ -1179,13 +1179,39 @@ function scriptHumanOperations(content: string, inWorktree = false, assignments 
   return { hard, deletes }
 }
 
+// Every kubectl in the segment names, with an explicit --context, a cluster in a
+// dev-class project, and nothing else could point it elsewhere. No context
+// (the default may be anything), --kubeconfig/--server/--cluster/--token, or a
+// KUBECONFIG assignment is not provably dev.
+function devClusterOnly(command: string) {
+  if (!/(?:^|[\n;|&(){}]|\s)kubectl\s/.test(command)) return false
+  if (/--(?:kubeconfig|server|cluster|token|as|as-group|user)(?:=|\s)|\bKUBECONFIG=/.test(command)) return false
+  const policy = loadEnvironmentPolicy()
+  if (!policy) return false
+  const kubectls = command.split(/(?=(?:^|[\s;|&(){}])kubectl\s)/).filter((part) => /(?:^|[\s;|&(){}])kubectl\s/.test(part))
+  return kubectls.every((part) => {
+    const contexts = [...part.matchAll(/--context(?:=|\s+)(["']?)([^\s"']+)\1/g)].map((match) => match[2])
+    return (
+      contexts.length > 0 &&
+      contexts.every((context) => {
+        const project = context.match(/^(?:gke|connectgateway)_([a-z][a-z0-9-]*)_[a-z0-9-]+_[A-Za-z0-9-]+$/)?.[1]
+        return !!project && classifyProject(policy, project) === "dev"
+      })
+    )
+  })
+}
+
 function infraTargetClass(command: string, workdir: string): "local-dev" | "production" | undefined {
   const terraform = /(?:^|[\n;|&(){}])\s*(?:(?:sudo|env)\s+)?(?:terraform|terragrunt)\s+(?:apply|destroy)\b/i.test(
     command,
   )
-  const kubectl = /(?:^|[\n;|&(){}])\s*(?:(?:sudo|env)\s+)?kubectl\s+(?:apply|delete|patch|replace|scale|rollout|set)\b/i.test(
+  // Global flags (--context=X, -n ns) may come before the verb.
+  const kubectl = /(?:^|[\n;|&(){}])\s*(?:(?:sudo|env)\s+)?kubectl(?:\s+-{1,2}[A-Za-z][\w-]*(?:=\S+|\s+(?!-)\S+)?)*\s+(?:apply|delete|patch|replace|scale|rollout|set)\b/i.test(
     command,
   )
+  // The human treats the personal dev cluster as local dev: node-level work there
+  // (privileged probe pods, swapoff, umount, deletes) is ordinary iteration.
+  if (!terraform && devClusterOnly(command)) return "local-dev"
   if (!terraform && !kubectl) return undefined
   if (!terraform) return "production"
   let real: string
@@ -1257,7 +1283,7 @@ function requiresHumanOperation(command: string) {
   if (inlinePythonCannotSpawn(command) || inlineScriptCannotSpawn(command)) return false
   if (secretMetadataOnly(command) && !/\bgcloud\s+secrets\s+(?:delete|versions\s+(?:add|destroy|disable))/.test(command))
     command = command.replace(/\bgcloud\s+secrets\s+(?:create|update)\b/g, "gcloud secrets-metadata")
-  return /(?:^|[\n;|&(){}])\s*(?:(?:sudo|env)\s+)?(?:git\s+push|gh\s+pr\s+(?:create|edit|merge|close)|terraform\s+(?:apply|destroy)|terragrunt\s+(?:apply|destroy)|kubectl\s+(?:apply|delete|patch|replace|scale|rollout|set)|gcloud\s+(?:projects\s+add-iam-policy-binding|iam\s+(?!(?:(?:service-accounts|roles|workload-identity-pools|policies)(?:\s+keys)?\s+(?:list|describe|get-iam-policy)|list-grantable-roles|list-testable-permissions)(?:\s|$))|secrets\s+(?:create|delete|update|versions\s+(?:add|destroy|disable)))|aws\s+(?:iam\s+|secretsmanager\s+(?:create|delete|update|put|rotate))|tailscale\s+(?:set|up)\b[^\n;|&]*--exit-node|(?:rm\s+-rf|mkfs|wipefs)\b)/i.test(
+  return /(?:^|[\n;|&(){}])\s*(?:(?:sudo|env)\s+)?(?:git\s+push|gh\s+pr\s+(?:create|edit|merge|close)|terraform\s+(?:apply|destroy)|terragrunt\s+(?:apply|destroy)|kubectl(?:\s+-{1,2}[A-Za-z][\w-]*(?:=\S+|\s+(?!-)\S+)?)*\s+(?:apply|delete|patch|replace|scale|rollout|set)|gcloud\s+(?:projects\s+add-iam-policy-binding|iam\s+(?!(?:(?:service-accounts|roles|workload-identity-pools|policies)(?:\s+keys)?\s+(?:list|describe|get-iam-policy)|list-grantable-roles|list-testable-permissions)(?:\s|$))|secrets\s+(?:create|delete|update|versions\s+(?:add|destroy|disable)))|aws\s+(?:iam\s+|secretsmanager\s+(?:create|delete|update|put|rotate))|tailscale\s+(?:set|up)\b[^\n;|&]*--exit-node|(?:rm\s+-rf|mkfs|wipefs)\b)/i.test(
     command,
   )
 }

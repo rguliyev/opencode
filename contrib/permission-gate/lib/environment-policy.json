@@ -8,7 +8,7 @@
         "match": [
           "e2b-dev-*"
         ],
-        "policy": "Personal development projects. Reads, lists, describes, and log or metric queries are allowed. Changes are allowed when they serve the human's current task; hard gates still apply."
+        "policy": "Personal development projects. Reads, lists, describes, and log or metric queries are allowed. Changes are allowed when they serve the human's current task; hard gates still apply. The human treats these clusters as local dev: node-level work there (privileged or nsenter probe pods, swapoff, umount, deleting test pods, PVCs, or node pools the task created, kubectl exec) is ordinary iteration when it serves the task."
       },
       {
         "class": "staging",
@@ -29,7 +29,7 @@
           "prj-e2b-*",
           "felix-sandboxes-prod-*"
         ],
-        "policy": "Production. Read-only by default: reads, lists, describes, and log or metric queries that serve the task are allowed; any change asks."
+        "policy": "Production. Read-only by default: reads, lists, describes, and log or metric queries that serve the task are allowed; any change asks. Inspect production actions carefully: kubectl exec, privileged or host-level pods, token reads, and anything that could change node, workload, or cluster state ask, even when framed as diagnostics."
       },
       {
         "class": "shared",

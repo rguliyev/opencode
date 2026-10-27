@@ -2163,6 +2163,23 @@ test("shell segments get module evidence and self-contained segments are judged 
     expect(await shellStatus("gcloud logging read \"$(mkfs.ext4 /dev/sdb)\" --project=e2b-dev-rauf-guliyev")).toBe("ask")
     expect(await shellStatus('echo "$(mkfs.ext4 /dev/sdb)"')).toBe("ask")
     expect(await shellStatus('bash -c "grep x f | mkfs.ext4 /dev/sdb"')).toBe("ask")
+    // Node-level work on the personal dev cluster is ordinary dev work; the same
+    // operation on production, or with no explicit context, stays a human gate.
+    const devNodeCleanup = (ctx: string) =>
+      `kubectl ${ctx} run cleanup-probe --restart=Never --image=alpine --rm -i --overrides='{"spec":{"hostPID":true,"containers":[{"name":"c","image":"alpine","securityContext":{"privileged":true},"command":["nsenter","-t","1","-m","--","sh","-c","swapoff /mnt/disks/e2b/swapfile; umount /mnt/disks/e2b; rm -rf /run/e2b-hyperdisk"]}]}}'`
+    expect(await shellStatus(devNodeCleanup("--context=gke_e2b-dev-rauf-guliyev_us-west1_dev-1-us-west1"))).toBe("allow")
+    expect(await shellStatus(devNodeCleanup("--context gke_e2b-dev-rauf-guliyev_us-west1_dev-1-us-west1"))).toBe("allow")
+    expect(await shellStatus(devNodeCleanup("--context=connectgateway_e2b-tango_asia-southeast1_e2b-tango-1"))).toBe("ask")
+    expect(await shellStatus(devNodeCleanup(""))).toBe("ask")
+    expect(
+      await shellStatus(devNodeCleanup("--context=gke_e2b-dev-rauf-guliyev_us-west1_dev-1-us-west1 --kubeconfig=/tmp/other")),
+    ).toBe("ask")
+    expect(
+      await shellStatus("kubectl --context=gke_e2b-dev-rauf-guliyev_us-west1_dev-1-us-west1 delete pod -n e2b-orchestrator swap-fix"),
+    ).toBe("allow")
+    expect(await shellStatus("kubectl --context=gke_e2b-foxtrot_us-central1_foxtrot-1 delete pod -n e2b-orchestrator x")).toBe("ask")
+    expect(await shellStatus("kubectl -n e2b-orchestrator --context connectgateway_e2b-tango_asia-southeast1_e2b-tango-1 scale deploy x --replicas=0")).toBe("ask")
+
     // A python -c program that starts no processes cannot run mkfs; the words are data.
     expect(
       await shellStatus(
