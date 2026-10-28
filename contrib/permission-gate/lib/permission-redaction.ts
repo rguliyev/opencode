@@ -56,19 +56,25 @@ function realMatch(pattern: RegExp, text: string) {
   return [...text.matchAll(global)].some((match) => !declaredFake.test(match[0]))
 }
 
+// A key is the header followed by its base64 body (raw or JSON-escaped
+// newlines), or a complete BEGIN...END block; code that only compares or
+// mentions the header holds no key.
+const privateKeyMaterial =
+  /-----BEGIN [A-Z ]*PRIVATE KEY-----(?:(?:\\[rn]|\s)*[A-Za-z0-9+/]{40,}|[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----)/
+
 export function containsCredentialMaterial(text: string) {
   return (
     realMatch(providerToken, text) ||
     realMatch(jwt, text) ||
     realMatch(webhook, text) ||
-    /-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(text)
+    privateKeyMaterial.test(text)
   )
 }
 
 // This is deliberately a bounded, local detector rather than a claim that
 // arbitrary passwords can be recognized. Unrecognized values remain a risk.
 const residualCredential =
-  /\b(?:sk-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{20,}|AIza[A-Za-z0-9_-]{25,}|(?:AKIA|ASIA)[A-Z0-9]{16}|ya29\.[A-Za-z0-9_-]{20,}|4\/0A[A-Za-z0-9_-]{20,}|1\/\/[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9-]{20,})\b|-----BEGIN [A-Z ]*PRIVATE KEY-----/i
+  /\b(?:sk-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{20,}|AIza[A-Za-z0-9_-]{25,}|(?:AKIA|ASIA)[A-Z0-9]{16}|ya29\.[A-Za-z0-9_-]{20,}|4\/0A[A-Za-z0-9_-]{20,}|1\/\/[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9-]{20,})\b|-----BEGIN [A-Z ]*PRIVATE KEY-----(?:\\[rn]|\s)*[A-Za-z0-9+/]{40,}/i
 
 // In `printf 'X-API-Key: '; cat key`, the quote after the colon closes the
 // string the header name sits in; it does not open a value. Counted on the

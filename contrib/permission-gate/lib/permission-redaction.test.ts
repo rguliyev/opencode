@@ -273,3 +273,12 @@ test("a credential-named key with its value on the next line is a YAML mapping, 
   expect(sanitizeReviewText(manifest).value).toBe(manifest)
   expect(sanitizeReviewText("token: k8Zq2Lx9PwV4mT7c\n").value).toContain("[REDACTED:CREDENTIAL]")
 })
+
+test("a private-key header in code is not a key; a header followed by key material is", () => {
+  const code = "if (pem.startsWith('-----BEGIN RSA PRIVATE KEY-----')) {\n  // convert PKCS#1 to PKCS#8\n}\nif (!pem.startsWith('-----BEGIN PRIVATE KEY-----')) throw new Error('bad key')"
+  expect(containsCredentialMaterial(code)).toBe(false)
+  expect(sanitizeReviewText(code).complete).toBe(true)
+  const body = "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7" + "Q".repeat(40)
+  expect(containsCredentialMaterial(`-----BEGIN PRIVATE KEY-----\n${body}\n`)).toBe(true)
+  expect(containsCredentialMaterial(`"-----BEGIN PRIVATE KEY-----\\n${body}\\n"`)).toBe(true)
+})
