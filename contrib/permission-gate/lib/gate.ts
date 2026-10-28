@@ -2145,7 +2145,17 @@ function scriptPaths(command: string, cwd: string, depth = 0, assigned = new Map
         args.slice(0, index).some((option) => /^-[a-z]*n[a-z]*$/.test(option))
       )
         continue
-      script = args[index]
+      // `bun run ./x.ts` / `deno run x.ts`: `run` is the runtime's subcommand; the
+      // file after it (and its flags) is the script. `bun run build` names a
+      // package.json script, which stays without file evidence.
+      if (["bun", "deno"].includes(name) && args[index] === "run") {
+        let next = index + 1
+        // Only self-contained flags (--env-file=x) are skipped: a separate value
+        // (--env-file x) could otherwise be read as the script.
+        while (next < args.length && /^--[\w-]+=/.test(args[next])) next += 1
+        const target = args[next]
+        script = target && (target.includes("/") || scriptExtension.test(target)) ? target : args[index]
+      } else script = args[index]
     } else if (verb.startsWith("./") || verb.startsWith("../") || scriptExtension.test(verb) || path.isAbsolute(verb)) {
       script = verb
     }
