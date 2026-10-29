@@ -289,6 +289,16 @@ test("Jev receives a scrubbed command and context, while the local gate asks", a
     const bunState = (sent as { state: Record<string, unknown> }).state
     expect(JSON.stringify(bunState)).not.toContain("referenced script does not exist")
     expect(JSON.stringify(bunState.scripts)).toContain("bun-run-marker")
+    // `bun test file.test.ts` runs that test file; `test` is the subcommand.
+    writeFileSync(path.join(phaseDir, "x.test.ts"), "console.log('bun-test-marker')\n")
+    const bunTest = `bun test ${path.join(phaseDir, "x.test.ts")}`
+    await hooks["permission.ask"](
+      { permission: "bash", sessionID: "ses_redaction_test", patterns: [bunTest], metadata: { command: bunTest } },
+      { status: "ask" },
+    )
+    const bunTestState = (sent as { state: Record<string, unknown> }).state
+    expect(JSON.stringify(bunTestState)).not.toContain("referenced script does not exist")
+    expect(JSON.stringify(bunTestState.scripts)).toContain("bun-test-marker")
     rmSync(phaseDir, { recursive: true, force: true })
     // The step runs in phaseDir, so that directory's class is what the reviewer judges.
     const phaseEnvironment = (phaseState.context as { environment: Record<string, unknown> }).environment

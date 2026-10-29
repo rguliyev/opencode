@@ -2145,10 +2145,10 @@ function scriptPaths(command: string, cwd: string, depth = 0, assigned = new Map
         args.slice(0, index).some((option) => /^-[a-z]*n[a-z]*$/.test(option))
       )
         continue
-      // `bun run ./x.ts` / `deno run x.ts`: `run` is the runtime's subcommand; the
-      // file after it (and its flags) is the script. `bun run build` names a
-      // package.json script, which stays without file evidence.
-      if (["bun", "deno"].includes(name) && args[index] === "run") {
+      // `bun run ./x.ts` / `deno test x.test.ts`: `run` and `test` are the runtime's
+      // subcommands; the file after it (and its flags) is the script. `bun run build`
+      // names a package.json script, which stays without file evidence.
+      if (["bun", "deno"].includes(name) && ["run", "test"].includes(args[index])) {
         let next = index + 1
         // Only self-contained flags (--env-file=x) are skipped: a separate value
         // (--env-file x) could otherwise be read as the script.
