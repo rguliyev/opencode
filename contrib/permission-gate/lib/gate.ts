@@ -5053,7 +5053,19 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
             )
               evidence.push({ finding: "publish", detail: "publish: needs the final reviewer to confirm an explicit human request" })
             else if (local) deletes.push(...local)
-            else hard.push("human-only operation")
+            else {
+              // Each human-only step must be a publish step or a delete that stays
+              // inside worktrees or scratch; anything else keeps the hard gate.
+              const stepDeletes = humanSteps.map((segment) => localDeleteTargets(segment.trim(), fullCommand, workdir))
+              if (
+                humanSteps.length > 0 &&
+                humanSteps.every((segment, index) => stepDeletes[index] || finalReviewMayApprovePublish(segment.trim()))
+              ) {
+                for (const found of stepDeletes) if (found) deletes.push(...found)
+                if (humanSteps.some((segment) => finalReviewMayApprovePublish(segment.trim())))
+                  evidence.push({ finding: "publish", detail: "publish: needs the final reviewer to confirm an explicit human request" })
+              } else hard.push("human-only operation")
+            }
           }
           const scopes = [awsScopeReviewMessage(hardChecked, sessions)]
           const gcpScopes = [gcpScopeFindingInLoop(hardChecked, fullCommand, sessions)]

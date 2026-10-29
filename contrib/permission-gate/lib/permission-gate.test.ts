@@ -2190,6 +2190,14 @@ test("shell segments get module evidence and self-contained segments are judged 
     expect(await shellStatus("kubectl --context=gke_e2b-foxtrot_us-central1_foxtrot-1 delete pod -n e2b-orchestrator x")).toBe("ask")
     expect(await shellStatus("kubectl -n e2b-orchestrator --context connectgateway_e2b-tango_asia-southeast1_e2b-tango-1 scale deploy x --replicas=0")).toBe("ask")
 
+    // A chain reported as one pattern is judged step by step: a scratch-only
+    // delete inside it is reviewer evidence; any other human-only step stays hard.
+    const scratchChain = "cd /data/rguliyev/tmp/opencode/tmp/stage-probe && rm -rf g && mkdir g && cd g && git init -q -b main ."
+    await shellStatus(scratchChain)
+    expect(JSON.stringify(contexts[scratchChain])).toContain("recursive delete inside writable local paths: g (scratch)")
+    expect(await shellStatus("cd /data/rguliyev/tmp/opencode/tmp/stage-probe && rm -rf ~/notes && mkdir g")).toBe("ask")
+    expect(await shellStatus("cd /data/rguliyev/tmp/opencode/tmp/stage-probe && rm -rf g && mkfs.ext4 /dev/sdb")).toBe("ask")
+
     // A python -c program that starts no processes cannot run mkfs; the words are data.
     expect(
       await shellStatus(
