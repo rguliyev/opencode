@@ -3126,7 +3126,11 @@ export class Permission extends HeyApiClient {
       reply?: "once" | "always" | "reject"
       message?: string
       origin?: "human" | "automatic"
-      commandFeedback?: { index: number; digest: string; decision: "allow" | "reject" }[]
+      commandFeedback?: Array<{
+        index: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+        digest: string
+        decision: "allow" | "reject"
+      }>
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -3369,7 +3373,7 @@ export class Session2 extends HeyApiClient {
   /**
    * List sessions
    *
-   * Get a list of all OpenCode sessions, sorted by most recently updated.
+   * List sessions by recency. Search matches literal text in titles and user prompts across the full session history. With roots=true, descendant subagent titles and user prompts also match their root conversation. Results include bounded search excerpts.
    */
   public list<ThrowOnError extends boolean = false>(
     parameters?: {

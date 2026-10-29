@@ -29,6 +29,8 @@ import type { SQL } from "drizzle-orm"
 import { PartTable, SessionTable } from "@opencode-ai/core/session/sql"
 import { ProjectTable } from "@opencode-ai/core/project/sql"
 import { MessageV2 } from "./message-v2"
+import { SessionSearch } from "./search"
+import { getTableColumns } from "drizzle-orm"
 import type { InstanceContext } from "../project/instance-context"
 import { InstanceState } from "@/effect/instance-state"
 import { Snapshot } from "@/snapshot"
@@ -244,6 +246,12 @@ export const Info = Schema.Struct({
 }).annotate({ identifier: "Session" })
 export type Info = Types.DeepMutable<Schema.Schema.Type<typeof Info>>
 
+export const SearchInfo = Schema.Struct({
+  ...Info.fields,
+  searchMatch: optional(SessionSearch.Match),
+}).annotate({ identifier: "SessionSearchResult" })
+export type SearchInfo = Types.DeepMutable<Schema.Schema.Type<typeof SearchInfo>>
+
 export const ProjectInfo = Schema.Struct({
   id: ProjectV2.ID,
   name: optional(Schema.String),
@@ -253,6 +261,7 @@ export type ProjectInfo = Types.DeepMutable<Schema.Schema.Type<typeof ProjectInf
 
 export const GlobalInfo = Schema.Struct({
   ...Info.fields,
+  searchMatch: optional(SessionSearch.Match),
   project: Schema.NullOr(ProjectInfo),
 }).annotate({ identifier: "GlobalSession" })
 export type GlobalInfo = Types.DeepMutable<Schema.Schema.Type<typeof GlobalInfo>>
@@ -411,7 +420,7 @@ export class BusyError extends Schema.TaggedErrorClass<BusyError>()("SessionBusy
 export type NotFound = NotFoundError
 
 export interface Interface {
-  readonly list: (input?: ListInput) => Effect.Effect<Info[]>
+  readonly list: (input?: ListInput) => Effect.Effect<SearchInfo[]>
   readonly listGlobal: (input?: GlobalListInput) => Effect.Effect<GlobalInfo[]>
   readonly create: (input?: {
     parentID?: SessionID
@@ -558,16 +567,15 @@ const layer: Layer.Layer<
       if (input?.roots) conditions.push(isNull(SessionTable.parent_id))
       if (input?.start) conditions.push(gte(SessionTable.time_updated, input.start))
       if (input?.cursor) conditions.push(lt(SessionTable.time_updated, input.cursor))
-      if (input?.search) conditions.push(like(SessionTable.title, `%${input.search}%`))
+      const search = input?.search?.trim()
+      const match = search ? SessionSearch.match(search, input?.roots === true) : undefined
+      if (match) conditions.push(sql`${match} is not null`)
       if (!input?.archived) conditions.push(isNull(SessionTable.time_archived))
 
-      const query =
-        conditions.length > 0
-          ? db
-              .select()
-              .from(SessionTable)
-              .where(and(...conditions))
-          : db.select().from(SessionTable)
+      const query = db
+        .select({ ...getTableColumns(SessionTable), searchMatch: match ?? sql<null>`null` })
+        .from(SessionTable)
+        .where(and(...conditions))
       const rows = yield* query
         .orderBy(desc(SessionTable.time_updated), desc(SessionTable.id))
         .limit(input?.limit ?? 100)
@@ -590,7 +598,11 @@ const layer: Layer.Layer<
           })
         }
       }
-      return rows.map((row) => ({ ...fromRow(row), project: projects.get(row.project_id) ?? null }))
+      return rows.map((row) => ({
+        ...fromRow(row),
+        ...(row.searchMatch ? { searchMatch: SessionSearch.decode(row.searchMatch) } : {}),
+        project: projects.get(row.project_id) ?? null,
+      }))
     })
 
     const children = Effect.fn("Session.children")(function* (parentID: SessionID) {
@@ -988,14 +1000,14 @@ function listByProject(
   if (input.start) {
     conditions.push(gte(SessionTable.time_updated, input.start))
   }
-  if (input.search) {
-    conditions.push(like(SessionTable.title, `%${input.search}%`))
-  }
+  const search = input.search?.trim()
+  const match = search ? SessionSearch.match(search, input.roots === true) : undefined
+  if (match) conditions.push(sql`${match} is not null`)
 
   const limit = input.limit ?? 100
 
   return db
-    .select()
+    .select({ ...getTableColumns(SessionTable), searchMatch: match ?? sql<null>`null` })
     .from(SessionTable)
     .where(and(...conditions))
     .orderBy(desc(SessionTable.time_updated))
@@ -1003,7 +1015,12 @@ function listByProject(
     .all()
     .pipe(
       Effect.orDie,
-      Effect.map((rows) => rows.map(fromRow)),
+      Effect.map((rows) =>
+        rows.map((row) => ({
+          ...fromRow(row),
+          ...(row.searchMatch ? { searchMatch: SessionSearch.decode(row.searchMatch) } : {}),
+        })),
+      ),
     )
 }
 

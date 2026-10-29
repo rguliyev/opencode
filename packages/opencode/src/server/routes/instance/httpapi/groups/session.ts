@@ -111,12 +111,13 @@ export const SessionApi = HttpApi.make("session")
       .add(
         HttpApiEndpoint.get("list", SessionPaths.list, {
           query: ListQuery,
-          success: described(Schema.Array(Session.Info), "List of sessions"),
+          success: described(Schema.Array(Session.SearchInfo), "List of sessions with optional search excerpts"),
         }).annotateMerge(
           OpenApi.annotations({
             identifier: "session.list",
             summary: "List sessions",
-            description: "Get a list of all OpenCode sessions, sorted by most recently updated.",
+            description:
+              "List sessions by recency. Search matches literal text in titles and user prompts across the full session history. With roots=true, descendant subagent titles and user prompts also match their root conversation. Results include bounded search excerpts.",
           }),
         ),
         HttpApiEndpoint.get("status", SessionPaths.status, {

@@ -1402,6 +1402,11 @@ export type GlobalEvent = {
           reply: "once" | "always" | "reject"
           origin?: "human" | "automatic" | "unknown" | "cascade"
           direct?: boolean
+          commandFeedback?: Array<{
+            index: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+            digest: string
+            decision: "allow" | "reject"
+          }>
         }
       }
     | {
@@ -2193,6 +2198,15 @@ export type WorktreeResetInput = {
   directory: string
 }
 
+export type SessionSearchMatch = {
+  kind: "title" | "prompt"
+  sessionID: string
+  messageID?: string
+  agent?: string
+  excerpt: string
+  time: number
+}
+
 export type ProjectSummary = {
   id: string
   name?: string
@@ -2250,6 +2264,7 @@ export type GlobalSession = {
     snapshot?: string
     diff?: string
   }
+  searchMatch?: SessionSearchMatch
   project: ProjectSummary | null
 }
 
@@ -2545,6 +2560,60 @@ export type ProviderAuthError1 = {
     message?: string
     kind?: string
   }
+}
+
+export type SessionSearchResult = {
+  id: string
+  slug: string
+  projectID: string
+  workspaceID?: string
+  directory: string
+  path?: string
+  parentID?: string
+  summary?: {
+    additions: number
+    deletions: number
+    files: number
+    diffs?: Array<SnapshotFileDiff>
+  }
+  cost?: number
+  tokens?: {
+    input: number
+    output: number
+    reasoning: number
+    cache: {
+      read: number
+      write: number
+    }
+  }
+  share?: {
+    url: string
+  }
+  title: string
+  agent?: string
+  model?: {
+    id: string
+    providerID: string
+    variant?: string
+  }
+  version: string
+  metadata?: {
+    [key: string]: unknown
+  }
+  time: {
+    created: number
+    updated: number
+    compacting?: number
+    archived?: number
+  }
+  permission?: PermissionRuleset
+  revert?: {
+    messageID: string
+    partID?: string
+    snapshot?: string
+    diff?: string
+  }
+  searchMatch?: SessionSearchMatch
 }
 
 export type NotFoundError = {
@@ -5748,6 +5817,11 @@ export type PermissionReplied = {
     reply: "once" | "always" | "reject"
     origin?: "human" | "automatic" | "unknown" | "cascade"
     direct?: boolean
+    commandFeedback?: Array<{
+      index: number | "NaN" | "Infinity" | "-Infinity"
+      digest: string
+      decision: "allow" | "reject"
+    }>
   }
 }
 
@@ -6897,6 +6971,11 @@ export type EventPermissionReplied = {
     reply: "once" | "always" | "reject"
     origin?: "human" | "automatic" | "unknown" | "cascade"
     direct?: boolean
+    commandFeedback?: Array<{
+      index: number | "NaN" | "Infinity" | "-Infinity"
+      digest: string
+      decision: "allow" | "reject"
+    }>
   }
 }
 
@@ -9281,7 +9360,11 @@ export type PermissionReplyData = {
     reply: "once" | "always" | "reject"
     message?: string
     origin?: "human" | "automatic"
-    commandFeedback?: Array<{ index: number; digest: string; decision: "allow" | "reject" }>
+    commandFeedback?: Array<{
+      index: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+      digest: string
+      decision: "allow" | "reject"
+    }>
   }
   path: {
     requestID: string
@@ -9480,9 +9563,9 @@ export type SessionListError = SessionListErrors[keyof SessionListErrors]
 
 export type SessionListResponses = {
   /**
-   * List of sessions
+   * List of sessions with optional search excerpts
    */
-  200: Array<Session>
+  200: Array<SessionSearchResult>
 }
 
 export type SessionListResponse = SessionListResponses[keyof SessionListResponses]

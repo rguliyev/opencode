@@ -18,6 +18,7 @@ import { errorMessage } from "../util/error"
 import { DialogSessionDeleteFailed } from "./dialog-session-delete-failed"
 import { useCommandShortcut } from "../keymap"
 import { useEvent } from "../context/event"
+import type { Session, SessionSearchResult } from "@opencode-ai/sdk/v2"
 
 type SessionListFilter = { scope?: "project"; path?: string }
 
@@ -42,6 +43,41 @@ export function loadDialogSessionList<T>(input: {
   )
 }
 
+export function selectDialogSessions(input: {
+  search: string
+  filter?: SessionListFilter
+  remote?: { query: string; filter?: SessionListFilter; sessions?: SessionSearchResult[] }
+  fallback: Session[]
+  synced: Session[]
+  extra: (string | undefined)[]
+}): SessionSearchResult[] {
+  const query = input.search.trim()
+  const remote =
+    input.remote?.query === query &&
+    input.remote.filter?.scope === input.filter?.scope &&
+    input.remote.filter?.path === input.filter?.path
+      ? input.remote.sessions
+      : undefined
+  const source: SessionSearchResult[] = remote ?? input.fallback
+  const synced = new Map(input.synced.map((session) => [session.id, session]))
+  const matched = new Set(remote?.map((session) => session.id))
+  const ids = new Set(source.map((session) => session.id))
+  const extra: SessionSearchResult[] = input.extra.flatMap((id) => {
+    if (!id || ids.has(id)) return []
+    const session = synced.get(id)
+    if (!session) return []
+    ids.add(id)
+    return [session]
+  })
+  return [...source, ...extra]
+    .map((session) => ({
+      ...session,
+      ...synced.get(session.id),
+      searchMatch: query && matched.has(session.id) ? session.searchMatch : undefined,
+    }))
+    .filter((session) => !query || matched.has(session.id) || session.title.toLowerCase().includes(query.toLowerCase()))
+}
+
 export function DialogSessionList() {
   const dialog = useDialog()
   const route = useRoute()
@@ -54,7 +90,7 @@ export function DialogSessionList() {
   const toast = useToast()
   const [toDelete, setToDelete] = createSignal<string>()
   const [deleted, setDeleted] = createSignal(new Set<string>())
-  const [search, setSearch] = createDebouncedSignal("", 150)
+  const [search, setSearch] = createDebouncedSignal("", 300)
   const deleteHint = useCommandShortcut("session.delete")
   const quickSwitch1 = useCommandShortcut("session.quick_switch.1")
   const quickSwitch9 = useCommandShortcut("session.quick_switch.9")
@@ -65,31 +101,28 @@ export function DialogSessionList() {
   )
   const [searchResults, { refetch }] = createResource(
     () => ({ query: search(), filter: sync.session.query() }),
-    (input) => {
-      if (!input.query) return undefined
-      return loadDialogSessionList({
-        search: input.query,
+    async (input) => {
+      const query = input.query.trim()
+      if (!query) return undefined
+      const sessions = await loadDialogSessionList({
+        search: query,
         filter: input.filter,
         list: (query) => sdk.client.session.list(query),
       })
+      return { query, filter: input.filter, sessions }
     },
   )
 
   const currentSessionID = createMemo(() => (route.data.type === "session" ? route.data.sessionID : undefined))
   const sessions = createMemo(() => {
-    const result = searchResults() ?? browseResults() ?? sync.data.session
-    const synced = new Map(sync.data.session.map((session) => [session.id, session]))
-    const ids = new Set(result.map((session) => session.id))
-    const extra = [currentSessionID(), ...local.session.pinned()].flatMap((id) => {
-      if (!id || ids.has(id)) return []
-      const session = synced.get(id)
-      if (session) ids.add(id)
-      return session ? [session] : []
-    })
-    const query = search().trim().toLowerCase()
-    return [...result.map((session) => synced.get(session.id) ?? session), ...extra]
-      .filter((session) => !deleted().has(session.id))
-      .filter((session) => !query || session.title.toLowerCase().includes(query))
+    return selectDialogSessions({
+      search: search(),
+      filter: sync.session.query(),
+      remote: searchResults(),
+      fallback: browseResults() ?? sync.data.session,
+      synced: sync.data.session,
+      extra: [currentSessionID(), ...local.session.pinned()],
+    }).filter((session) => !deleted().has(session.id))
   })
 
   onCleanup(
@@ -213,8 +246,7 @@ export function DialogSessionList() {
         .map((x) => [x.id, x]),
     )
 
-    const searchResult = searchResults()
-    const order = searchResult ? orderByRecency(sessions()) : browseOrder()
+    const order = search().trim() ? orderByRecency(sessions()) : browseOrder()
     const current = currentSessionID()
     const displayOrder = current && sessionMap.has(current) && !order.includes(current) ? [...order, current] : order
 
@@ -249,6 +281,12 @@ export function DialogSessionList() {
         category,
         footer,
         gutter,
+        details: x.searchMatch
+          ? [
+              `${x.searchMatch.sessionID !== x.id ? `Subagent ${x.searchMatch.agent ?? ""} · ` : ""}${x.searchMatch.kind === "prompt" ? "Prompt" : "Title"} · ${new Date(x.searchMatch.time).toLocaleDateString()}`,
+              x.searchMatch.excerpt,
+            ]
+          : undefined,
       }
     }
 
@@ -271,7 +309,16 @@ export function DialogSessionList() {
 
   return (
     <DialogSelect
-      title="Sessions"
+      title={
+        !search().trim()
+          ? "Sessions"
+          : searchResults.loading
+            ? "Sessions · searching…"
+            : searchResults()?.sessions === undefined
+              ? "Sessions · cached titles only"
+              : "Sessions"
+      }
+      placeholder="Search titles, user prompts, and subagents"
       options={options()}
       skipFilter={true}
       preserveSelection={true}
