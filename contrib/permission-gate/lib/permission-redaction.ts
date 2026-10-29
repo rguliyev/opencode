@@ -67,7 +67,7 @@ export function containsCredentialMaterial(text: string) {
     realMatch(providerToken, text) ||
     realMatch(jwt, text) ||
     realMatch(webhook, text) ||
-    privateKeyMaterial.test(text)
+    realMatch(privateKeyMaterial, text)
   )
 }
 

@@ -282,3 +282,9 @@ test("a private-key header in code is not a key; a header followed by key materi
   expect(containsCredentialMaterial(`-----BEGIN PRIVATE KEY-----\n${body}\n`)).toBe(true)
   expect(containsCredentialMaterial(`"-----BEGIN PRIVATE KEY-----\\n${body}\\n"`)).toBe(true)
 })
+
+test("a private-key block whose body says it is fake is a fixture", () => {
+  expect(containsCredentialMaterial("'docs/leak.md': '-----BEGIN PRIVATE KEY-----\\nfake-private-key\\n-----END PRIVATE KEY-----\\n'")).toBe(false)
+  const body = "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7" + "Q".repeat(40)
+  expect(containsCredentialMaterial(`-----BEGIN PRIVATE KEY-----\n${body}\n-----END PRIVATE KEY-----`)).toBe(true)
+})
