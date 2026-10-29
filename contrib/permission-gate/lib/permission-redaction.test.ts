@@ -243,6 +243,15 @@ test("an unquoted index or call after a credential-named key is code reading the
   expect(sanitizeReviewText("password = hunter2rocks").value).toContain("[REDACTED:CREDENTIAL]")
 })
 
+test("an unquoted name declared earlier in the same text is a variable, not a value", () => {
+  const code = "let apiKey = '';\napiKey = line.slice(12).trim();\nprocess.env.E2B_API_KEY = apiKey;\n"
+  const safe = sanitizeReviewText(code)
+  expect(safe.value).toBe(code)
+  expect(safe.kinds).toEqual([])
+  // Without a declaration the same word is still treated as a value.
+  expect(sanitizeReviewText("process.env.E2B_API_KEY = apiKeyValue1;").value).toContain("[REDACTED:CREDENTIAL]")
+})
+
 test("a header name in its own quoted string, with the value read from a file, is not a credential", () => {
   const command = `{ printf 'X-API-Key: '; cat ../run/dev-api-key; echo; } | curl -sS -H @- http://127.0.0.1:15001/sandboxes | python3 -c "print('live')"`
   const safe = sanitizeReviewText(command)
