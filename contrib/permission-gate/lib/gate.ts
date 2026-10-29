@@ -3233,7 +3233,18 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
   // A session-scoped grant must also cover that session's subagents, or a
   // delegated child stalls on a prompt the human already answered. Recheck
   // the lineage and role for each permission; stale role data is not authority.
+  // A subagent session asks for its first tools while it is still being set up:
+  // for a moment the server has no agent for it yet. Look again briefly before
+  // treating the session as unverifiable.
   async function sessionInfo(sessionID: string | undefined) {
+    for (let attempt = 0; ; attempt++) {
+      const info = await sessionInfoOnce(sessionID)
+      if (info !== "agent pending" || attempt === 2) return info === "agent pending" ? undefined : info
+      await new Promise((resolve) => setTimeout(resolve, 300 * (attempt + 1)))
+    }
+  }
+
+  async function sessionInfoOnce(sessionID: string | undefined): Promise<SessionInfo | "agent pending" | undefined> {
     if (!sessionID) return undefined
     try {
       const response = await fetch(
@@ -3242,6 +3253,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
       )
       if (!response.ok) return undefined
       const body = (await response.json()) as Record<string, unknown>
+      if (body.id === sessionID && body.directory === directory && body.agent === undefined) return "agent pending"
       if (
         body.id !== sessionID ||
         body.directory !== directory ||

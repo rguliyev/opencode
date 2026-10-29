@@ -4039,3 +4039,43 @@ test("the gate pins the Google API helper it ships", () => {
   const helper = readFileSync(path.join(import.meta.dir, "../bin/google-api-get"))
   expect(source).toContain(`const googleApiHelperSha256 = "${createHash("sha256").update(helper).digest("hex")}"`)
 })
+
+test("a subagent session still being set up is looked up again before the guard asks", async () => {
+  const directory = path.resolve(import.meta.dir, "..")
+  const previousFetch = globalThis.fetch
+  const previousStateHome = process.env.XDG_STATE_HOME
+  let lookups = 0
+  let sent = false
+  process.env.XDG_STATE_HOME = "/dev/null"
+  globalThis.fetch = async (input) => {
+    const url = String(input)
+    if (url.includes("/session/ses_new_subagent/message?"))
+      return Response.json([message("msg_new_subagent_user", "user", "Review the plan.")])
+    if (url.startsWith("http://gate.test/session/ses_new_subagent")) {
+      lookups += 1
+      // The first lookup lands before the server has the agent for the session.
+      return Response.json({ id: "ses_new_subagent", directory, ...(lookups > 1 ? { agent: "solo" } : {}) })
+    }
+    if (url === "https://openrouter.ai/api/alpha/decisions") {
+      sent = true
+      return new Response("declined", { status: 403 })
+    }
+    throw new Error(`Unexpected fetch: ${url}`)
+  }
+  try {
+    const hooks = await gateForTest(directory, "solo")
+    await hooks.provider.models({ models: {} }, { auth: { type: "api", key: "fake-test-key" } })
+    const output: { status: string; message?: string } = { status: "ask" }
+    await hooks["permission.ask"](
+      { permission: "bash", sessionID: "ses_new_subagent", patterns: ["ls"], metadata: { command: "ls" } },
+      output,
+    )
+    expect(lookups).toBeGreaterThan(1)
+    expect(output.message ?? "").not.toContain("could not be verified locally")
+    expect(sent).toBe(true)
+  } finally {
+    globalThis.fetch = previousFetch
+    if (previousStateHome === undefined) delete process.env.XDG_STATE_HOME
+    else process.env.XDG_STATE_HOME = previousStateHome
+  }
+}, 20_000)
