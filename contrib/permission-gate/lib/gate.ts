@@ -594,7 +594,11 @@ function containsCredentialLiteralBase(command: string) {
     /\b(?:config|configure)\s+set\s+[^\s]*(?:api[-_]?key|access[-_]?key|token|secret|password|passwd|credential)[^\s]*\s+["']?[^\s'";|]{8,}/i.test(
       command,
     ) ||
-    /\b[a-z][a-z0-9+.-]*:\/\/[^\s/:@]+:[^\s/@]{3,}@/i.test(command) ||
+    // A password that is a template or expansion (${var.p}, {{ .p }}, $P) or a
+    // fake-marked word (pw-fake-uri) names where the secret comes from.
+    /\b[a-z][a-z0-9+.-]*:\/\/[^\s/:@]+:(?![$%]?\{|\$[A-Za-z_(])(?!(?:[a-z0-9]+[-_])*(?:fake|test|dummy|example|placeholder|sample|mock|changeme)(?:[-_][a-z0-9]+)*@)[^\s/@]{3,}@/i.test(
+      command,
+    ) ||
     /\b(?:sk-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9_]{20,}|AIza[A-Za-z0-9_-]{25,}|ya29\.[A-Za-z0-9_-]{20,}|xox[a-z]-[A-Za-z0-9-]{20,}|AKIA[A-Z0-9]{16}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})\b/.test(
       command,
     )

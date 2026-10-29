@@ -359,6 +359,25 @@ test("Jev receives a scrubbed command and context, while the local gate asks", a
     )
     expect(sent).toBeDefined()
     expect(builtinOutput.message).not.toBe("The gate could not verify which skill is being loaded.")
+
+    // A URI whose password is a template reference or a fake-marked word names
+    // where a secret comes from; the edit still reaches review.
+    sent = undefined
+    const uriOutput: { status: string; message?: string } = { status: "allow" }
+    await hooks["permission.ask"](
+      {
+        permission: "edit",
+        sessionID: "ses_redaction_test",
+        patterns: ["scripts/filter.ts"],
+        metadata: {
+          filepath: "/tmp/scripts/filter.ts",
+          diff: "+ * URI scheme (`postgres://${var.u}:${var.p}@${var.h}`)\n+ 'password: \"postgres://app:pw-fake-uri@{{ .Values.host }}/db\"'\n",
+        },
+      },
+      uriOutput,
+    )
+    expect(sent).toBeDefined()
+    expect(uriOutput.message ?? "").not.toContain("could not be safely redacted")
   } finally {
     globalThis.fetch = previousFetch
     if (previousStateHome === undefined) delete process.env.XDG_STATE_HOME
