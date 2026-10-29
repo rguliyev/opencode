@@ -234,6 +234,15 @@ test("an unquoted property path after a credential-named key is a reference, not
   expect(sanitizeReviewText("token = ya29." + "a".repeat(30)).value).toContain("[REDACTED:")
 })
 
+test("an unquoted index or call after a credential-named key is code reading the value, not a value", () => {
+  const code = '    token = match[1].trim().replace(/^["\'](.*)["\']$/, "$1");\n  password: getSecret(name),\n  apiKey = env?.["API_KEY"]'
+  const safe = sanitizeReviewText(code)
+  expect(safe.value).toBe(code)
+  expect(safe.kinds).toEqual([])
+  // A plain unquoted value is still a value.
+  expect(sanitizeReviewText("password = hunter2rocks").value).toContain("[REDACTED:CREDENTIAL]")
+})
+
 test("a header name in its own quoted string, with the value read from a file, is not a credential", () => {
   const command = `{ printf 'X-API-Key: '; cat ../run/dev-api-key; echo; } | curl -sS -H @- http://127.0.0.1:15001/sandboxes | python3 -c "print('live')"`
   const safe = sanitizeReviewText(command)

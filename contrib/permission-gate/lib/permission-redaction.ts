@@ -33,6 +33,9 @@ const formatVerbs = /^(?:%[-+ #0-9.]*[a-zA-Z]|\\[nrt])+$/
 // elsewhere. Quoted, the same text is a literal. Provider tokens with dots
 // (ya29.…) are still masked by their own pattern.
 const propertyPath = /^[A-Za-z_$][\w$]*(?:\??\.[A-Za-z_$][\w$]*)+\s*[;,})]?$/
+// Code that reads the value elsewhere: `token = match[1].trim()` or
+// `password = getSecret(name)` indexes or calls something; it is not a value.
+const codeExpression = /^[A-Za-z_$][\w$]*(?:\??\.[A-Za-z_$][\w$]*)*\??\.?[[(]/
 
 // Provider-issued token formats and signed JWTs: values with these shapes are
 // real credentials far more often than not, unlike the generic patterns below.
@@ -108,7 +111,7 @@ function sanitizeText(input: string): RedactionResult<string> {
         /fake|fixture|dummy|notreal/i.test(secret) ||
         (pathSetting.test(prefix) && pathValue.test(secret.trim())) ||
         credentialFilePath.test(secret.trim()) ||
-        (!/["'`]\s*$/.test(prefix) && propertyPath.test(secret.trim())) ||
+        (!/["'`]\s*$/.test(prefix) && (propertyPath.test(secret.trim()) || codeExpression.test(secret.trim()))) ||
         !shouldRedact(prefix, secret, whole.slice(0, offset))
       )
         return found
