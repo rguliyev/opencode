@@ -586,7 +586,9 @@ function headerValueLiteral(command: string) {
 function containsCredentialLiteralBase(command: string) {
   return (
     headerValueLiteral(command) ||
-    /[?&](?:api_?key|access_?token|auth_?token|password|passwd|secret|client_?secret|private_?key)=[^\s&'";|]{8,}/i.test(
+    // A fake-marked fixture (`auth_token=fake-token`) is not a secret, as in the
+    // JSON and URI checks below.
+    /[?&](?:api_?key|access_?token|auth_?token|password|passwd|secret|client_?secret|private_?key)=(?!(?:[a-z0-9]+[-_])*(?:fake|test|dummy|example|placeholder|sample|mock|changeme)(?:[-_][a-z0-9]+)*(?:[\s&'";|#]|$))[^\s&'";|]{8,}/i.test(
       command,
     ) ||
     // Lowercase word placeholders such as "fake-test-access-token" in test

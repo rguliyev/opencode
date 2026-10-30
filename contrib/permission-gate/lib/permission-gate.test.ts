@@ -397,6 +397,24 @@ test("Jev receives a scrubbed command and context, while the local gate asks", a
     )
     expect(sent).toBeDefined()
     expect(headerOutput.message ?? "").not.toContain("could not be safely redacted")
+
+    // A fake-marked query credential in a test fixture is not a secret.
+    sent = undefined
+    const queryOutput: { status: string; message?: string } = { status: "allow" }
+    await hooks["permission.ask"](
+      {
+        permission: "edit",
+        sessionID: "ses_redaction_test",
+        patterns: ["scripts/alert.test.ts"],
+        metadata: {
+          filepath: "/tmp/scripts/alert.test.ts",
+          diff: "+\t\texpect(safeLink(`${ALERT}&auth_token=fake-token#frag`)).toBe(ALERT);\n",
+        },
+      },
+      queryOutput,
+    )
+    expect(sent).toBeDefined()
+    expect(queryOutput.message ?? "").not.toContain("could not be safely redacted")
   } finally {
     globalThis.fetch = previousFetch
     if (previousStateHome === undefined) delete process.env.XDG_STATE_HOME
