@@ -567,11 +567,25 @@ function hasSkillCredentialLiteral(content: string) {
   return !scan.complete || scan.kinds.length > 0 || containsCredentialLiteralUnmasked(withoutResourceSelectors)
 }
 
+// Code naming where a header value comes from (`cookie: setCookie.split(';')[0]`,
+// `cookie: SANDBOX_GRAFANA_COOKIE`) is not the value.
+function headerValueLiteral(command: string) {
+  for (const found of command.matchAll(
+    // In JSON-encoded context `\n` and `\t` are two characters; a backslash ends
+    // the value, since an escaped newline is not part of a header value.
+    /(?:authorization|proxy-authorization|x-api-key|api-key|x-auth-token|cookie|set-cookie)\s*:\s*([^\s'";|\\]{8,})/gi,
+  )) {
+    const value = found[1]
+    if (/^[A-Za-z_$][\w$]*(?:\??\.[A-Za-z_$][\w$]*)*\??\.?[[(]/.test(value)) continue
+    if (/^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+[,;)}]?$/.test(value)) continue
+    return true
+  }
+  return false
+}
+
 function containsCredentialLiteralBase(command: string) {
   return (
-    /(?:authorization|proxy-authorization|x-api-key|api-key|x-auth-token|cookie|set-cookie)\s*:\s*[^\s'";|]{8,}/i.test(
-      command,
-    ) ||
+    headerValueLiteral(command) ||
     /[?&](?:api_?key|access_?token|auth_?token|password|passwd|secret|client_?secret|private_?key)=[^\s&'";|]{8,}/i.test(
       command,
     ) ||

@@ -378,6 +378,25 @@ test("Jev receives a scrubbed command and context, while the local gate asks", a
     )
     expect(sent).toBeDefined()
     expect(uriOutput.message ?? "").not.toContain("could not be safely redacted")
+
+    // A header-named key whose value is code or a constant name (`cookie:
+    // setCookie.split(';')[0]`, `cookie: SANDBOX_GRAFANA_COOKIE`) is not a header value.
+    sent = undefined
+    const headerOutput: { status: string; message?: string } = { status: "allow" }
+    await hooks["permission.ask"](
+      {
+        permission: "edit",
+        sessionID: "ses_redaction_test",
+        patterns: ["scripts/auth.ts"],
+        metadata: {
+          filepath: "/tmp/scripts/auth.ts",
+          diff: "+\t\tcookie: SANDBOX_GRAFANA_COOKIE,\n+\t\tcookie: setCookie.split(';')[0] ?? '',\n",
+        },
+      },
+      headerOutput,
+    )
+    expect(sent).toBeDefined()
+    expect(headerOutput.message ?? "").not.toContain("could not be safely redacted")
   } finally {
     globalThis.fetch = previousFetch
     if (previousStateHome === undefined) delete process.env.XDG_STATE_HOME
