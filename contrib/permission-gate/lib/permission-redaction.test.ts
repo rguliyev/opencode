@@ -229,6 +229,10 @@ test("an unquoted property path after a credential-named key is a reference, not
   const safe = sanitizeReviewText(code)
   expect(safe.value).toBe(code)
   expect(safe.kinds).toEqual([])
+  // A negated reference is still a reference.
+  expect(sanitizeReviewText("  hasGithubToken: !!cfg.githubToken,\n  noToken: !opts.token;").value).toBe(
+    "  hasGithubToken: !!cfg.githubToken,\n  noToken: !opts.token;",
+  )
   // Quoted, it is a literal string that happens to contain dots.
   expect(sanitizeReviewText('password: "hunter.two"').value).toContain("[REDACTED:CREDENTIAL]")
   expect(sanitizeReviewText("token = ya29." + "a".repeat(30)).value).toContain("[REDACTED:")

@@ -124,8 +124,10 @@ function sanitizeText(input: string): RedactionResult<string> {
         (pathSetting.test(prefix) && pathValue.test(secret.trim())) ||
         credentialFilePath.test(secret.trim()) ||
         (!/["'`]\s*$/.test(prefix) &&
-          (propertyPath.test(secret.trim()) ||
-            codeExpression.test(secret.trim()) ||
+          // `hasToken: !!cfg.githubToken` negates a property path; the `!` does not
+          // turn the reference into a value.
+          (propertyPath.test(secret.trim().replace(/^!+/, "")) ||
+            codeExpression.test(secret.trim().replace(/^!+/, "")) ||
             constantName.test(secret.trim()) ||
             assignedEarlier(secret.trim().replace(/[,;)}]$/, ""), whole.slice(0, offset)))) ||
         !shouldRedact(prefix, secret, whole.slice(0, offset))
