@@ -248,6 +248,11 @@ test("an unquoted name declared earlier in the same text is a variable, not a va
   const safe = sanitizeReviewText(code)
   expect(safe.value).toBe(code)
   expect(safe.kinds).toEqual([])
+  // A Python assignment earlier in the text declares the name too.
+  const py = "sec = P['stagingClientSecret']\ncfg = {\n    'clientSecret': sec_value\n}\nsec_value = sec\nnew = {'clientSecret': sec}\n"
+  expect(sanitizeReviewText(py).value).toContain("'clientSecret': sec}")
+  const pyBlock = "staging_client_sec = P['stagingClientSecret']\nnew_cfg['stagingOauth'] = {\n    'clientSecret': staging_client_sec\n}\n"
+  expect(sanitizeReviewText(pyBlock).value).toBe(pyBlock)
   // Without a declaration the same word is still treated as a value.
   expect(sanitizeReviewText("process.env.E2B_API_KEY = apiKeyValue1;").value).toContain("[REDACTED:CREDENTIAL]")
 })

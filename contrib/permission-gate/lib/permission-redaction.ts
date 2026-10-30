@@ -42,6 +42,15 @@ const constantName = /^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+[,;)}]?$/
 
 // Provider-issued token formats and signed JWTs: values with these shapes are
 // real credentials far more often than not, unlike the generic patterns below.
+// `process.env.API_KEY = apiKey;` after `let apiKey = ...`, or Python's
+// `'clientSecret': sec` after `sec = P['x']`, uses a variable assigned earlier in
+// the same text; the name is a reference, not a value.
+function assignedEarlier(name: string, before: string) {
+  if (!/^[A-Za-z_$][\w$]*$/.test(name)) return false
+  const escaped = name.replace(/\$/g, "\\$")
+  return new RegExp(`\\b(?:let|const|var)\\s+${escaped}\\b|^[ \\t]*${escaped}[ \\t]*=(?!=)`, "m").test(before)
+}
+
 const providerToken =
   /\b(?:sk-(?:proj|ant|live|test)-[A-Za-z0-9_-]{20,}|sk-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{20,}|AIza[A-Za-z0-9_-]{25,}|(?:AKIA|ASIA)[A-Z0-9]{16}|ya29\.[A-Za-z0-9_-]{20,}|4\/0A[A-Za-z0-9_-]{20,}|1\/\/[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9-]{20,}|pypi-[A-Za-z0-9_-]{20,}|npm_[A-Za-z0-9_-]{20,}|sk_(?:live|test)_[A-Za-z0-9]{16,})\b/
 const jwt = /\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/
@@ -115,7 +124,10 @@ function sanitizeText(input: string): RedactionResult<string> {
         (pathSetting.test(prefix) && pathValue.test(secret.trim())) ||
         credentialFilePath.test(secret.trim()) ||
         (!/["'`]\s*$/.test(prefix) &&
-          (propertyPath.test(secret.trim()) || codeExpression.test(secret.trim()) || constantName.test(secret.trim()))) ||
+          (propertyPath.test(secret.trim()) ||
+            codeExpression.test(secret.trim()) ||
+            constantName.test(secret.trim()) ||
+            assignedEarlier(secret.trim().replace(/[,;)}]$/, ""), whole.slice(0, offset)))) ||
         !shouldRedact(prefix, secret, whole.slice(0, offset))
       )
         return found
@@ -215,7 +227,7 @@ function sanitizeText(input: string): RedactionResult<string> {
     // indented `path: token` is a YAML mapping, not a value.
     /((?:["']?(?:[A-Za-z_][A-Za-z0-9_.-]{0,63})?(?:api[_-]?key|access[_-]?key|token|secret|password|passwd|credential|private[_-]?key)[A-Za-z0-9_.-]{0,63}["']?)[ \t]*(?:=|:)[ \t]*["']?)([^\s'"`;|&,}]+)/gi,
     "CREDENTIAL",
-    (prefix, secret, before) =>
+    (prefix, secret) =>
       // A value with no letters or digits ("=== ClusterSecretStore ===") is
       // punctuation, not a credential.
       /[A-Za-z0-9]/.test(secret) &&
@@ -227,13 +239,6 @@ function sanitizeText(input: string): RedactionResult<string> {
         secret,
       ) &&
       !/(?:count|length|size|max|min|timeout|ttl)["']?\s*(?:=|:)/i.test(prefix) &&
-      // `process.env.API_KEY = apiKey;` after `let apiKey = ...` assigns a variable
-      // declared earlier in the same text; the name is a reference, not a value.
-      !(
-        !/["'`]\s*$/.test(prefix) &&
-        /^[A-Za-z_$][\w$]*$/.test(secret) &&
-        new RegExp(`\\b(?:let|const|var)\\s+${secret.replace(/\$/g, "\\$")}\\b`).test(before)
-      ) &&
       !(
         !/["']\s*$/.test(prefix) &&
         // Prose closes around the value: `automountServiceAccountToken: false).`
