@@ -598,9 +598,12 @@ function containsCredentialLiteralBase(command: string) {
     ) ||
     // A value that is a placeholder or expansion ({SECRETS[host]}, $VAR,
     // $(cmd)) names where the secret comes from; it is not the secret.
-    /--(?:api[-_]?key|access[-_]?token|auth[-_]?token|oauth2[-_]?bearer|password|passwd|secret|client[-_]?secret|private[-_]?key|user|userpwd)(?:=|\s+)["']?(?![{$(])[^\s'";|]{8,}/i.test(
+    /--(?:api[-_]?key|access[-_]?token|auth[-_]?token|oauth2[-_]?bearer|password|passwd|secret|client[-_]?secret|private[-_]?key|userpwd)(?:=|\s+)["']?(?![{$(])[^\s'";|]{8,}/i.test(
       command,
     ) ||
+    // `--user` carries a secret only as curl's `user:password`; a bare account
+    // name (`gh auth token --user rguliyev`) is not one.
+    /--user(?:=|\s+)["']?(?![{$(])[^\s'";|:]+:[^\s'";|]{3,}/i.test(command) ||
     /\bcurl\b[^\n;|&]*\s-u\s+["']?[^\s'";|]{3,}:[^\s'";|]{3,}/i.test(command) ||
     /\b(?:docker|podman)\b[^\n;|&]*\blogin\b[^\n;|&]*(?:\s-p\s+|--password(?:=|\s+))["']?[^\s'";|]{3,}/i.test(
       command,

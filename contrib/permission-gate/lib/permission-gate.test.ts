@@ -422,6 +422,17 @@ test("Jev receives a scrubbed command and context, while the local gate asks", a
     )
     expect(sent).toBeDefined()
     expect(queryOutput.message ?? "").not.toContain("could not be safely redacted")
+
+    // A bare account name after `--user` is not a credential; `user:password` is.
+    sent = undefined
+    const userOutput: { status: string; message?: string } = { status: "allow" }
+    const ghToken = "gh auth token --hostname github.com --user rguliyev > /dev/null"
+    await hooks["permission.ask"](
+      { permission: "bash", sessionID: "ses_redaction_test", patterns: [ghToken], metadata: { command: ghToken } },
+      userOutput,
+    )
+    expect(sent).toBeDefined()
+    expect(userOutput.message ?? "").not.toContain("could not be safely redacted")
   } finally {
     globalThis.fetch = previousFetch
     if (previousStateHome === undefined) delete process.env.XDG_STATE_HOME
