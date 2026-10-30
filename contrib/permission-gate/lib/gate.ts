@@ -2158,6 +2158,9 @@ function scriptPaths(command: string, cwd: string, depth = 0, assigned = new Map
         }
         index += 1
       }
+      // `node --input-type=module << 'EOF'` runs its stdin: the heredoc body is in
+      // the command text itself, like `-e` inline code, not a file to look up.
+      if (/^<<-?/.test(args[index] ?? "")) continue
       // `bash -n script` only parses the script for syntax errors; it runs
       // nothing and loads nothing, so there is no script to inspect.
       if (
