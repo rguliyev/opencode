@@ -36,6 +36,9 @@ const propertyPath = /^[A-Za-z_$][\w$]*(?:\??\.[A-Za-z_$][\w$]*)+\s*[;,})]?$/
 // Code that reads the value elsewhere: `token = match[1].trim()` or
 // `password = getSecret(name)` indexes or calls something; it is not a value.
 const codeExpression = /^[A-Za-z_$][\w$]*(?:\??\.[A-Za-z_$][\w$]*)*\??\.?[[(]/
+// `clientSecret: STAGING_CLIENT_SECRET` names a constant defined elsewhere; an
+// UPPER_SNAKE name with no lowercase is a reference, not the value.
+const constantName = /^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+[,;)}]?$/
 
 // Provider-issued token formats and signed JWTs: values with these shapes are
 // real credentials far more often than not, unlike the generic patterns below.
@@ -111,7 +114,8 @@ function sanitizeText(input: string): RedactionResult<string> {
         /fake|fixture|dummy|notreal/i.test(secret) ||
         (pathSetting.test(prefix) && pathValue.test(secret.trim())) ||
         credentialFilePath.test(secret.trim()) ||
-        (!/["'`]\s*$/.test(prefix) && (propertyPath.test(secret.trim()) || codeExpression.test(secret.trim()))) ||
+        (!/["'`]\s*$/.test(prefix) &&
+          (propertyPath.test(secret.trim()) || codeExpression.test(secret.trim()) || constantName.test(secret.trim()))) ||
         !shouldRedact(prefix, secret, whole.slice(0, offset))
       )
         return found

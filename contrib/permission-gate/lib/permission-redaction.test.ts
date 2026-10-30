@@ -252,6 +252,15 @@ test("an unquoted name declared earlier in the same text is a variable, not a va
   expect(sanitizeReviewText("process.env.E2B_API_KEY = apiKeyValue1;").value).toContain("[REDACTED:CREDENTIAL]")
 })
 
+test("an unquoted UPPER_SNAKE constant after a credential-named key is a reference, not a value", () => {
+  const code = "\t\t\tclientSecret: STAGING_CLIENT_SECRET,\n\tconst token = SLACK_BOT_TOKEN;\n"
+  const safe = sanitizeReviewText(code)
+  expect(safe.value).toBe(code)
+  expect(safe.kinds).toEqual([])
+  // Mixed or lower case is still a value.
+  expect(sanitizeReviewText("clientSecret: Zx91kLmQ02pRtY_ab,").value).toContain("[REDACTED:CREDENTIAL]")
+})
+
 test("a header name in its own quoted string, with the value read from a file, is not a credential", () => {
   const command = `{ printf 'X-API-Key: '; cat ../run/dev-api-key; echo; } | curl -sS -H @- http://127.0.0.1:15001/sandboxes | python3 -c "print('live')"`
   const safe = sanitizeReviewText(command)
