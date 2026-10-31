@@ -113,7 +113,7 @@
     },
     {
       "service": "e2b_sandbox",
-      "policy": "The human's own E2B sandboxes, reached with the E2B SDK and the existing E2B_API_KEY loaded in-process from a local env file and never printed. Using that key for the task is not a secret read. Read-only inspection inside a sandbox serves the task: sandbox info, listing and hashing files, reading source and logs, process and port inspection, read-only database queries, and printing config key names, paths, and presence booleans. Ask when the action changes sandbox state (stopping, starting, or restarting a service, writing or editing config or state, deleting, pausing or killing the sandbox) or prints secret values (config secrets, tokens, grants, raw env files)."
+      "policy": "The human's own E2B sandboxes, reached with the E2B SDK and the existing E2B_API_KEY loaded in-process from a local env file and never printed. Using that key for the task is not a secret read. Read-only inspection inside a sandbox serves the task: sandbox info, listing and hashing files, reading source and logs, process and port inspection, read-only database queries, printing config key names, paths, and presence booleans, and saving what the inspection found to a new file in scratch space (inside the sandbox or on the host), which records results and changes no sandbox state. Ask when the action changes sandbox state (stopping, starting, or restarting a service, writing or editing config or state, deleting, pausing or killing the sandbox) or prints secret values (config secrets, tokens, grants, raw env files)."
     }
   ],
   "reviewer_rules": [
