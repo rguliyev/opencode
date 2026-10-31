@@ -1510,6 +1510,15 @@ function isSelfContainedSegment(command: string) {
   )
 }
 
+// `read -r -d '' SCRIPT <<'EOF' ... EOF` only stores the heredoc's text in a
+// shell variable: the quoted delimiter turns off expansion, so nothing runs
+// and nothing is substituted. The command that later runs "$SCRIPT" is
+// reviewed on its own.
+function heredocIntoVariable(command: string) {
+  const match = /^read((?:\s+-[A-Za-z]+(?:\s*(?:''|""))?)*)\s+[A-Za-z_]\w*\s*<<-?\s*(['"])([A-Za-z_]\w*)\2[ \t]*\n[\s\S]*\n[ \t]*\3\s*$/.exec(command)
+  return !!match && !/-[A-Za-z]*u/.test(match[1])
+}
+
 // `go run <module>` builds a module. Report whether the project's go.mod
 // pins it with a go.sum checksum, so reviewers do not treat a verified
 // dependency as arbitrary downloaded code. Returns undefined for other commands.
@@ -4981,6 +4990,18 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
               hard_reasons: [],
               jev: null,
               explanation: "creates only scratch folders outside repositories and worktrees; no effect to review",
+              checks: [],
+            }
+          if (commands.length > 1 && safe && heredocIntoVariable(command))
+            return {
+              ...id,
+              kev: { status: "not_needed" },
+              final_review: finalReviewAudit({ status: "not_needed" }),
+              ask: false,
+              reasons: [],
+              hard_reasons: [],
+              jev: null,
+              explanation: "only stores literal heredoc text in a shell variable; the command that runs it is reviewed",
               checks: [],
             }
           if (commands.length > 1 && safe && isSelfContainedSegment(command) && !/\$(?!\?)/.test(command))
