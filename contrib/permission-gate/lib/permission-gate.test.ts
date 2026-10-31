@@ -2145,6 +2145,9 @@ test("shell segments get module evidence and self-contained segments are judged 
       "helm unittest -u charts/node-init",
       "gh api -X PATCH repos/e2b-dev/charts/pulls/476 -f title=Simplify -F body=@/tmp/body.md",
       "gh api -X PATCH repos/e2b-dev/charts/pulls/476 -f state=closed",
+      "node -e 'const sbx = await Sandbox.connect(\"sbx1\", { apiKey: process.env.E2B_API_KEY });\nconst cmd = `tail -n 10 /data/x/service.log`;\nconst res = await sbx.commands.run(cmd);\nconsole.log(res.stdout)'",
+      "node -e 'const sbx = await Sandbox.connect(\"sbx1\", { apiKey });\nawait sbx.commands.run(\"ls -la /data/x\");\nconsole.log(\"key\", apiKey)'",
+      "node -e 'const sbx = await Sandbox.connect(\"sbx1\", { apiKey });\nawait sbx.commands.run(`rm -rf ${dir}`)'",
     ]
     const output = { status: "ask" }
     await hooks["permission.ask"](
@@ -2165,6 +2168,23 @@ test("shell segments get module evidence and self-contained segments are judged 
     expect(contexts[commands[10]].command_evidence).toContain("it writes files")
     expect(contexts[commands[11]].command_evidence).toContain("edits pull request #476 title/body only")
     expect(contexts[commands[12]].command_evidence).toContain("it may modify remote state")
+    // A client library's remote run is reported by the command it runs there,
+    // with whether the connection credential is printed; a dynamic command is not.
+    expect(contexts[commands[13]].command_evidence).toBe(
+      'runs on the remote machine through a client library: "tail -n 10 /data/x/service.log"; the connection credential (process.env.E2B_API_KEY) is passed only to the client and never printed',
+    )
+    expect(contexts[commands[14]].command_evidence).toContain('"ls -la /data/x"; the connection credential (apiKey) also appears in a print statement')
+    expect(contexts[commands[15]].command_evidence).toBeUndefined()
+    // The same when the script is stored in a quoted heredoc and run as "$SCRIPT".
+    const stored = [
+      "read -r -d '' SCRIPT << 'EOF'\nconst sbx = await Sandbox.connect(\"sbx1\", { apiKey: process.env.E2B_API_KEY });\nconst res = await sbx.commands.run(`cat /data/x/state.json`);\nconsole.log(res.stdout);\nEOF",
+      'bun --env-file=/data/x/.env.local -e "$SCRIPT"',
+    ]
+    await hooks["permission.ask"](
+      { permission: "bash", sessionID: "ses_go_module", patterns: stored, metadata: { command: stored.join("\n") } },
+      { status: "ask" },
+    )
+    expect(contexts[stored[1]].command_evidence).toContain('"cat /data/x/state.json"; the connection credential (process.env.E2B_API_KEY) is passed only')
     // A literal echo ($? only) is allowed locally and never sent to Jev.
     expect(contexts[commands[3]]).toBeUndefined()
     expect(contexts[commands[0]].full_command).toBe(commands.join("; "))

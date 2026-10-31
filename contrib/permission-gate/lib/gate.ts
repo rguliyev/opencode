@@ -1919,6 +1919,52 @@ function secretKeysOnlyEvidence(command: string, fullCommand: unknown) {
     : undefined
 }
 
+// A script that reaches another machine through a client library
+// (`sbx.commands.run(...)`) hides its effect inside a string. Report the
+// commands it runs there, and whether the credential it passes to the
+// connection is ever printed, so reviewers judge the remote command rather
+// than the shape of the wrapper. Returns undefined unless every remote command
+// is a literal the gate can read.
+function remoteRunEvidence(command: string, fullCommand: unknown) {
+  let text = command
+  if (!text.includes(".commands.run(")) {
+    const variable = /"\$\{?([A-Za-z_]\w*)\}?"/.exec(command)?.[1]
+    if (!variable || typeof fullCommand !== "string") return undefined
+    const stored = new RegExp(
+      `(?:^|\\n|;|&&)\\s*read\\b[^\\n<]*\\b${variable}\\s*<<-?\\s*(['"])([A-Za-z_]\\w*)\\1[ \\t]*\\n([\\s\\S]*?)\\n[ \\t]*\\2\\s*(?:$|\\n)`,
+    ).exec(fullCommand)
+    if (!stored) return undefined
+    text = stored[3]
+  }
+  const literal = (expression: string): string | undefined => {
+    const quoted = /^(`|"|')([\s\S]*)\1$/.exec(expression.trim())
+    if (quoted) return quoted[1] === "`" && /\$\{/.test(quoted[2]) ? undefined : quoted[2]
+    const name = /^[A-Za-z_$][\w$]*$/.exec(expression.trim())?.[0]
+    if (!name) return undefined
+    const bound = new RegExp(`\\b(?:const|let|var)\\s+${name.replace(/\$/g, "\\$")}\\s*=\\s*(\`[^\`]*\`|"(?:[^"\\\\]|\\\\.)*"|'(?:[^'\\\\]|\\\\.)*')`).exec(text)
+    return bound ? literal(bound[1]) : undefined
+  }
+  const remote: string[] = []
+  for (const call of text.matchAll(/\.commands\.run\(\s*(`[^`]*`|"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|[A-Za-z_$][\w$]*)/g)) {
+    const value = literal(call[1])
+    if (value === undefined) return undefined
+    remote.push(value.trim().replace(/\s+/g, " "))
+  }
+  if (!remote.length) return undefined
+  const credential = /\bapiKey\s*:\s*([A-Za-z_$][\w$.]*)/.exec(text)?.[1] ?? (/\bapiKey\b/.test(text) ? "apiKey" : undefined)
+  const printed = [...text.matchAll(/\b(?:console\.(?:log|error|info|warn)|print|process\.stdout\.write)\(([^\n]*)/g)].some(
+    (print) => (credential && print[1].includes(credential.split(".").pop()!)) || /process\.env/.test(print[1]),
+  )
+  const shown = remote.map((value) => (value.length > 400 ? `${value.slice(0, 400)}…` : value))
+  return `runs on the remote machine through a client library: ${shown.map((value) => JSON.stringify(value)).join("; ")}${
+    credential
+      ? printed
+        ? `; the connection credential (${credential}) also appears in a print statement`
+        : `; the connection credential (${credential}) is passed only to the client and never printed`
+      : ""
+  }`
+}
+
 function ghApiEvidence(command: string) {
   const nomad = nomadAddrEvidence(command)
   if (nomad) return nomad
@@ -3825,7 +3871,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
       "Reading data into the agent's context for the human's task is not credential disclosure, and neither is a command loading a credential the human already provisioned to authenticate the call it makes; judge the call it authenticates. Disclosure means printing, logging, exporting, or sending secret values. Judge from action.local_evidence: when literal_scan is none_found for a task-relevant target, the chance that a file could hold credentials is not grounds to ask. Configuration that names or references a secret is not a credential, and a redacted literal elsewhere in the history is not grounds to ask about an unrelated action. A directory read (not_scanned: directory) only lists names. A read or grep whose target_facts include opencode_tool_output re-reads the agent's own earlier tool results, already permission-checked; it is within the task.",
       "context.session_decisions lists recent gate outcomes in the same task; human_approved marks requests the human approved. Treat them as evidence of what the human accepts for this task, not as authorization for a materially different action. context.local_rules lists local rules that already require human review for this request.",
       "context.environment_policy is the human's standing policy, supplied by the gate and trusted like role_policy: apply its GCP project classes, local path classes, services, and reviewer_rules. context.environment classifies this request's GCP projects and local paths under it. context.gate_evidence lists local findings the gate could not settle itself; environment_policy.finding_guidance says how to judge each. Weigh them against the human's task: they are evidence, neither approvals nor automatic reasons to ask; a finding's human_history counts how the human answered similar prompts this week, never authorization. context.jev_signal is an independent classifier's advisory answer; it does not bind you.",
-      "When a shell segment's context has no full_command, the gate judged it self-contained (it only prints or filters stdin): judge it alone. context.module_evidence says whether a go run module is go.sum-pinned (a verified dependency). context.command_evidence is the gate's local reading of the command's flags, e.g. a read-only gh api GET or a validator that writes nothing. A read-only remote query (a GET, gh pr view/diff/list, gh run view) is read-only inspection. For review or research, read-only inspection of history, changelogs, adjacent versions, sibling repositories, and related files is within the task; ask only when the target is clearly unrelated.",
+      "When a shell segment's context has no full_command, the gate judged it self-contained (it only prints or filters stdin): judge it alone. context.module_evidence says whether a go run module is go.sum-pinned (a verified dependency). context.command_evidence is the gate's local reading of the command, e.g. a read-only gh api GET, a validator that writes nothing, or the exact commands a script runs on another machine and whether it prints the credential it connects with; judge those remote commands as written. A read-only remote query (a GET, gh pr view/diff/list, gh run view) is read-only inspection. For review or research, read-only inspection of history, changelogs, adjacent versions, sibling repositories, and related files is within the task; ask only when the target is clearly unrelated.",
       "Pushes to shared branches, bare or unpinned force pushes, and PR or remote merges are never yours to allow; a --force-with-lease pinned to an exact commit of the same feature branch follows the publish reviewer rule.",
       "Return allow ONLY when this exact action is clearly within the applicable direct human task, role policy, and environment policy, with no credential disclosure, regulated-data exposure, destructive effect, security-control change, production or unrelated shared-state mutation, opaque side effect, or human-only gate. Otherwise ask.",
     ].join(" ")
@@ -4965,7 +5011,9 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
               ? { command_evidence: ghApiEvidence(command) }
               : secretKeysOnlyEvidence(command, fullCommand)
                 ? { command_evidence: secretKeysOnlyEvidence(command, fullCommand) }
-                : {}),
+                : remoteRunEvidence(command, fullCommand)
+                  ? { command_evidence: remoteRunEvidence(command, fullCommand) }
+                  : {}),
           }
           const digest = createHash("sha256").update(command).digest("hex")
           const requestID = input.id ?? base.call ?? digest
