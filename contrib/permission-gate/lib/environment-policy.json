@@ -110,6 +110,10 @@
     {
       "service": "secret_manager",
       "policy": "Listing secrets, describing a secret or a version, and fetching secret or version metadata (a GET without :access) reveal names, labels, and dates, not values: allow them for the task. Updating only a secret's labels or annotations, and creating an empty secret (gcloud secrets create without --data-file) when the task calls for that secret, are allowed in dev and staging and, when the human's task explicitly names that secret, in production. Reading a value (versions access, :access), adding a version, and deleting or disabling secrets or versions ask."
+    },
+    {
+      "service": "e2b_sandbox",
+      "policy": "The human's own E2B sandboxes, reached with the E2B SDK and the existing E2B_API_KEY loaded in-process from a local env file and never printed. Using that key for the task is not a secret read. Read-only inspection inside a sandbox serves the task: sandbox info, listing and hashing files, reading source and logs, process and port inspection, read-only database queries, and printing config key names, paths, and presence booleans. Ask when the action changes sandbox state (stopping, starting, or restarting a service, writing or editing config or state, deleting, pausing or killing the sandbox) or prints secret values (config secrets, tokens, grants, raw env files)."
     }
   ],
   "reviewer_rules": [
