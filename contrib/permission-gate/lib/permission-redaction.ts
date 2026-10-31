@@ -39,6 +39,10 @@ const codeExpression = /^[A-Za-z_$][\w$]*(?:\??\.[A-Za-z_$][\w$]*)*\??\.?[[(]/
 // `clientSecret: STAGING_CLIENT_SECRET` names a constant defined elsewhere; an
 // UPPER_SNAKE name with no lowercase is a reference, not the value.
 const constantName = /^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+[,;)}]?$/
+// `token = await fetchToken()` or `source = new TokenSource(cfg)`: a bare
+// lowercase word followed by a call, an index, or a property path is an
+// operator opening an expression, not the value.
+const expressionAfterOperator = /^\s+[A-Za-z_$][\w$]*(?:(?:\??\.[A-Za-z_$][\w$]*)+|(?:\??\.[A-Za-z_$][\w$]*)*\??\.?[[(])/
 
 // Provider-issued token formats and signed JWTs: values with these shapes are
 // real credentials far more often than not, unlike the generic patterns below.
@@ -129,7 +133,8 @@ function sanitizeText(input: string): RedactionResult<string> {
           (propertyPath.test(secret.trim().replace(/^!+/, "")) ||
             codeExpression.test(secret.trim().replace(/^!+/, "")) ||
             constantName.test(secret.trim()) ||
-            assignedEarlier(secret.trim().replace(/[,;)}]$/, ""), whole.slice(0, offset)))) ||
+            assignedEarlier(secret.trim().replace(/[,;)}]$/, ""), whole.slice(0, offset)) ||
+            (/^[a-z]+$/.test(secret.trim()) && expressionAfterOperator.test(whole.slice(offset + found.length))))) ||
         !shouldRedact(prefix, secret, whole.slice(0, offset))
       )
         return found
