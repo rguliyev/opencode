@@ -2208,6 +2208,12 @@ function scriptPaths(command: string, cwd: string, depth = 0, assigned = new Map
           ["python", "python2", "python3"].includes(name) && /^-(?:b|B|d|E|i|I|O|OO|P|q|R|s|S|u|v|V|x)$/.test(option)
         const safeShell = ["bash", "dash", "fish", "ksh", "sh", "zsh"].includes(name) && /^-[efnuvx]+$/.test(option)
         const selfContained = option.startsWith("--") && option.includes("=")
+        // A lone `-` names stdin as the script; fed by a heredoc, the body is in
+        // the command text, as for `node << 'EOF'`. Piped stdin stays uninspectable.
+        if (option === "-" && /^<<-?/.test(args[index + 1] ?? "")) {
+          index += 1
+          break
+        }
         if (!safePython && !safeShell && !selfContained) {
           return {
             scripts: [],

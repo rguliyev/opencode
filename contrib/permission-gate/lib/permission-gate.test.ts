@@ -306,6 +306,13 @@ test("Jev receives a scrubbed command and context, while the local gate asks", a
       { status: "ask" },
     )
     expect(JSON.stringify((sent as { state: Record<string, unknown> }).state)).not.toContain("referenced script does not exist")
+    // `node --input-type=module - << 'EOF'` names stdin explicitly; still the heredoc.
+    const nodeDashHeredoc = "node --input-type=module - << 'EOF'\nconsole.log('heredoc')\nEOF"
+    await hooks["permission.ask"](
+      { permission: "bash", sessionID: "ses_redaction_test", patterns: [nodeDashHeredoc], metadata: { command: nodeDashHeredoc } },
+      { status: "ask" },
+    )
+    expect(JSON.stringify((sent as { state: Record<string, unknown> }).state)).not.toContain("cannot be inspected reliably")
     rmSync(phaseDir, { recursive: true, force: true })
     // The step runs in phaseDir, so that directory's class is what the reviewer judges.
     const phaseEnvironment = (phaseState.context as { environment: Record<string, unknown> }).environment
