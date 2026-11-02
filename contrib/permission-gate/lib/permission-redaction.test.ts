@@ -270,6 +270,15 @@ test("an unquoted UPPER_SNAKE constant after a credential-named key is a referen
   expect(sanitizeReviewText("clientSecret: Zx91kLmQ02pRtY_ab,").value).toContain("[REDACTED:CREDENTIAL]")
 })
 
+test("a credential-named key that opens a nested object or array is structure, not a value", () => {
+  const code = '    "credentialRemediation": {\n        "status": "UNKNOWN"\n    },\n    tokens: [\n'
+  const safe = sanitizeReviewText(code)
+  expect(safe.value).toBe(code)
+  expect(safe.kinds).toEqual([])
+  // A literal value under the same key is still masked.
+  expect(sanitizeReviewText('"secret": "hunter2rocks9"').value).toContain("[REDACTED:CREDENTIAL]")
+})
+
 test("an operator opening an expression after a credential-named key is code, not a value", () => {
   const code = "let token = await fetchToken();\n  async onUnauthorized() { token = await fetchToken(); }\nconst source = new TokenSource(cfg)\n"
   const safe = sanitizeReviewText(code)
