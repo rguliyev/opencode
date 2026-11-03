@@ -270,6 +270,15 @@ test("an unquoted UPPER_SNAKE constant after a credential-named key is a referen
   expect(sanitizeReviewText("clientSecret: Zx91kLmQ02pRtY_ab,").value).toContain("[REDACTED:CREDENTIAL]")
 })
 
+test("a template-literal auth header that interpolates a variable is a reference, not a value", () => {
+  const code = "headers: { Authorization: `Bearer ${token}` }"
+  const safe = sanitizeReviewText(code)
+  expect(safe.value).toBe(code)
+  expect(safe.kinds).toEqual([])
+  // A literal token inside the backticks is still masked.
+  expect(sanitizeReviewText("Authorization: `Bearer hunter2rocks9XyZ`").value).toContain("[REDACTED:CREDENTIAL]")
+})
+
 test("a credential-named key that opens a nested object or array is structure, not a value", () => {
   const code = '    "credentialRemediation": {\n        "status": "UNKNOWN"\n    },\n    tokens: [\n'
   const safe = sanitizeReviewText(code)

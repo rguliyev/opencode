@@ -175,7 +175,7 @@ function sanitizeText(input: string): RedactionResult<string> {
     "WEBHOOK",
   )
   replaceValue(
-    /((?:authorization|proxy-authorization|x-api-key|api-key|x-auth-token|cookie|set-cookie)\s*:\s*(?:(?:Bearer|Basic|Token)\s+)?["']?)([^\s'";|]+)/gi,
+    /((?:authorization|proxy-authorization|x-api-key|api-key|x-auth-token|cookie|set-cookie)\s*:\s*["'`]?(?:(?:Bearer|Basic|Token)\s+)?["'`]?)([^\s'"`;|]+)/gi,
     "CREDENTIAL",
   )
   replaceValue(
