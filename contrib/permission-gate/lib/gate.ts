@@ -1910,10 +1910,23 @@ function secretKeysOnlyEvidence(command: string, fullCommand: unknown) {
   const at = fullCommand.indexOf(command.trim())
   if (at < 0) return undefined
   const rest = fullCommand.slice(at + command.trim().length)
-  const pipe = rest.match(/^\s*\|\s*([^|\n;&]+?)(?:\s*(?:>\s*\S+))?\s*(?:$|[\n;&])/)
+  // A quoted jq program may itself contain pipes, so take the whole quoted argument.
+  const pipe =
+    rest.match(/^\s*\|\s*(jq\s+(?:-[rc]+\s+)?('[^']*'|"[^"]*"))(?:\s*(?:>\s*\S+))?\s*(?:$|[\n;&])/) ??
+    rest.match(/^\s*\|\s*([^|\n;&]+?)(?:\s*(?:>\s*\S+))?\s*(?:$|[\n;&])/)
   if (!pipe) return undefined
   const filter = pipe[1]
-  const jqKeys = /^jq\s+(?:-[rc]+\s+)?(['"])(?:\.?\s*)?keys(?:\[\])?\1$/.test(filter.trim())
+  const jq = /^jq\s+(?:-[rc]+\s+)?(['"])(.*)\1$/.exec(filter.trim())
+  // The data map may appear only as the input to `keys`; anything else that
+  // walks values (`..`, to_entries, paths, tostream, a bare `.data`) could print them.
+  const program = jq?.[2]
+    .replace(/\(?\s*\.(?:data|stringData)\s*\|\s*keys(?:_unsorted)?(?:\[\])?\s*\)?/g, "KEYS")
+    .replace(/^\s*\.?\s*keys(?:_unsorted)?(?:\[\])?\s*$/, "KEYS")
+  const jqKeys =
+    program !== undefined &&
+    /KEYS/.test(program) &&
+    !/\.(?:data|stringData)\b|\.\.|to_entries|paths|tostream|getpath|\$__loc__|env\b|input/.test(program) &&
+    !/(?:^|[\s{,(|])\.\s*(?:$|[\s},)|])/.test(program)
   return jqKeys
     ? "secret key names only: this segment's data map goes straight into a filter that prints only key names (jq keys), so no value is printed"
     : undefined
