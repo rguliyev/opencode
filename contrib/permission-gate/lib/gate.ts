@@ -1504,7 +1504,7 @@ function commandParts(segment: string) {
 
 // `cd` only changes the directory for later segments, which are reviewed.
 const outputOnlyCommands = new Set(["echo", "printf", "true", "false", ":", "test", "[", "pwd", "date", "sleep", "cd"])
-const stdinFilterCommands = new Set(["head", "tail", "wc", "sort", "uniq"])
+const stdinFilterCommands = new Set(["head", "tail", "wc", "sort", "uniq", "base64"])
 
 // A segment that only prints or filters stdin has no effect of its own. It is
 // reviewed without the rest of the call, which reviewers otherwise blame on

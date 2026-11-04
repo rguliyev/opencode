@@ -1945,6 +1945,9 @@ test("a read-only agent's dual-use shell command needs both the final reviewer a
     expect(await batched(['echo "=== DIFF A ==="', 'echo "=== DIFF B ==="'])).toBe("allow")
     expect(await batched(["cd /data/rguliyev/tmp/opencode/worktrees/charts", 'echo "=== DIFF B ==="'])).toBe("allow")
     expect(await batched(['echo "=== DIFF A ==="', 'echo "$GRAFANA_TOKEN"'])).toBe("ask")
+    // Decoding stdin only transforms it; a file argument would read that file.
+    expect(await batched(['echo "=== DIFF A ==="', "base64 -d"])).toBe("allow")
+    expect(await batched(['echo "=== DIFF A ==="', "base64 -d /etc/shadow"])).toBe("ask")
     // Reading a quoted heredoc into a variable stores text; nothing runs or expands.
     const heredoc = "read -r -d '' SCRIPT << 'EOF'\nconst sbx = await connect(`${id}`)\nconsole.log(res.stdout)\nEOF"
     expect(await batched([heredoc, 'echo "=== DONE ==="'])).toBe("allow")
