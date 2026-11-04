@@ -461,6 +461,15 @@ test("policy-file edits, sensitive names, outside paths, and unattested tools ar
 
     // Protected OpenCode configuration stays a human gate.
     const home = (await import("node:os")).homedir()
+    // Running the installed binary with a subcommand only executes it; replacing it does not.
+    harness.finalChoice = "allow"
+    harness.jevAllow = true
+    try {
+      expect((await bash(`"$HOME/.opencode/bin/opencode" run --attach http://127.0.0.1:8080 --session ses_x "check the chart"`)).status).toBe("allow")
+    } finally {
+      harness.jevAllow = false
+    }
+    await expectHard(() => bash("cp /tmp/opencode-new ~/.opencode/bin/opencode"), "protected OpenCode configuration")
     await expectHard(
       () =>
         action("edit", [path.join(home, ".opencode/opencode.jsonc").slice(1)], {

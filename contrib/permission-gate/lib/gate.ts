@@ -220,9 +220,13 @@ const readOnlyRolePolicy =
 // The config tree is root-owned and immutable. A model may still request a
 // privileged shell command to change it, so formerly denied references must
 // always reach the human rather than becoming an automatic model approval.
+// Running the installed OpenCode binary with a subcommand (`~/.opencode/bin/opencode
+// run --attach ...`) executes it; it neither reads nor changes the protected tree.
+// Any other mention of the binary's path (copying, replacing, deleting it) still counts.
+const opencodeBinaryRun = /["']?(?:\$\{?HOME\}?|~|\/[\w.\/-]*?)\/\.opencode\/bin\/opencode["']?(?=\s+[a-z][\w-]*\b)/gi
 const protectedConfigReference = (value: string) =>
   /(?:^|[\/~])\.opencode(?:[\/\s]|$)|\/\.config\/opencode(?:\/|$)|\b(?:opencode\.jsonc|command-approval\.ts)\b/i.test(
-    value,
+    value.replace(opencodeBinaryRun, "opencode"),
   )
 const orchestratorDelegationPolicy =
   "Delegating the human's current task to known subagents (explore, researcher, reviewer, deep-reviewer, implementer, deep-implementer), including in the background, is this role's ordinary work and needs no separate human instruction; each subagent's later tool actions receive separate permission checks."
