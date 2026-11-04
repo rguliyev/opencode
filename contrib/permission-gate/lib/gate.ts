@@ -1306,6 +1306,14 @@ function requiresHumanOperation(command: string) {
   if (inlinePythonCannotSpawn(command) || inlineScriptCannotSpawn(command)) return false
   if (secretMetadataOnly(command) && !/\bgcloud\s+secrets\s+(?:delete|versions\s+(?:add|destroy|disable))/.test(command))
     command = command.replace(/\bgcloud\s+secrets\s+(?:create|update)\b/g, "gcloud secrets-metadata")
+  // `kubectl rollout status|history` only watches; restart, undo, pause, and resume change state.
+  command = command.replace(/\bkubectl\b([^\n;|&]*)\brollout\s+(status|history)\b/gi, "kubectl$1watch-rollout $2")
+  // `kubectl apply --dry-run=server` (or client) validates against the API and
+  // persists nothing; the same verb without it, or with --dry-run=none, changes state.
+  command = command.replace(
+    /\bkubectl\b([^\n;|&]*)\b(apply|delete|patch|replace|scale|set)\b(?=[^\n;|&]*\s--dry-run(?:=|\s+)(?:server|client)\b)/gi,
+    "kubectl$1dry-run-$2",
+  )
   return /(?:^|[\n;|&(){}])\s*(?:(?:sudo|env)\s+)?(?:git\s+push|gh\s+pr\s+(?:create|edit|merge|close)|terraform\s+(?:apply|destroy)|terragrunt\s+(?:apply|destroy)|kubectl(?:\s+-{1,2}[A-Za-z][\w-]*(?:=\S+|\s+(?!-)\S+)?)*\s+(?:apply|delete|patch|replace|scale|rollout|set)|gcloud\s+(?:projects\s+add-iam-policy-binding|iam\s+(?!(?:(?:service-accounts|roles|workload-identity-pools|policies)(?:\s+keys)?\s+(?:list|describe|get-iam-policy)|list-grantable-roles|list-testable-permissions)(?:\s|$))|secrets\s+(?:create|delete|update|versions\s+(?:add|destroy|disable)))|aws\s+(?:iam\s+|secretsmanager\s+(?:create|delete|update|put|rotate))|tailscale\s+(?:set|up)\b[^\n;|&]*--exit-node|(?:rm\s+-rf|mkfs|wipefs)\b)/i.test(
     command,
   )

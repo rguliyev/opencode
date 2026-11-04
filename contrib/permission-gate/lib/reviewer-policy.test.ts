@@ -371,6 +371,22 @@ test("recursive deletes inside worktrees and scratch are reviewer evidence; othe
       "tailscale set --exit-node=100.64.0.1",
     ])
       await expectHard(() => bash(command, { workdir: worktree }))
+    // A server or client dry-run persists nothing and rollout status only watches:
+    // both go to the reviewers; a real apply or a rollout restart stays a human gate.
+    harness.finalChoice = "allow"
+    harness.jevAllow = true
+    try {
+      for (const command of [
+        "kubectl --context connectgateway_e2b-staging_us-west1_e2b-staging -n obs apply -f /tmp/x.yaml --dry-run=server",
+        "kubectl -n obs apply --dry-run=client -f /tmp/x.yaml",
+        "kubectl --context connectgateway_e2b-staging_us-west1_e2b-staging -n obs rollout status deployment/web --timeout=300s",
+      ])
+        expect((await bash(command, { workdir: worktree })).status).toBe("allow")
+    } finally {
+      harness.jevAllow = false
+    }
+    for (const command of ["kubectl -n obs apply -f /tmp/x.yaml", "kubectl -n obs apply -f /tmp/x.yaml --dry-run=none", "kubectl -n obs rollout restart deployment/web"])
+      await expectHard(() => bash(command, { workdir: worktree }))
     // terraform apply is local-dev only in a worktree against the default project.
     await expectHard(() => bash("terraform apply -auto-approve", { workdir: scratch }))
     await expectHard(() => bash("terragrunt apply -var project=e2b-staging", { workdir: worktree }))
