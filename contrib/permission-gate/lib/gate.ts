@@ -2791,7 +2791,9 @@ function sensitiveMatchedPath(file: string) {
       )) ||
     /[A-Za-z]+[-_](?:19\d{2}|200\d)-\d{2}-\d{2}/.test(file) ||
     /\b\d{3}-\d{2}-\d{4}\b/.test(file) ||
-    /[A-Z0-9._%+-]{1,64}@[A-Z0-9.-]{1,255}\.[A-Z]{2,24}/i.test(file)
+    // A file's extension is its type, not a mail domain: `main-lead@rig.log`
+    // names a seat in a rig, while `jane@example.com.csv` still holds an address.
+    /[A-Z0-9._%+-]{1,64}@[A-Z0-9.-]{1,255}\.[A-Z]{2,24}/i.test(file.replace(/\.[A-Za-z0-9]{1,8}$/, ""))
   )
 }
 

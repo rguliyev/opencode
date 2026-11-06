@@ -3149,6 +3149,13 @@ test("configured OpenCode the final reviewer resolves Jev escalations with trust
     expect(await listed("people/jane_1985-03-12.pdf")).toBe("allow")
     expect(JSON.stringify(finalReviewState)).toContain("matched file name(s) suggest secrets or personal data")
     expect(JSON.stringify(finalReviewState)).not.toContain("jane_1985")
+    // A name@host log file names a seat, not a mail address; an address
+    // before the extension still counts.
+    finalReviewState = undefined
+    expect(await listed("state/transcripts/rig/main-lead@src-workspace.log")).toBe("allow")
+    expect(JSON.stringify(finalReviewState ?? {})).not.toContain("matched file name(s) suggest")
+    expect(await listed("exports/jane.doe@example.com.csv")).toBe("allow")
+    expect(JSON.stringify(finalReviewState)).toContain("matched file name(s) suggest secrets or personal data")
     // Feature names in source code are not personal data; data files still are.
     expect(await listed("pkg/sandbox/health.go")).toBe("allow")
     expect(await listed("exports/patient_health.csv")).toBe("allow")
