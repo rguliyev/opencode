@@ -1138,6 +1138,12 @@ function withoutShellComments(content: string) {
   return out
 }
 
+// The body of `bash -c '...'`. Single quotes expand nothing, so the body is
+// exactly the script the shell runs.
+function inlineShellBody(command: string) {
+  return command.match(/^\s*(?:bash|sh|dash|zsh|ksh)\s+(?:-[efnuvx]+\s+)*-c\s+'([^']*)'\s*$/)?.[1]
+}
+
 function scriptHumanOperations(content: string, inWorktree = false, assignments = content) {
   // A backslash-newline continues the same command; `rm -rf "$a" \` + newline
   // + `"$b"` is one delete of two targets, not a target named "\".
@@ -1159,8 +1165,9 @@ function scriptHumanOperations(content: string, inWorktree = false, assignments 
       ownTemp.add(name)
   }
   const checked = ownTemp.size
-    ? content.replace(/\brm\s+-(?:rf|fr|r)\s+"?\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?"?(?=[\s;'"&|)]|$)/g, (found, name) =>
-        ownTemp.has(name) ? "true" : found,
+    ? // Only a delete whose sole target is that directory: `rm -rf "$tmp" ~/x` still removes ~/x.
+      content.replace(/\brm\s+-(?:rf|fr|r)\s+(?:"\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?"|\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?)(?=[ \t]*(?:[\n;'"&|)]|$))/g, (found, quoted, bare) =>
+        ownTemp.has(quoted ?? bare) ? "true" : found,
       )
     : content
   const deletes: { path: string; class: string }[] = []
@@ -5202,7 +5209,13 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
                 for (const found of stepDeletes) if (found) deletes.push(...found)
                 if (humanSteps.some((segment) => finalReviewMayApprovePublish(segment.trim())))
                   evidence.push({ finding: "publish", detail: "publish: needs the final reviewer to confirm an explicit human request" })
-              } else hard.push("human-only operation")
+              } else {
+                // Command text is a script: removing the temp directory it
+                // created is cleanup here exactly as in a script file.
+                const inline = scriptHumanOperations(inlineShellBody(command) ?? command)
+                if (inline.hard) hard.push("human-only operation")
+                else deletes.push(...inline.deletes)
+              }
             }
           }
           const scopes = [awsScopeReviewMessage(hardChecked, sessions)]

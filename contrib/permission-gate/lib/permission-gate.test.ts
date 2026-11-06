@@ -2262,6 +2262,21 @@ test("shell segments get module evidence and self-contained segments are judged 
       "rm -rf /data/rguliyev/.cache/x",
     ])
       expect(await shellStatus(command)).toBe("ask")
+    // A command removing the temp directory it created is cleanup, as in a
+    // script file; removing anything else, or a reassigned variable, is not.
+    expect(await shellStatus('T=$(mktemp -d) && echo x > "$T/a" && rm -rf "$T"')).toBe("allow")
+    expect(
+      await shellStatus(
+        "bash -c '\nTMP=$(mktemp -d /data/rguliyev/tmp/opencode/helm-test.XXXXXX)\ncd \"$TMP\"\nmkdir charts\nrm -rf \"$TMP\"\n'",
+      ),
+    ).toBe("allow")
+    for (const command of [
+      'T=$(mktemp -d) && T=/data/rguliyev/src && rm -rf "$T"',
+      'T=$(mktemp -d) && rm -rf "$T/.."',
+      "bash -c 'T=$(mktemp -d); rm -rf \"$T\" ~/work'",
+      "bash -c 'T=$(mktemp -d); git push origin main; rm -rf \"$T\"'",
+    ])
+      expect([command, await shellStatus(command)]).toEqual([command, "ask"])
     // $PWD is the directory the earlier literal cd moved to, not the gate's own.
     const chainStatus = async (command: string) => {
       const output = { status: "ask" }
