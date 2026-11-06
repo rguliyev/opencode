@@ -2914,8 +2914,18 @@ function executionAgent(input: PermissionInput) {
     : undefined
 }
 
+// Agent definitions are prompts the human wrote for the subagents, not
+// credentials or settings: a built-in read, glob, grep, or list may look at
+// them. Edits there, and everything else in the protected tree, still ask.
+const opencodeAgentsDir = () => path.join(homedir(), ".opencode/agents")
+const insideOpencodeAgents = (value: string) => {
+  const normal = path.normalize(value.replace(/\/\*+$/, ""))
+  return path.isAbsolute(normal) && (normal === opencodeAgentsDir() || normal.startsWith(opencodeAgentsDir() + path.sep))
+}
+
 const readOnlyExternalRoots = () => [
   "/data/rguliyev/src",
+  opencodeAgentsDir(),
   path.join(homedir(), "opencode/scripts"),
   path.join(homedir(), "opencode/skills"),
   "/usr/bin",
@@ -4420,6 +4430,13 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
         [...patterns, metadata.filepath].some((value) => typeof value === "string" && protectedConfigReference(value))) ||
       (input.permission === "tool_call" && protectedConfigReference(raw)) ||
       (input.permission === "external_directory" &&
+        !(
+          metadata.core_trusted_builtin === true &&
+          ["read", "glob", "grep", "list"].includes(action.tool ?? "") &&
+          [...patterns, metadata.filepath, metadata.resolved_filepath]
+            .filter((value) => value !== undefined)
+            .every((value) => typeof value === "string" && insideOpencodeAgents(value))
+        ) &&
         [...patterns, metadata.filepath, metadata.resolved_filepath].some(
           (value) => typeof value === "string" && protectedConfigReference(value),
         ))

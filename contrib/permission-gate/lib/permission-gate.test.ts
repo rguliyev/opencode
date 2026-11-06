@@ -3183,6 +3183,12 @@ test("configured OpenCode the final reviewer resolves Jev escalations with trust
     expect(await external("read", path.join(homedir(), "opencode/scripts/gcloud-remote-auth.sh"), "call_ext_read")).toBe("allow")
     expect(await external("read", path.join(homedir(), "opencode/skills/architect-harness/SKILL.md"), "call_ext_skill_new")).toBe("allow")
     expect(await external("read", path.join(homedir(), ".opencode/skills/architect-harness/SKILL.md"), "call_ext_skill_old")).toBe("ask")
+    // Agent definitions may be read; the rest of the protected tree, and any
+    // tool other than a built-in read, still asks.
+    expect(await external("read", path.join(homedir(), ".opencode/agents/deep-implementer.md"), "call_ext_agent")).toBe("allow")
+    expect(await external("read", path.join(homedir(), ".opencode/agents/../opencode.jsonc"), "call_ext_agent_up")).toBe("ask")
+    expect(await external("read", path.join(homedir(), ".opencode/opencode.jsonc"), "call_ext_config")).toBe("ask")
+    expect(await external("bash", path.join(homedir(), ".opencode/agents/deep-implementer.md"), "call_ext_agent_bash")).toBe("ask")
     expect(
       await external("read", path.join(homedir(), ".local/share/opencode/opencode.db"), "call_ext_db"),
     ).toBe("ask")
