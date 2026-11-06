@@ -1,10 +1,11 @@
 # Subscription-first fallback: external auth plugins
 
-No provider-core patch, new hook, auth-store migration, or global fetch override.
+No provider-routing patch, new hook, auth-store migration, or global fetch override.
 These **external** plugins compose the existing OpenAI Codex auth implementation
 from this source revision and the installed, pinned
-`@ex-machina/opencode-anthropic-auth@1.8.6`. Auth methods, refresh handling,
-request transformations, OpenAI WebSockets and stream decoding remain theirs.
+`@ex-machina/opencode-anthropic-auth@1.8.6`. Login methods, request
+transformations, OpenAI WebSockets and stream decoding remain theirs. Anthropic
+refresh is coordinated by the wrapper described below.
 The build bundles those implementations; deployment needs no new npm package.
 
 ## Existing capability review (2026-10-14)
@@ -146,3 +147,42 @@ warning-before-paid ordering, primary preservation, payload/header correctness
 and credential-file immutability. Unit tests cover cooldown/recovery, two
 providers, wrong endpoints, non-quota failures, abort, streamed errors, and a
 real pre-stream OpenAI WebSocket quota rejection. No real paid request is needed.
+
+## Anthropic renewal safety (2026-11-06)
+
+- Renewal is serialized across directories and processes sharing the OpenCode
+  state directory, with a heartbeat/recoverable filesystem lock. Credentials
+  are reread under the lock; callers reuse a credential another caller renewed.
+- The upstream loader receives already-fresh credentials. Its request transforms
+  and subscription/API-key behavior are preserved, but its loader-local refresh
+  path is bypassed. Build-time login patching is limited to carrying through the
+  server's optional `refresh_token_expires_in`, and fails if the pinned source
+  no longer matches. No expiry date is guessed for existing logins.
+- `refreshExpiresAt` is optional, persisted by core and preserved during refresh
+  if no replacement deadline is returned. Requests warn within three days of
+  known expiry (at most hourly per process); there is no background token polling.
+- Core auth writes are locked read-modify-write + atomic mode-0600 replacement.
+  Reads fail closed on corrupt/unreadable storage. Optional `expectedRefresh`
+  on auth.set is a compare-and-set guard: false means another login/logout won.
+  The guard is never persisted. Existing callers without it keep their behavior.
+- Auth-set errors are checked. Persistence retries save the same received pair,
+  never repeat the exchange. Requests stop on unconfirmed persistence. A newer
+  usable login is reused on conflict or invalid_grant. An unchanged rejected
+  token is not repeatedly exchanged by other directory instances/processes.
+- A mode-0600, fsynced write-ahead recovery marker stores only a credential
+  fingerprint before the remote exchange. Lost responses, process death, malformed
+  success and failed persistence quarantine that credential across processes. A
+  changed login bypasses the marker; confirmed persistence removes it. Ambiguous
+  network failures may therefore require reauthentication instead of blind retries.
+- Logs contain lifecycle/status only, never tokens or token-endpoint response
+  bodies. Reauthentication warnings explicitly state there was no paid switch.
+- This cannot repair an already-expired/revoked refresh token, coordinate with
+  old binaries/third-party writers ignoring the lock, or recover a rotated token
+  whose response was lost. Such attempts fail closed. Reauthentication is still
+  needed for the reported expired login. Atomic auth-file replacement is not a
+  guarantee of host power-loss durability; the recovery guard covers process
+  crashes and ambiguous responses. OPENCODE_AUTH_CONTENT overrides block
+  renewal because saving to disk would not update the effective credential.
+- Deploy the new binary and plugin together, then restart at the user's chosen
+  time. Do not use the new plugin with a pre-fix server lacking conditional auth
+  writes. No live auth requests or credential replacements are needed to test it.

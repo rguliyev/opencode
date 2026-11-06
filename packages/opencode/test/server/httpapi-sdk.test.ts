@@ -350,6 +350,29 @@ describe("HttpApi SDK", () => {
       expect(log.response.status).toBe(200)
       expect(log.data).toBe(true)
       yield* expectStatus(() => sdk.auth.set({ providerID: "test" }), 400)
+      const providerID = "refresh-cas-test"
+      const credential = {
+        type: "oauth" as const,
+        access: "fake-access",
+        refresh: "fake-old",
+        expires: 1,
+        refreshExpiresAt: 123456,
+      }
+      expect((yield* call(() => sdk.auth.set({ providerID, auth: credential }))).data).toBe(true)
+      expect(
+        (yield* call(() =>
+          sdk.auth.set({ providerID, auth: { ...credential, refresh: "fake-new", expectedRefresh: "fake-old" } }),
+        )).data,
+      ).toBe(true)
+      expect(
+        (yield* call(() =>
+          sdk.auth.set({ providerID, auth: { ...credential, refresh: "stale", expectedRefresh: "fake-old" } }),
+        )).data,
+      ).toBe(false)
+      yield* call(() => sdk.auth.remove({ providerID }))
+      expect(
+        (yield* call(() => sdk.auth.set({ providerID, auth: { ...credential, expectedRefresh: "fake-new" } }))).data,
+      ).toBe(false)
     }),
   )
 

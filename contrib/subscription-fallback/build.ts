@@ -25,6 +25,21 @@ const result = await Bun.build({
     {
       name: "existing-anthropic-auth",
       setup(build) {
+        build.onLoad({ filter: /[/\\]dist[/\\]auth\.js$/ }, async (args) => {
+          if (args.path !== path.join(anthropic, "dist/auth.js")) return
+          const source = await Bun.file(args.path).text()
+          const needle = "expires: Date.now() + json.expires_in * 1000,"
+          if (source.split(needle).length !== 2) throw new Error("Anthropic login metadata patch no longer matches")
+          return {
+            contents:
+              `import { refreshExpiry } from ${JSON.stringify(path.join(import.meta.dir, "anthropic-refresh.ts"))};\n` +
+              source.replace(
+                needle,
+                needle + "\n        refreshExpiresAt: refreshExpiry(json.refresh_token_expires_in),",
+              ),
+            loader: "js",
+          }
+        })
         build.onResolve({ filter: /^@ex-machina\/opencode-anthropic-auth$/ }, () => ({
           path: path.join(anthropic, "dist/index.js"),
         }))

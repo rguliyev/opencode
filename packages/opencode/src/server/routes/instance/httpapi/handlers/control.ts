@@ -12,10 +12,13 @@ export const controlHandlers = HttpApiBuilder.group(RootHttpApi, "control", (han
 
     const authSet = Effect.fn("ControlHttpApi.authSet")(function* (ctx: {
       params: { providerID: ProviderV2.ID }
-      payload: Auth.Info
+      payload: typeof Auth.Update.Type
     }) {
-      yield* auth.set(ctx.params.providerID, ctx.payload).pipe(Effect.orDie)
-      return true
+      if (ctx.payload.type === "oauth") {
+        const { expectedRefresh, ...info } = ctx.payload
+        return yield* auth.set(ctx.params.providerID, info, expectedRefresh).pipe(Effect.orDie)
+      }
+      return yield* auth.set(ctx.params.providerID, ctx.payload).pipe(Effect.orDie)
     })
 
     const authRemove = Effect.fn("ControlHttpApi.authRemove")(function* (ctx: {

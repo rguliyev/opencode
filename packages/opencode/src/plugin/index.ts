@@ -191,6 +191,7 @@ const layer = Layer.effect(
         })
         const cfg = yield* config.get()
         const input: PluginInput = {
+          capabilities: { authConditionalWrite: true },
           client,
           reviewPermission: (request) => {
             if (!modelReviewer) return Promise.reject(new Error("Configured permission model is unavailable"))

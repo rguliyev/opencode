@@ -63,6 +63,8 @@ export type PermissionReviewOutput =
   | { status: "invalid_response"; diagnostic: "json_content" }
 
 export type PluginInput = {
+  /** Present when auth.set supports atomic expectedRefresh compare-and-set. */
+  capabilities?: { authConditionalWrite: boolean }
   client: ReturnType<typeof createOpencodeClient>
   /** One-shot review using OpenCode's configured small model; never starts a session or executes tools. */
   reviewPermission?: (input: PermissionReviewInput) => Promise<PermissionReviewOutput>
@@ -185,6 +187,7 @@ export type AuthOAuthResult = { url: string; instructions: string } & (
                 refresh: string
                 access: string
                 expires: number
+                refreshExpiresAt?: number
                 accountId?: string
                 enterpriseUrl?: string
               }
@@ -206,6 +209,7 @@ export type AuthOAuthResult = { url: string; instructions: string } & (
                 refresh: string
                 access: string
                 expires: number
+                refreshExpiresAt?: number
                 accountId?: string
                 enterpriseUrl?: string
               }

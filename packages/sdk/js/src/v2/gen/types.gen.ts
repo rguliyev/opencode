@@ -111,8 +111,10 @@ export type OAuth = {
   refresh: string
   access: string
   expires: number
+  refreshExpiresAt?: number
   accountId?: string
   enterpriseUrl?: string
+  expectedRefresh?: string
 }
 
 export type ApiAuth = {
@@ -7235,7 +7237,7 @@ export type AuthSetError = AuthSetErrors[keyof AuthSetErrors]
 
 export type AuthSetResponses = {
   /**
-   * Successfully set authentication credentials
+   * True if credentials were saved; false if expectedRefresh no longer matches
    */
   200: boolean
 }

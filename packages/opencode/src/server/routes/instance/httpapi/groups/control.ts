@@ -38,8 +38,11 @@ export const ControlApi = HttpApi.make("control").add(
     .add(
       HttpApiEndpoint.put("authSet", ControlPaths.auth, {
         params: AuthParams,
-        payload: Auth.Info,
-        success: described(Schema.Boolean, "Successfully set authentication credentials"),
+        payload: Auth.Update,
+        success: described(
+          Schema.Boolean,
+          "True if credentials were saved; false if expectedRefresh no longer matches",
+        ),
         error: HttpApiError.BadRequest,
       }).annotateMerge(
         OpenApi.annotations({

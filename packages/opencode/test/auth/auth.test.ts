@@ -73,3 +73,49 @@ describe("Auth", () => {
     }),
   )
 })
+
+describe("Auth refresh persistence", () => {
+  it.instance("conditional rotation preserves newer login and logout", () =>
+    Effect.gen(function* () {
+      const auth = yield* Auth.Service
+      const original = { type: "oauth" as const, access: "old", refresh: "old", expires: 1 }
+      yield* auth.set("rotation-test", original)
+      expect(yield* auth.set("rotation-test", { ...original, refresh: "new", refreshExpiresAt: 123456 }, "old")).toBe(
+        true,
+      )
+      expect(yield* auth.set("rotation-test", { ...original, refresh: "stale" }, "old")).toBe(false)
+      const current = yield* auth.get("rotation-test")
+      expect(current?.type === "oauth" && current.refresh).toBe("new")
+      expect(current?.type === "oauth" && current.refreshExpiresAt).toBe(123456)
+      yield* auth.remove("rotation-test")
+      expect(yield* auth.set("rotation-test", original, "new")).toBe(false)
+      expect(yield* auth.get("rotation-test")).toBeUndefined()
+    }),
+  )
+
+  it.instance("concurrent writers retain all providers", () =>
+    Effect.gen(function* () {
+      const auth = yield* Auth.Service
+      yield* Effect.all(
+        Array.from({ length: 12 }, (_, i) => auth.set(`concurrent-${i}`, { type: "api", key: `fake-${i}` })),
+        { concurrency: "unbounded" },
+      )
+      const all = yield* auth.all()
+      for (let i = 0; i < 12; i++) expect(all[`concurrent-${i}`]).toEqual({ type: "api", key: `fake-${i}` })
+    }),
+  )
+
+  it.instance("malformed auth storage fails closed without overwriting it", () =>
+    Effect.gen(function* () {
+      const { Global } = yield* Effect.promise(() => import("@opencode-ai/core/global"))
+      const file = `${Global.Path.data}/auth.json`
+      const auth = yield* Auth.Service
+      const previous = yield* Effect.promise(() => Bun.file(file).text())
+      yield* Effect.promise(() => Bun.write(file, "{broken"))
+      yield* Effect.gen(function* () {
+        expect(yield* auth.set("unwanted", { type: "api", key: "fake" }).pipe(Effect.isFailure)).toBe(true)
+        expect(yield* Effect.promise(() => Bun.file(file).text())).toBe("{broken")
+      }).pipe(Effect.ensuring(Effect.promise(() => Bun.write(file, previous))))
+    }),
+  )
+})
