@@ -497,6 +497,15 @@ const reviewerMutationVeto = 0.8
 // forms and mutating in others. Jev's independent mutation score must exist
 // and fall short of a confident mutation before the final reviewer's
 // read-only allow lets a read-only agent proceed unattended.
+// The operation an MCP call's arguments choose (method: POST, operation:
+// update_x, action: delete): a generic tool can write through any of them.
+function mcpOperationWords(args: unknown) {
+  if (!isRecord(args)) return []
+  return ["method", "operation", "action", "verb", "op"].flatMap((key) =>
+    typeof args[key] === "string" ? [String(args[key])] : [],
+  )
+}
+
 function jevJudgedReadOnly(answers: JevReview["raw"]) {
   const answer = answers?.reviewer_mutation
   return answer?.type === "noul" && finiteProbability(answer.noul) && answer.noul < reviewerMutationVeto
@@ -4452,7 +4461,25 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
         targets.some((target) => classifyPath(policy, path.normalize(target)) === "scratch")
       )
     })()
-    if (roleRestricted && !scratchOnlyEdit && !scratchOnlyGrant) reasons.push("read-only agent requested a non-read-only action")
+    // An MCP server's tool (`<server>_<tool>`) is named by the server, not the
+    // agent; the gate cannot tell from code whether it reads. The final
+    // reviewer, which sees the tool name and arguments, judges that for a
+    // read-only agent. A tool whose name says it changes something still stops,
+    // as do shell, edits, delegation, and plugin tools.
+    const mcpTool =
+      /^[a-z][a-z0-9-]*_[a-z0-9_]+$/.test(input.permission) &&
+      !["external_directory", "tool_call"].includes(input.permission) &&
+      ![input.permission.slice(input.permission.indexOf("_") + 1), ...mcpOperationWords(call?.args)].some((word) =>
+        /(?:^|_)(?:create|update|delete|remove|patch|apply|replace|scale|restart|rollout|exec|run|write|set|send|post|put|add|edit|manage|cordon|drain|evict|label|annotate)(?:_|$)/i.test(
+          word,
+        ),
+      )
+    if (roleRestricted && mcpTool)
+      evidence.push({
+        finding: "read_only_role_mcp_tool",
+        detail: `a read-only agent called MCP tool ${input.permission}; the gate cannot tell from code whether it only reads`,
+      })
+    else if (roleRestricted && !scratchOnlyEdit && !scratchOnlyGrant) reasons.push("read-only agent requested a non-read-only action")
     if (
       (input.permission === "edit" &&
         [...patterns, metadata.filepath].some((value) => typeof value === "string" && protectedConfigReference(value))) ||
@@ -4636,7 +4663,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
     const finalReviewAllow =
       finalReviewNeeded &&
       reasons.length === 0 &&
-      (!reviewer || inherentlyReadOnly || scratchOnlyEdit || scratchOnlyGrant || jevJudgedReadOnly(rawAnswers)) &&
+      (!reviewer || inherentlyReadOnly || scratchOnlyEdit || scratchOnlyGrant || mcpTool || jevJudgedReadOnly(rawAnswers)) &&
       eligibility.eligible &&
       finalReview.status === "score" &&
       finalReview.choice === "allow"
