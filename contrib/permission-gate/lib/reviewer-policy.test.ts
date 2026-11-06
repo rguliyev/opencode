@@ -469,7 +469,14 @@ test("policy-file edits, sensitive names, outside paths, and unattested tools ar
     } finally {
       harness.jevAllow = false
     }
+    harness.jevAllow = true
+    try {
+      expect((await bash("/data/rguliyev/.opencode/bin/opencode.real --version")).status).toBe("allow")
+    } finally {
+      harness.jevAllow = false
+    }
     await expectHard(() => bash("cp /tmp/opencode-new ~/.opencode/bin/opencode"), "protected OpenCode configuration")
+    await expectHard(() => bash("cp ~/.opencode/bin/opencode.real backup"), "protected OpenCode configuration")
     await expectHard(
       () =>
         action("edit", [path.join(home, ".opencode/opencode.jsonc").slice(1)], {

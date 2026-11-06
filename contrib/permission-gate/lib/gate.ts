@@ -220,10 +220,12 @@ const readOnlyRolePolicy =
 // The config tree is root-owned and immutable. A model may still request a
 // privileged shell command to change it, so formerly denied references must
 // always reach the human rather than becoming an automatic model approval.
-// Running the installed OpenCode binary with a subcommand (`~/.opencode/bin/opencode
-// run --attach ...`) executes it; it neither reads nor changes the protected tree.
-// Any other mention of the binary's path (copying, replacing, deleting it) still counts.
-const opencodeBinaryRun = /["']?(?:\$\{?HOME\}?|~|\/[\w.\/-]*?)\/\.opencode\/bin\/opencode["']?(?=\s+[a-z][\w-]*\b)/gi
+// Running an installed OpenCode binary as a command, with a subcommand or flag
+// (`~/.opencode/bin/opencode run --attach ...`, `.../opencode.real --version`),
+// executes it; it neither reads nor changes the protected tree. The binary's
+// path anywhere else (an argument to cp, mv, or rm) still counts.
+const opencodeBinaryRun =
+  /(?:^|(?<=[\n;&|(]\s*))["']?(?:\$\{?HOME\}?|~|\/[\w.\/-]*?)\/\.opencode\/bin\/opencode(?:\.[\w-]+)?["']?(?=\s+-{0,2}[a-z][\w-]*\b)/gi
 const protectedConfigReference = (value: string) =>
   /(?:^|[\/~])\.opencode(?:[\/\s]|$)|\/\.config\/opencode(?:\/|$)|\b(?:opencode\.jsonc|command-approval\.ts)\b/i.test(
     value.replace(opencodeBinaryRun, "opencode"),
