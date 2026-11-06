@@ -603,8 +603,9 @@ function containsCredentialLiteralBase(command: string) {
       command,
     ) ||
     // A value that is a placeholder or expansion ({SECRETS[host]}, $VAR,
-    // $(cmd)) names where the secret comes from; it is not the secret.
-    /--(?:api[-_]?key|access[-_]?token|auth[-_]?token|oauth2[-_]?bearer|password|passwd|secret|client[-_]?secret|private[-_]?key|userpwd)(?:=|\s+)["']?(?![{$(])[^\s'";|]{8,}/i.test(
+    // $(cmd)) names where the secret comes from; it is not the secret. A
+    // fake-marked word (`--password=fake_password`) is a fixture, as above.
+    /--(?:api[-_]?key|access[-_]?token|auth[-_]?token|oauth2[-_]?bearer|password|passwd|secret|client[-_]?secret|private[-_]?key|userpwd)(?:=|\s+)["']?(?![{$(])(?!(?:[a-z0-9]+[-_])*(?:fake|test|dummy|example|placeholder|sample|mock|changeme)(?:[-_][a-z0-9]+)*(?:["'\s;|&]|$))[^\s'";|]{8,}/i.test(
       command,
     ) ||
     // `--user` carries a secret only as curl's `user:password`; a bare account

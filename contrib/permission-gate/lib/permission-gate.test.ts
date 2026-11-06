@@ -440,6 +440,23 @@ test("Jev receives a scrubbed command and context, while the local gate asks", a
     )
     expect(sent).toBeDefined()
     expect(userOutput.message ?? "").not.toContain("could not be safely redacted")
+
+    // A fake-marked password flag is a fixture, like the URI and query forms;
+    // a real-looking one still is a credential.
+    const flagged = async (command: string) => {
+      const output: { status: string; message?: string } = { status: "allow" }
+      await hooks["permission.ask"](
+        { permission: "bash", sessionID: "ses_redaction_test", patterns: [command], metadata: { command } },
+        output,
+      )
+      return output.message ?? ""
+    }
+    expect(await flagged("clickhouse-client --host=127.0.0.1 --user=fake_user --password=fake_password --query='SELECT 1'")).not.toContain(
+      "looks like a secret",
+    )
+    expect(await flagged("clickhouse-client --host=127.0.0.1 --user=app --password=Xk93hdq8LmP2 --query='SELECT 1'")).toContain(
+      "looks like a secret",
+    )
   } finally {
     globalThis.fetch = previousFetch
     if (previousStateHome === undefined) delete process.env.XDG_STATE_HOME
