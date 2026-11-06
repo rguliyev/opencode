@@ -1043,6 +1043,9 @@ test("a secret's data piped straight into jq keys reaches the reviewer as key na
     }
     const get = "kubectl --context gke_e2b-dev-rauf-guliyev_us-west1_dev-1-us-west1 -n e2b-orchestrator get secret tm-env -o jsonpath='{.data}'"
     expect(await send(`${get} | jq -r 'keys[]'`, [get, "jq -r 'keys[]'"])).toContain("secret key names only")
+    // The filter segment is reviewed with the same evidence as the read feeding it.
+    expect(states.length).toBeGreaterThan(1)
+    expect(states.every((state) => state.includes("secret key names only"))).toBe(true)
     expect(await send(`${get} | jq -r '.'`, [get, "jq -r '.'"])).not.toContain("secret key names only")
     // A filter that reads the data map only through keys prints names, whatever else it selects.
     const getJson = "kubectl --context gke_e2b-dev-rauf-guliyev_us-west1_dev-1-us-west1 -n e2b-orchestrator get secret tm-env -o json"

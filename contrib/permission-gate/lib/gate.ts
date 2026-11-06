@@ -1953,6 +1953,20 @@ function secretKeysOnlyEvidence(command: string, fullCommand: unknown) {
     : undefined
 }
 
+// Each segment of a pipeline is reviewed with the whole call in view, so the
+// filter (`jq 'keys'`) gets the same evidence as the secret read feeding it.
+function pipedSecretKeysOnlyEvidence(command: string, commands: string[], fullCommand: unknown) {
+  const own = secretKeysOnlyEvidence(command, fullCommand)
+  if (own || typeof fullCommand !== "string") return own
+  for (const other of commands) {
+    const evidence = other !== command ? secretKeysOnlyEvidence(other, fullCommand) : undefined
+    if (!evidence) continue
+    const after = fullCommand.slice(fullCommand.indexOf(other.trim()) + other.trim().length)
+    if (after.replace(/^\s*\|\s*/, "").startsWith(command.trim())) return evidence
+  }
+  return undefined
+}
+
 // A script that reaches another machine through a client library
 // (`sbx.commands.run(...)`) hides its effect inside a string. Report the
 // commands it runs there, and whether the credential it passes to the
@@ -5068,8 +5082,8 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
             ...(moduleEvidence ? { module_evidence: moduleEvidence } : {}),
             ...(ghApiEvidence(command)
               ? { command_evidence: ghApiEvidence(command) }
-              : secretKeysOnlyEvidence(command, fullCommand)
-                ? { command_evidence: secretKeysOnlyEvidence(command, fullCommand) }
+              : pipedSecretKeysOnlyEvidence(command, commands, fullCommand)
+                ? { command_evidence: pipedSecretKeysOnlyEvidence(command, commands, fullCommand) }
                 : remoteRunEvidence(command, fullCommand)
                   ? { command_evidence: remoteRunEvidence(command, fullCommand) }
                   : {}),
