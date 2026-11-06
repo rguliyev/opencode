@@ -86,6 +86,13 @@
     ],
     "other": "Anywhere else (the home directory, checkouts under /data/rguliyev/src, system paths): read-only inspection that serves the task is fine; writes or deletes need the human's explicit request for that path."
   },
+  "mcp_servers": [
+    {
+      "server": "staging-k8s",
+      "read_only": true,
+      "policy": "The staging Kubernetes MCP server is read-only (the human, 2026-11-06: \"mcp is read only\"). Every tool it offers lists or gets staging Kubernetes state; none changes it."
+    }
+  ],
   "services": [
     {
       "service": "grafana",

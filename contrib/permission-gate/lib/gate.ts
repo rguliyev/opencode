@@ -2,7 +2,7 @@ import type { Config, Plugin } from "@opencode-ai/plugin"
 import { createHash } from "node:crypto"
 import { answerHistory, type AnswerCounts } from "./answer-history"
 import { awsScopeReviewMessage } from "./aws-scope"
-import { classifyPath, classifyProject, loadEnvironmentPolicy, reviewerPolicy } from "./environment-policy"
+import { classifyPath, classifyProject, loadEnvironmentPolicy, readOnlyMcpTool, reviewerPolicy } from "./environment-policy"
 import {
   gcpScopeFinding,
   gcpScopeFindingInLoop,
@@ -4141,6 +4141,7 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
         input.permission,
       ) &&
       !grafanaMcpReadTool.test(input.permission) &&
+      !readOnlyMcpTool(loadEnvironmentPolicy(), input.permission) &&
       !grafanaApiReadRequest(input.permission, call?.args)
     const patterns = Array.isArray(input.patterns)
       ? input.patterns.filter((item): item is string => typeof item === "string")

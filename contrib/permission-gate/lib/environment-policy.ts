@@ -16,6 +16,9 @@ export type EnvironmentPolicy = {
   gcp_projects: { classes: ProjectClass[]; unclassified: string }
   local_paths: { classes: PathClass[]; other: string }
   services: { service: string; policy: string }[]
+  // MCP servers as configured for OpenCode. read_only: the server itself
+  // exposes no write, so every tool it offers is a read.
+  mcp_servers?: { server: string; read_only: boolean; policy: string }[]
   reviewer_rules: string[]
   findings: Record<string, string>
 }
@@ -73,6 +76,19 @@ function validate(value: unknown): EnvironmentPolicy | undefined {
     return undefined
   if (!Array.isArray(value.services) || !value.services.every((item) => isRecord(item) && text(item.service) && text(item.policy)))
     return undefined
+  if (
+    value.mcp_servers !== undefined &&
+    (!Array.isArray(value.mcp_servers) ||
+      !value.mcp_servers.every(
+        (item) =>
+          isRecord(item) &&
+          typeof item.server === "string" &&
+          /^[a-z][a-z0-9-]*$/.test(item.server) &&
+          typeof item.read_only === "boolean" &&
+          text(item.policy),
+      ))
+  )
+    return undefined
   if (!Array.isArray(value.reviewer_rules) || !value.reviewer_rules.every(text)) return undefined
   const findings = value.findings ?? {}
   if (!isRecord(findings) || !Object.values(findings).every(text)) return undefined
@@ -109,9 +125,16 @@ export function reviewerPolicy(policy: EnvironmentPolicy, findings: string[] = [
     gcp_projects: policy.gcp_projects,
     local_paths: policy.local_paths,
     services: policy.services,
+    ...(policy.mcp_servers ? { mcp_servers: policy.mcp_servers } : {}),
     reviewer_rules: policy.reviewer_rules,
     ...(Object.keys(guidance).length ? { finding_guidance: guidance } : {}),
   }
+}
+
+// A tool of an MCP server the human declared read-only (`staging-k8s_pods_list`).
+// OpenCode names MCP tools `<server>_<tool>`.
+export function readOnlyMcpTool(policy: EnvironmentPolicy | undefined, permission: string) {
+  return !!policy?.mcp_servers?.some((item) => item.read_only && permission.startsWith(item.server + "_"))
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

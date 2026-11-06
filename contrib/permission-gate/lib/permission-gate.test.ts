@@ -1989,6 +1989,11 @@ test("a read-only agent's dual-use shell command needs both the final reviewer a
     expect(await mcp("grafana-foxtrot_check_datasources_health")).toBe("allow")
     expect(await mcp("grafana-staging_run_panel_query")).toBe("allow")
     expect(await mcp("grafana-staging_update_dashboard")).toBe("ask")
+    // Every tool of an MCP server the policy declares read-only is a read;
+    // a server not declared read-only keeps the per-tool rule.
+    expect(await mcp("staging-k8s_pods_list_in_namespace")).toBe("allow")
+    expect(await mcp("staging-k8s_namespaces_list")).toBe("allow")
+    expect(await mcp("prod-k8s_pods_delete")).toBe("ask")
     // The generic API tool reads with GET (the default); other methods change Grafana.
     const api = async (args: Record<string, unknown>, id: string) => {
       const tool = "grafana-foxtrot_grafana_api_request"
