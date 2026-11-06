@@ -263,7 +263,7 @@ test("ambient credential use is reviewer evidence; credential stores stay a huma
     "ambient_credentials",
   )
   await expectEvidence(
-    () => bash(`curl -s -H "Authorization: Bearer $GRAFANA_TOKEN" https://e2bstg.grafana.net/api/health`),
+    () => bash(`curl -s -H "Authorization: Bearer $GRAFANA_TOKEN" https://e2bstaging.grafana.net/api/health`),
     "ambient_credentials",
   )
   const home = (await import("node:os")).homedir()

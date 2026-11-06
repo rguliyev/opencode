@@ -2365,7 +2365,7 @@ test("shell segments get module evidence and self-contained segments are judged 
     const previousHelper = process.env.OPENCODE_GRAFANA_HELPER
     const grafanaEvidence = async (helperPath: string, verb = "grafana-query") => {
       process.env.OPENCODE_GRAFANA_HELPER = helperPath
-      const command = `${verb} e2bstg.grafana.net GET /api/datasources`
+      const command = `${verb} e2bstaging.grafana.net GET /api/datasources`
       delete contexts[command]
       await hooks["permission.ask"](
         { permission: "bash", sessionID: "ses_go_module", patterns: [command], metadata: { command } },
@@ -2383,9 +2383,9 @@ test("shell segments get module evidence and self-contained segments are judged 
       // Naming the shared gcloud login the service already uses is not a scope switch.
       process.env.OPENCODE_GRAFANA_HELPER = helper
       expect(
-        await shellStatus(`CLOUDSDK_CONFIG=/data/rguliyev/tmp/opencode/gcloud-remote-auth/config ${helper} e2bstg.grafana.net GET /api/datasources`),
+        await shellStatus(`CLOUDSDK_CONFIG=/data/rguliyev/tmp/opencode/gcloud-remote-auth/config ${helper} e2bstaging.grafana.net GET /api/datasources`),
       ).toBe("allow")
-      expect(await shellStatus(`CLOUDSDK_CONFIG=/tmp/other ${helper} e2bstg.grafana.net GET /api/datasources`)).toBe("ask")
+      expect(await shellStatus(`CLOUDSDK_CONFIG=/tmp/other ${helper} e2bstaging.grafana.net GET /api/datasources`)).toBe("ask")
       // Building a googleapis.com URL in Python is text formatting, not credential access.
       expect(
         await shellStatus(
@@ -2496,8 +2496,8 @@ test("shell segments get module evidence and self-contained segments are judged 
         {
           permission: "bash",
           sessionID: "ses_go_module",
-          patterns: [`${helper} e2bstg.grafana.net GET /api/health`],
-          metadata: { command: `${helper} e2bstg.grafana.net GET /api/health` },
+          patterns: [`${helper} e2bstaging.grafana.net GET /api/health`],
+          metadata: { command: `${helper} e2bstaging.grafana.net GET /api/health` },
         },
         helperRun,
       )

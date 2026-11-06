@@ -1699,10 +1699,9 @@ const opencodeScripts = "/data/rguliyev/opencode/scripts"
 // reads the Grafana instance token itself and never prints it, so a query
 // through it involves no credential handling by the agent. The gate trusts
 // it only when the installed file matches this hash.
-const grafanaHelperSha256 = "7b734eec89e6b5ed7adcfc67e63ab59490d81ca00bd79916cff08dc12270a47d"
-// The previous release (no CHECK_HOSTED_MCP mode) stays trusted until the
-// new helper is installed.
-const previousGrafanaHelperSha256 = "cd1d7767f5bd059347ac96259c4be42049ab498ff90ad73ecffc6b2500507b5d"
+const grafanaHelperSha256 = "23489061dd1b2c6b85b599e01f200748e790bb3b854711afb879caed4bb46f69"
+// The previous release stays trusted until the new helper is installed.
+const previousGrafanaHelperSha256 = "7b734eec89e6b5ed7adcfc67e63ab59490d81ca00bd79916cff08dc12270a47d"
 
 function grafanaHelperPath() {
   return process.env.OPENCODE_GRAFANA_HELPER ?? path.join(opencodeScripts, "grafana-query")
@@ -1739,10 +1738,10 @@ function incidentioHelperEvidence(args: string[]) {
 // agent switches route instead of queuing a human prompt for each variant.
 const helperCoveredSecrets: { secret: RegExp; helper: string; usage: string }[] = [
   {
-    secret: /^(?:grafana-instance-token-e2b-(?:prod|stg)|grafana-datasource-syncer-api-token)$/,
+    secret: /^(?:e2b-)?grafana-datasource-syncer-api-token$/,
     helper: "grafana-query",
     usage:
-      "/data/rguliyev/opencode/scripts/grafana-query HOST GET PATH (or HOST POST /api/ds/query BODY) for e2bprod.grafana.net, e2bstg.grafana.net, or e2bfoxtrot.grafana.net",
+      "/data/rguliyev/opencode/scripts/grafana-query HOST GET PATH (or HOST POST /api/ds/query BODY) for e2bfoxtrot.grafana.net or e2bstaging.grafana.net",
   },
   {
     secret: /^incidentio-api-key$/,
