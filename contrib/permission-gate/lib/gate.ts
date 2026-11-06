@@ -12,7 +12,7 @@ import {
 } from "./gcp-scope"
 import { containsCredentialMaterial, sanitizeReviewText, sanitizeReviewValue } from "./permission-redaction"
 import { appendFile, readFile, readdir } from "node:fs/promises"
-import { appendFileSync, lstatSync, mkdirSync, readFileSync, realpathSync } from "node:fs"
+import { appendFileSync, lstatSync, mkdirSync, readFileSync, realpathSync, statSync } from "node:fs"
 import { lstat, open, realpath } from "node:fs/promises"
 import { homedir } from "node:os"
 import { createConnection } from "node:net"
@@ -888,6 +888,16 @@ function credentialStorePath(file: string, containing: boolean) {
   )
     return false
   return [lexical, resolvedThroughAncestor(lexical)].some((target) => credentialStoreTarget(target, stores, containing))
+}
+
+// The read tool on a folder lists its entries; it opens none of them.
+function readsFolder(target: unknown) {
+  if (typeof target !== "string" || !path.isAbsolute(target)) return false
+  try {
+    return statSync(target).isDirectory()
+  } catch {
+    return false
+  }
 }
 
 function credentialStoreTarget(target: string, stores: string[], containing: boolean) {
@@ -4516,13 +4526,17 @@ const CommandApproval: Plugin = async ({ directory, serverUrl, reviewPermission 
         : undefined
     // A glob lists matching paths, never contents, so a credential store
     // somewhere inside the searched tree is not read (like ls of a key file).
-    // A glob rooted inside a store still counts.
+    // A read of a folder returns only its entry names. A glob or folder read
+    // rooted inside a store, or naming one, still counts.
     if (
       fileTargetPaths.some((file) =>
         credentialStorePath(
           file,
           ["grep", "list"].includes(input.permission) ||
-            (input.permission === "external_directory" && shellCommand === undefined && call?.tool !== "glob"),
+            (input.permission === "external_directory" &&
+              shellCommand === undefined &&
+              call?.tool !== "glob" &&
+              !(call?.tool === "read" && isRecord(call.args) && readsFolder(call.args.filePath))),
         ),
       ) ||
       (shellCommand !== undefined && credentialStoreReference(shellCommand))

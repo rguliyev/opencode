@@ -287,6 +287,33 @@ test("ambient credential use is reviewer evidence; credential stores stay a huma
       { tool: "read", args: { filePath: sshConfig } },
     ),
   )
+  // Reading a folder that holds a store lists its entry names; reading the
+  // store itself still asks.
+  const openHome = path.dirname(path.dirname(path.join(home, ".local/share/opencode/auth.json")))
+  harness.finalChoice = "allow"
+  harness.jevAllow = true
+  try {
+    const listed = await action(
+      "external_directory",
+      [path.join(openHome, "*")],
+      { filepath: openHome, resolved_filepath: openHome, parentDir: path.dirname(openHome), core_trusted_builtin: true },
+      { tool: "read", args: { filePath: openHome } },
+    )
+    expect(listed.message ?? "").not.toContain("credential store")
+  } finally {
+    harness.jevAllow = false
+  }
+  const authFile = path.join(home, ".local/share/opencode/auth.json")
+  await expectHard(
+    () =>
+      action(
+        "external_directory",
+        [path.join(path.dirname(authFile), "*")],
+        { filepath: authFile, resolved_filepath: authFile, parentDir: path.dirname(authFile), core_trusted_builtin: true },
+        { tool: "read", args: { filePath: authFile } },
+      ),
+    "credential store",
+  )
   const dir = mkdtempSync("/data/rguliyev/tmp/opencode/reviewer-policy-env-")
   try {
     const dotenv = path.join(dir, ".env")
